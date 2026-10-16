@@ -1,0 +1,19 @@
+# Example profile: a system that offers a chat channel and a trace export.
+# This is an example. It names no real system. The endpoint uses a reserved test domain.
+# Paths are relative to the repository root. A key never goes in a profile; keys are environment variables.
+name: Example, chat and traces
+status: "example"
+adapter: generic-http
+endpoint: https://staging.example.test/v1
+trace_source: https://staging.example.test/traces
+capabilities: [conversation, traces]
+precondition_map: null
+firm_values: null
+attestation_file: targets/examples/attestation.txt   # the file does not exist; a firm writes it before any run
+settings:
+  provider: null
+  model_id: null
+  price_in_per_m: null
+  price_out_per_m: null
+  cap_usd: null
+  api_key_env: EXAMPLE_API_KEY   # the name of an environment variable, not a key

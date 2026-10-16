@@ -1,0 +1,10 @@
+# Run logs, locks and signatures stay out of version control until reviewed
+runs/
+# Keys and local environment files
+.env
+.env.*
+# Python
+__pycache__/
+*.pyc
+# Temporary files
+*.tmp

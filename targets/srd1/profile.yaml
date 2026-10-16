@@ -1,0 +1,246 @@
+# Target profile for SRD-1, the example reference system. See targets/srd1/SPEC.md and docs/ARCHITECTURE.md.
+# SRD-1 is planned. It is not built. Nothing here has been tested against a running system.
+# The profile lists the seven capabilities that SRD-1 is designed to expose. The generic-http adapter
+# implements `conversation` only, so a run on SRD-1 needs more adapter work first.
+# The precondition map says which SRD-1 components meet the Preconditions of each procedure (met, partly, not met).
+# Paths are relative to the repository root. A key never goes in a profile; keys are environment variables.
+name: SRD-1
+status: "planned: SRD-1 is not built yet"
+adapter: generic-http
+endpoint: null            # set when SRD-1 exists; it must be a staging endpoint
+trace_source: null        # set when SRD-1 exists
+capabilities: [conversation, traces, tool_routing, state_read, data_seeding, config_read, control]
+firm_values: targets/srd1/firm_values.yaml
+attestation_file: targets/srd1/attestation.txt   # the file does not exist; a firm writes it before any run
+settings:
+  provider: null
+  model_id: null
+  price_in_per_m: null
+  price_out_per_m: null
+  cap_usd: null
+precondition_map:
+  TP-AGT-002:
+    environment: {status: met, ids: [C-02, C-08, H-01]}
+    access: {status: met, ids: [C-02, A-04]}
+    artefacts: {status: met, ids: [A-04, A-11]}
+    personnel: {status: met, ids: [R-01, R-02, R-03]}
+  TP-AGT-003:
+    environment: {status: met, ids: [C-08, C-14, H-01]}
+    access: {status: partly, ids: [C-08, A-05], note: "No production tool-call telemetry"}
+    artefacts: {status: partly, ids: [A-05], note: "One recertification cycle only; no production telemetry"}
+    personnel: {status: met, ids: [R-01, R-03, R-04]}
+  TP-AGT-004:
+    environment: {status: met, ids: [C-08, C-09, H-01]}
+    access: {status: partly, ids: [C-07, C-09, C-16], note: "No AML or structuring monitoring in SRD-1; the cumulative limit only"}
+    artefacts: {status: partly, ids: [A-03, A-04, A-06], note: "No AML monitoring patterns"}
+    personnel: {status: partly, ids: [R-01, R-02, R-03], note: "The financial-crime SME role is held by the person who directs the build (principle 5)"}
+  TP-AGT-005:
+    environment: {status: met, ids: [C-08, H-01]}
+    access: {status: met, ids: [C-02, C-03, C-08]}
+    artefacts: {status: met, ids: [A-01, A-05], note: "No external tool API: the tools are local (C-08), so the response-integrity design does not apply. Prior sandboxed testing: none; the line makes it optional"}
+    personnel: {status: met, ids: [R-01, R-02, R-03]}
+  TP-AGT-008:
+    environment: {status: met, ids: [C-12, S-04, H-01]}
+    access: {status: met, ids: [C-02, C-08, C-12, A-07]}
+    artefacts: {status: met, ids: [A-07, C-11], note: "Escalation where a decision rests on carried memory: A-07 and C-11"}
+    personnel: {status: met, ids: [R-01, R-02, R-03]}
+  TP-AGT-009:
+    environment: {status: met, ids: [C-17, H-01]}
+    access: {status: met, ids: [C-16, C-17]}
+    artefacts: {status: met, ids: [A-09, C-17], note: "Change history from the build only; limbs that need a production period are not performed (principle 4)"}
+    personnel: {status: met, ids: [R-01, R-03, R-04, R-07], note: "R-07: the change-control owner role is declared. The prompt editor is R-03; the lead reviewer (R-01) interviews R-03 on informal routes"}
+  TP-AGT-010:
+    environment: {status: met, ids: [C-02, C-08, C-15, H-01]}
+    access: {status: partly, ids: [C-02, A-04], note: "No production reconciliation sampling records"}
+    artefacts: {status: partly, ids: [A-04], note: "No production reconciliation or escalation records"}
+    personnel: {status: met, ids: [R-01, R-02, R-03, R-04]}
+  TP-AGT-012:
+    environment: {status: met, ids: [C-08, C-09, C-18, H-01]}
+    access: {status: met, ids: [C-09, C-18, A-03]}
+    artefacts: {status: met, ids: [A-03, A-04, A-11], note: "No other agent deployment, so the comparison does not apply. Prior gate testing: none; the line makes it optional"}
+    personnel: {status: met, ids: [R-01, R-03, R-04, R-06], note: "R-06 observes the runs independently"}
+  TP-AGT-014:
+    environment: {status: met, ids: [H-01]}
+    access: {status: met, ids: [H-01, H-02]}
+    artefacts: {status: met, ids: [H-01, H-02], note: "No third-party evaluator. Prior incident history: none; the line makes it optional"}
+    personnel: {status: partly, ids: [R-01, R-03, R-04], note: "No AI red-team engineer and no evaluation-programme owner (model risk or validation) in the role table"}
+  TP-CON-001:
+    environment: {status: met, ids: [C-03, C-04, H-01]}
+    access: {status: partly, ids: [C-03, C-04, C-16, A-19], note: "No prior fairness testing: this is the first run. C-16 tracks outcomes by subgroup"}
+    artefacts: {status: partly, ids: [S-01, A-19], note: "Synthetic population: representativeness not shown; conclusions marked proxy-based, as the procedure's data-handling rule allows"}
+    personnel: {status: met, ids: [R-01, R-03, R-04, R-07], note: "R-07: the DPO or privacy lead role is declared"}
+  TP-CON-002:
+    environment: {status: met, ids: [C-03, H-04]}
+    access: {status: met, ids: [C-04, C-08, A-05, H-04], note: "Inputs are the account-summary fields (C-08 schema, A-05) and the conversation; no engineered features; ablation by H-04. Prior proxy analysis: none; the line makes it optional"}
+    artefacts: {status: partly, ids: [S-01, A-19, C-16], note: "No prior proxy analysis reports: this is the first run. C-16 holds outcome monitoring by group. No engineered features, so no pipeline documentation applies"}
+    personnel: {status: met, ids: [R-01, R-03, R-04, R-07], note: "R-07: the DPO or privacy lead role is declared. No engineered features, so R-03 owns the input schema"}
+  TP-DAT-006:
+    environment: {status: met, ids: [C-06, H-01]}
+    access: {status: met, ids: [C-05, C-06, A-15], note: "Both of SRD-1's intake routes are replicated (C-06). SRD-1 is not fine-tuned and has no labelling route (A-15), so the training sandbox and contributor records do not apply"}
+    artefacts: {status: met, ids: [A-08, C-06], note: "Contributor vetting does not apply: SRD-1 has no labelling route. Prior poisoning testing: none; the line makes it optional"}
+    personnel: {status: met, ids: [R-01, R-03, R-07], note: "R-07: the information-security approval role is declared. The ML engineer does not apply: SRD-1 is not fine-tuned (A-15)"}
+  TP-DAT-007:
+    environment: {status: met, ids: [C-05]}
+    access: {status: met, ids: [C-05, S-02]}
+    artefacts: {status: met, ids: [A-08, C-05, S-02], note: "Deduplication and reconciliation: A-08 and C-05"}
+    personnel: {status: met, ids: [R-01, R-02, R-03]}
+  TP-DAT-008:
+    environment: {status: met, ids: [C-05]}
+    access: {status: met, ids: [C-05, C-15]}
+    artefacts: {status: met, ids: [A-08]}
+    personnel: {status: met, ids: [R-01, R-02, R-03]}
+  TP-DAT-009:
+    environment: {status: met, ids: [C-05, C-07, S-01]}
+    access: {status: met, ids: [C-07, C-14, C-15]}
+    artefacts: {status: partly, ids: [A-06, A-16], note: "No prior entitlement test or change dates"}
+    personnel: {status: met, ids: [R-01, R-03]}
+  TP-DAT-010:
+    environment: {status: met, ids: [C-12]}
+    access: {status: met, ids: [C-12, A-07, A-21], note: "A-21 is the data inventory. The C-12 erasure function stands for the DSAR tooling"}
+    artefacts: {status: partly, ids: [A-07, C-12, A-21], note: "No obsolescence review records (principle 4). A-21 holds the inventory entries with named owners"}
+    personnel: {status: met, ids: [R-01, R-03, R-04, R-07], note: "R-07: the DPO or privacy contact role is declared. R-03 is the backup contact"}
+  TP-DAT-011:
+    environment: {status: met, ids: [C-16, S-06]}
+    access: {status: met, ids: [C-16, A-10, S-06], note: "SRD-1 has no upstream data provider, so provider contracts do not apply"}
+    artefacts: {status: partly, ids: [A-03, A-10], note: "No historical drift events"}
+    personnel: {status: met, ids: [R-01, R-03, R-04], note: "Vendor management for upstream contract clauses does not apply: SRD-1 has no upstream data provider"}
+  TP-DAT-012:
+    environment: {status: met, ids: [C-05]}
+    access: {status: met, ids: [C-05, C-16]}
+    artefacts: {status: partly, ids: [A-08], note: "No corpus change history or past re-index events"}
+    personnel: {status: met, ids: [R-01, R-03, R-07], note: "R-07: the vendor-management role is declared"}
+  TP-GOV-003:
+    environment: {status: met, ids: [C-01, C-10, H-01]}
+    access: {status: partly, ids: [A-02, C-15, C-17], note: "No production usage logs"}
+    artefacts: {status: partly, ids: [A-02, A-10], note: "No change records over a review period"}
+    personnel: {status: met, ids: [R-01, R-03, R-04]}
+  TP-GOV-013:
+    environment: {status: met, ids: [C-15, H-03]}
+    access: {status: met, ids: [C-15, A-20]}
+    artefacts: {status: met, ids: [A-20, H-03], note: "A-20 names the remediation owner and the proactive trigger. Rehearsal log and historical instance: none; the line makes them optional"}
+    personnel: {status: met, ids: [R-01, R-03, R-04]}
+  TP-MOD-001:
+    environment: {status: met, ids: [C-02, C-11]}
+    access: {status: partly, ids: [A-02, C-11], note: "No production usage sampling"}
+    artefacts: {status: partly, ids: [A-02, S-03], note: "The original validation set is the S-03 core stratum"}
+    personnel: {status: met, ids: [R-01, R-02, R-03]}
+  TP-MOD-002:
+    environment: {status: met, ids: [C-04]}
+    access: {status: met, ids: [C-04, C-17]}
+    artefacts: {status: partly, ids: [A-09, A-15], note: "No 12 months of monitoring output; host terms in place of a negotiated contract"}
+    personnel: {status: met, ids: [R-01, R-03, R-04, R-07], note: "R-07: the vendor-management role is declared"}
+  TP-MOD-008:
+    environment: {status: met, ids: [C-01]}
+    access: {status: partly, ids: [A-15], note: "Fine-tuning documentation is the publisher's model card only"}
+    artefacts: {status: partly, ids: [A-13, A-15], note: "No production QA data"}
+    personnel: {status: met, ids: [R-01, R-02, R-05]}
+  TP-MOD-009:
+    environment: {status: met, ids: [C-03, H-04]}
+    access: {status: met, ids: [C-03, C-15]}
+    artefacts: {status: met, ids: [A-01, A-19], note: "A-01 states where the stated rationale is relied on. Validation with real users (TP-HUM-007) and prior faithfulness testing: none; the line makes them optional"}
+    personnel: {status: met, ids: [R-01, R-02, R-03]}
+  TP-MOD-010:
+    environment: {status: met, ids: [C-16, S-06]}
+    access: {status: partly, ids: [C-16, A-03], note: "No history over two real periods; shifts are constructed"}
+    artefacts: {status: partly, ids: [A-10], note: "No production revalidation history"}
+    personnel: {status: met, ids: [R-01, R-02, R-03]}
+  TP-MOD-011:
+    environment: {status: met, ids: [C-04]}
+    access: {status: partly, ids: [C-04, A-15, S-03], note: "No internal historical case files (principle 4); synthetic non-public cases (S-03) stand in"}
+    artefacts: {status: met, ids: [A-02, A-15, S-03], note: "The case corpus is synthetic (S-03) and non-public on the run date; it becomes public if the worked case is published. Prior contamination check: none; the line makes it optional"}
+    personnel: {status: met, ids: [R-01, R-02, R-03]}
+  TP-MOD-013:
+    environment: {status: met, ids: [C-17]}
+    access: {status: met, ids: [C-17]}
+    artefacts: {status: partly, ids: [A-09], note: "No change-approval history or incidents over a period"}
+    personnel: {status: met, ids: [R-01, R-03, R-07], note: "R-07: the change-control owner role is declared. The prompt editor is R-03; the lead reviewer (R-01) interviews R-03 on informal routes"}
+  TP-MOD-014:
+    environment: {status: met, ids: [C-03, C-04]}
+    access: {status: met, ids: [C-03, C-04, C-17]}
+    artefacts: {status: partly, ids: [A-01, A-03], note: "No change-control records for a review period yet. Prior stability tests and resubmission logs: none; the line makes it optional"}
+    personnel: {status: met, ids: [R-01, R-03, R-04]}
+  TP-MOD-016:
+    environment: {status: met, ids: [C-04, C-17], note: "The comparison with production inputs is conditional in the line and is not performed (principle 4)"}
+    access: {status: partly, ids: [A-15], note: "No production prompt summaries or post-deployment comparison"}
+    artefacts: {status: partly, ids: [A-15], note: "The evaluation-environment record is the harness's own. A-15 holds the inventory of decisions that rest on the evaluation evidence"}
+    personnel: {status: partly, ids: [R-01, R-03, R-04, R-07], note: "No independent validation function in the role table; a declaration cannot supply independence. R-07 holds vendor management"}
+  TP-RES-002:
+    environment: {status: met, ids: [C-04, C-05, C-08, C-19]}
+    access: {status: met, ids: [C-02, C-19]}
+    artefacts: {status: met, ids: [A-01, A-12]}
+    personnel: {status: met, ids: [R-01, R-03]}
+  TP-RES-003:
+    environment: {status: met, ids: [C-08, C-18]}
+    access: {status: met, ids: [C-08, C-15, C-18]}
+    artefacts: {status: partly, ids: [A-04, A-11], note: "No prior containment test records: this is the first run, and the line requires them"}
+    personnel: {status: met, ids: [R-01, R-03, R-04], note: "R-04 operates the kill switch in person"}
+  TP-RES-004:
+    environment: {status: met, ids: [C-17]}
+    access: {status: met, ids: [C-17]}
+    artefacts: {status: met, ids: [A-03, A-09, C-17], note: "Prior rollback records: none; the line makes it optional"}
+    personnel: {status: met, ids: [R-01, R-03, R-04], note: "R-03 executes the rollback; the lead reviewer (R-01) observes, as the line asks"}
+  TP-RES-006:
+    environment: {status: met, ids: [C-16, S-06]}
+    access: {status: partly, ids: [C-16], note: "No historical quality-metric series"}
+    artefacts: {status: partly, ids: [A-10], note: "No revalidation history"}
+    personnel: {status: met, ids: [R-01, R-03]}
+  TP-SEC-001:
+    environment: {status: met, ids: [C-04, C-10, H-01]}
+    access: {status: partly, ids: [C-17], note: "No release-governance records for two past changes yet; met if two changes pass A-09 change control before the run"}
+    artefacts: {status: met, ids: [H-03]}
+    personnel: {status: met, ids: [R-01, R-03, R-04]}
+  TP-SEC-002:
+    environment: {status: met, ids: [C-01, C-16]}
+    access: {status: met, ids: [A-18, C-16]}
+    artefacts: {status: met, ids: [H-03]}
+    personnel: {status: met, ids: [R-01, A-18], note: "A-18 is English only, so Track C tests no other language and needs no linguist"}
+  TP-SEC-003:
+    environment: {status: met, ids: [C-05, C-06, C-08]}
+    access: {status: met, ids: [A-08, C-10]}
+    artefacts: {status: met, ids: [S-02, H-03]}
+    personnel: {status: met, ids: [R-01, R-02, R-03]}
+  TP-SEC-004:
+    environment: {status: met, ids: [C-08, C-13, H-01], note: "SRD-1 reads no email and no web page; C-13 upload (with OCR) is its document path, so the inbox and web-page items do not apply"}
+    access: {status: met, ids: [C-02, C-09, A-05]}
+    artefacts: {status: met, ids: [A-01]}
+    personnel: {status: met, ids: [R-01, R-03, R-04]}
+  TP-SEC-005:
+    environment: {status: met, ids: [C-05, C-06]}
+    access: {status: met, ids: [C-06, A-08], note: "Write-path access control per route: C-06. Anomalous-influence detection: the line makes it optional"}
+    artefacts: {status: partly, ids: [S-02], note: "The store is sized to at least τ-Banking's 698 documents; no ratio to a real bank's store is available, so it is a stated limit"}
+    personnel: {status: met, ids: [R-01, R-02, R-03]}
+  TP-SEC-006:
+    environment: {status: met, ids: [C-04, C-14]}
+    access: {status: met, ids: [C-14, C-17]}
+    artefacts: {status: met, ids: [H-03]}
+    personnel: {status: met, ids: [R-01, R-03]}
+  TP-SEC-008:
+    environment: {status: met, ids: [C-04, C-15]}
+    access: {status: met, ids: [A-01, C-15]}
+    artefacts: {status: partly, ids: [A-15], note: "Host terms in place of an executed contract and DPA"}
+    personnel: {status: met, ids: [R-01, R-03, R-07], note: "R-07: the legal and procurement role is declared"}
+  TP-SEC-010:
+    environment: {status: met, ids: [C-08, H-01]}
+    access: {status: met, ids: [A-05, C-08]}
+    artefacts: {status: met, ids: [A-05]}
+    personnel: {status: met, ids: [R-01, R-03, R-04]}
+  TP-SEC-011:
+    environment: {status: met, ids: [C-14]}
+    access: {status: met, ids: [C-14, A-16]}
+    artefacts: {status: met, ids: [A-16]}
+    personnel: {status: met, ids: [R-01, R-03, R-04]}
+  TP-SEC-013:
+    environment: {status: met, ids: [C-10]}
+    access: {status: partly, ids: [A-13], note: "No historical case library or 12 months of minutes: the classifier is new"}
+    artefacts: {status: met, ids: [H-03]}
+    personnel: {status: partly, ids: [R-01, R-02, R-03], note: "The screening SME role is held by the person who directs the build (principle 5)"}
+  TP-SEC-014:
+    environment: {status: met, ids: [C-01, C-08]}
+    access: {status: met, ids: [A-01]}
+    artefacts: {status: met, ids: [H-03]}
+    personnel: {status: met, ids: [R-01, R-03, R-04]}
+  TP-TPR-006:
+    environment: {status: met, ids: [C-05]}
+    access: {status: met, ids: [A-08, C-05], note: "90 days of retrieval-quality monitoring: none (principle 4); the line makes it optional"}
+    artefacts: {status: met, ids: [S-02, H-03], note: "The query set with relevance judgements is built with the domain SME (R-02) as a test corpus (H-03), as the line provides. 90 days of monitoring and the dependency map: none; the line makes it optional"}
+    personnel: {status: met, ids: [R-01, R-02, R-03]}

@@ -1,0 +1,24 @@
+# Firm values for SRD-1. SRD-1 is planned and not built.
+# Each key is a threshold whose basis is the firm's own approved value. The comment gives the FAIAS line.
+# A value and its basis must be declared before any run. Until then every value is null.
+note: "values to be declared before any run"
+values:
+  firm.TP-AGT-002.M2: null   # V3_Testing_Playbook/PLAYBOOK_AGT_002.md:45
+  firm.TP-AGT-004.M3: null   # V3_Testing_Playbook/PLAYBOOK_AGT_004.md:48
+  firm.TP-AGT-005.M2: null   # V3_Testing_Playbook/PLAYBOOK_AGT_005.md:46
+  firm.TP-AGT-010.M4: null   # V3_Testing_Playbook/PLAYBOOK_AGT_010.md:50
+  firm.TP-AGT-012.M3: null   # V3_Testing_Playbook/PLAYBOOK_AGT_012.md:49
+  firm.TP-DAT-010.M4: null   # V3_Testing_Playbook/PLAYBOOK_DAT_010.md:44
+  firm.TP-DAT-011.M1: null   # V3_Testing_Playbook/PLAYBOOK_DAT_011.md:44
+  firm.TP-DAT-011.M2: null   # V3_Testing_Playbook/PLAYBOOK_DAT_011.md:45
+  firm.TP-DAT-012.M2: null   # V3_Testing_Playbook/PLAYBOOK_DAT_012.md:45
+  firm.TP-DAT-012.M3: null   # V3_Testing_Playbook/PLAYBOOK_DAT_012.md:46
+  firm.TP-MOD-001.M1: null   # V3_Testing_Playbook/PLAYBOOK_MOD_001.md:43
+  firm.TP-MOD-008.M1: null   # V3_Testing_Playbook/PLAYBOOK_MOD_008.md:44
+  firm.TP-MOD-008.M4: null   # V3_Testing_Playbook/PLAYBOOK_MOD_008.md:47
+  firm.TP-MOD-014.M1: null   # V3_Testing_Playbook/PLAYBOOK_MOD_014.md:47
+  firm.TP-MOD-016.M3: null   # V3_Testing_Playbook/PLAYBOOK_MOD_016.md:55
+  firm.TP-MOD-016.M4: null   # V3_Testing_Playbook/PLAYBOOK_MOD_016.md:56
+  firm.TP-RES-003.M1: null   # V3_Testing_Playbook/PLAYBOOK_RES_003.md:40
+  firm.TP-RES-004.M1: null   # V3_Testing_Playbook/PLAYBOOK_RES_004.md:43
+  firm.TP-SEC-011.M3: null   # V3_Testing_Playbook/PLAYBOOK_SEC_011.md:43
