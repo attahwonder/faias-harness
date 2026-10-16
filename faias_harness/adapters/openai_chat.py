@@ -1,11 +1,11 @@
-# UNTESTED IN v0.1. No test calls this module. Nobody has run it against a live endpoint.
+# UNTESTED IN v0.2. No test calls this module. Nobody has run it against a live endpoint.
 """A client for an OpenAI-compatible chat-completions endpoint. It offers the `conversation` capability only.
 
 Rules this client follows:
 - It sends requests only to the endpoint that the profile names.
 - It reads the API key from the environment variable that the profile names (settings.api_key_env).
   The key never goes in a file, a log or an error message.
-- It keeps no log of its own in v0.1.
+- It keeps no log of its own in v0.2.
 """
 import json
 import os

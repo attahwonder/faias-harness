@@ -4,9 +4,9 @@ A guide for any person or software agent that works on this repository. It does 
 
 ## Purpose and status
 
-This repository is the FAIAS harness, version 0.1. FAIAS is the Financial AI Independent Assurance Standard. The harness is planned to run the FAIAS test procedures against an AI system in a test environment.
+This repository is the FAIAS harness, version 0.2. FAIAS is the Financial AI Independent Assurance Standard. The harness is planned to run the FAIAS test procedures against an AI system in a test environment.
 
-Version 0.1 holds the design, 45 procedure records, a record checker and a preflight. It has no run engine and it runs no test. No adapter is tested. The harness supports no platform. Do not write text that says or implies more.
+Version 0.2 holds the design, 45 procedure records, a record checker and a preflight. It has no run engine and it runs no test. No adapter is tested. The harness supports no platform. Do not write text that says or implies more.
 
 ## Layout
 
@@ -33,7 +33,7 @@ You need Python 3.11 or later and the package `pyyaml`. The commands below use t
 | Check the start conditions | `py -3.14 -X utf8 -m faias_harness.preflight --profile <profile.yaml> --start` |
 | Sweep for barred terms and keys | `py -3.14 -X utf8 tools/sweep_barred.py --faias <FAIAS>` |
 
-`--start` never starts a run in version 0.1. It prints why a run may not start, or it prints that there is no run engine.
+`--start` never starts a run in version 0.2. It prints why a run may not start, or it prints that there is no run engine.
 
 ## Binding rules
 
@@ -45,7 +45,7 @@ You need Python 3.11 or later and the package `pyyaml`. The commands below use t
 6. **Set a spend cap.** `settings.cap_usd` must be set before a run can start.
 7. **Records come from FAIAS only.** Do not add a test step, a threshold or a rating that FAIAS does not state. The harness copies the ★ rating from the Confidence line of each procedure and never computes it.
 8. **Never edit quoted FAIAS text.** A record item carries `src: <file>:<line>`. The builder removes Markdown marks and table pipes only. If a record is wrong, change the builder or `OVERRIDES.yaml`, then rebuild. Do not edit `records/TP-*.yaml` by hand.
-9. **`records/capability_needs.yaml` is an input file.** A person keeps it by hand. No tool writes it. It is a draft: it holds the needs on which two independent model passes agree, and an `open` entry where they differ. Nobody has checked it at each line. After a change, run `tools/check_records.py`. Every procedure must be one of the 45, every capability one of the seven, and every cited `file:line` must exist in the FAIAS tree.
+9. **`records/capability_needs.yaml` is an input file.** A person keeps it by hand. No tool writes it. It is a draft: it holds the needs on which two independent model passes agree, a `settled` entry where they differed and a third reading decided, and an `open` entry where nothing is decided. No person has checked it. After a change, run `tools/check_records.py`. Every procedure must be one of the 45, every capability one of the seven, and every cited `file:line` must exist in the FAIAS tree.
 10. **Claim only what the code does.** Do not write "supported", "certified", "approved" or "compliant" about a platform, a result or a system. FAIAS is not a certification or approval scheme.
 11. **Before a commit, the sweep and all tests must pass.** Run `tools/sweep_barred.py` (0 failing hits) and `tests/run_all.py` (PASS). Fix the cause. Do not change a test or a barred-term list to make a check pass.
 

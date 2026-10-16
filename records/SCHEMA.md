@@ -1,6 +1,6 @@
 # Procedure record schema
 
-`records/SCHEMA.md` · harness v0.1. One record per procedure, `TP-<DOM>-<NNN>.yaml`. `tools/build_records.py` builds the records. `tools/check_records.py` checks them. A record is generic: it holds no precondition map for any target. The precondition map of a target is in the profile of that target.
+`records/SCHEMA.md` · harness v0.2. One record per procedure, `TP-<DOM>-<NNN>.yaml`. `tools/build_records.py` builds the records. `tools/check_records.py` checks them. A record is generic: it holds no precondition map for any target. The precondition map of a target is in the profile of that target.
 
 ## Source-line rule
 
@@ -40,9 +40,10 @@ Every item copied from FAIAS carries `src: <file>:<line>`. `<file>` is relative 
 
 | Field | Type | Content |
 |---|---|---|
-| `needed` | list | Capabilities (from the seven) that two independent model passes both marked as needed |
-| `lines` | list | The FAIAS lines, `<file>:<line>` relative to the FAIAS tree root, that either pass cites for those capabilities. Each line exists, in the file of the procedure |
-| `open` | map, optional | Present only where the needed sets of the two passes differ: `pass_1` and `pass_2`, each a list of capabilities. The order of the passes has no meaning |
+| `needed` | list | Capabilities (from the seven) that the procedure needs: the set that both passes marked as needed, or, in a `settled` entry, the set that the third reading decided |
+| `lines` | list | The FAIAS lines, `<file>:<line>` relative to the FAIAS tree root, that a pass or a note cites. Each line exists, in the file of the procedure |
+| `open` | map, optional | Present where the needed sets of the two passes differ and nothing is decided: `pass_1` and `pass_2`, each a list of capabilities, and an optional `note`. `needed` is then what both passes need. The order of the passes has no meaning |
+| `settled` | map, optional | Present where the two passes differed and a third reading decided at the lines: `pass_1`, `pass_2` and a `note` with the reason and the lines. `needed` keeps every capability that both passes need and adds only capabilities that one pass needs. An entry has `open` or `settled`, not both |
 
 `tools/check_records.py` checks these rules.
 

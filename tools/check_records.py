@@ -6,8 +6,9 @@ Checks: the set (one record per procedure in records/classification.tsv, no othe
 the star equals the procedure's Confidence line; every number in a copied text appears at its cited line, and the
 text's words come from that line; every threshold has an allowed basis, and each `firm` threshold has its
 firm_value_key; capability_needs.yaml is marked draft, names exactly the 45 procedures, uses only the seven
-capabilities, keeps `needed` equal to the capabilities that both passes need (an `open` entry shows the two sets),
-and every file:line it cites exists in the FAIAS tree, in the file of its own procedure.
+capabilities, keeps `needed` equal to the capabilities that both passes need where an `open` entry shows the two
+sets, keeps a `settled` entry within the two sets (all that both need, and only what one needs) with a note, and
+every file:line it cites exists in the FAIAS tree, in the file of its own procedure.
 Written apart from build_records.py, so that one bug cannot pass both.
 Exits non-zero on any failure. Tested by test_check_records.py.
 """
@@ -84,20 +85,32 @@ def check_needs(records_dir, want, faias, errors):
         errors.append("capability_needs.yaml: procedures differ from classification.tsv "
                       f"(missing {sorted(set(want) - set(needs))}, extra {sorted(set(needs) - set(want))})")
     for tp, entry in sorted(needs.items()):
-        if not isinstance(entry, dict) or not {"needed", "lines"} <= set(entry) <= {"needed", "lines", "open"}:
-            errors.append(f"capability_needs.yaml {tp}: fields are not needed, lines and an optional open")
+        if not isinstance(entry, dict) or not {"needed", "lines"} <= set(entry) <= {"needed", "lines", "open", "settled"}:
+            errors.append(f"capability_needs.yaml {tp}: fields are not needed, lines and an optional open or settled")
             continue
         needed = cap_list(tp, "needed", entry["needed"], errors)
-        op = entry.get("open")
-        if op is not None:
-            if not isinstance(op, dict) or set(op) != {"pass_1", "pass_2"}:
-                errors.append(f"capability_needs.yaml {tp}: open does not hold pass_1 and pass_2")
-            else:
-                p1, p2 = cap_list(tp, "open.pass_1", op["pass_1"], errors), cap_list(tp, "open.pass_2", op["pass_2"], errors)
-                if set(p1) == set(p2):
-                    errors.append(f"capability_needs.yaml {tp}: open entry, but the two passes do not differ")
-                if set(needed) != set(p1) & set(p2):
-                    errors.append(f"capability_needs.yaml {tp}: needed is not what both passes need")
+        if "open" in entry and "settled" in entry:
+            errors.append(f"capability_needs.yaml {tp}: both open and settled")
+        for key in ("open", "settled"):
+            op = entry.get(key)
+            if op is None:
+                continue
+            if (not isinstance(op, dict) or not {"pass_1", "pass_2"} <= set(op) <= {"pass_1", "pass_2", "note"}
+                    or (key == "settled" and "note" not in op)):
+                errors.append(f"capability_needs.yaml {tp}: {key} does not hold pass_1, pass_2 and "
+                              + ("a note" if key == "settled" else "an optional note"))
+                continue
+            if "note" in op and not (isinstance(op["note"], str) and op["note"].strip()):
+                errors.append(f"capability_needs.yaml {tp}: {key}.note is empty")
+            p1 = cap_list(tp, f"{key}.pass_1", op["pass_1"], errors)
+            p2 = cap_list(tp, f"{key}.pass_2", op["pass_2"], errors)
+            if set(p1) == set(p2):
+                errors.append(f"capability_needs.yaml {tp}: {key} entry, but the two passes do not differ")
+            if key == "open" and set(needed) != set(p1) & set(p2):
+                errors.append(f"capability_needs.yaml {tp}: needed is not what both passes need")
+            if key == "settled" and not set(p1) & set(p2) <= set(needed) <= set(p1) | set(p2):
+                errors.append(f"capability_needs.yaml {tp}: settled needed is not drawn from the two passes "
+                              "(it keeps all that both need and adds only what one needs)")
         refs = entry["lines"]
         if not isinstance(refs, list) or (needed and not refs):
             errors.append(f"capability_needs.yaml {tp}: lines is not a list, or is empty while needed is not")

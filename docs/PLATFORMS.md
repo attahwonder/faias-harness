@@ -1,13 +1,14 @@
 # Platform documentation survey
 
-Harness version 0.1. This file records what the public documentation of six agent platforms says about the seven capabilities of the target interface (`docs/ARCHITECTURE.md`, section 3).
+Harness version 0.2.0. This file records what the public documentation of six agent platforms says about the seven capabilities of the target interface (`docs/ARCHITECTURE.md`, section 3).
 
 ## What this is
 
 - Two independent model passes read vendor documentation. For each platform and capability, each pass named the mechanism that the documentation describes. It also copied a quote from a page.
-- On 16 October 2026, a script fetched the raw page for each quote. It tested whether the quote occurs on the page. The test ignores case, spacing, quote marks and dash styles. It follows no link and reads only the vendor documentation hosts.
+- On 16 October 2026, a script fetched the raw page for each quote. It tested whether the quote occurs on the page. The test ignores case, spacing, quote marks and dash styles. It follows no link and reads only the vendor documentation hosts and, for the OpenTelemetry specification, the project's own repository.
 - The tables below list only the rows where the quote was found on the page. The mechanism label is a short note from a model pass. Nobody has checked the label. Only the quote is verified. A quote that this file cuts short ends with " ..."; the part shown is still a quote from the page.
 - Where both passes found a quote for the same capability, both quotes are listed. The column "Passes with a verified quote" shows how many of the two passes have a verified quote for that capability. A value of 1 means that the other pass gave no quote, or gave a quote that the check did not find.
+- A second round on 16 October 2026 asked both passes about one gap only: `control` for the OpenAI Agents SDK and Responses API. In its rows, the mechanism label starts with the control: stop, rollback, version switch or failure injection.
 
 ## What this is not
 
@@ -19,7 +20,7 @@ Harness version 0.1. This file records what the public documentation of six agen
 
 ## Result of the check
 
-The passes gave 79 rows with a quote and a page for these six platforms. The check found the quote on the page in 76 rows.
+The passes gave 87 rows with a quote and a page for these six platforms. The check found the quote on the page in 84 rows.
 
 | Platform | Rows tested | Quote found | Capabilities with a verified row (of 7) |
 |---|---|---|---|
@@ -27,10 +28,10 @@ The passes gave 79 rows with a quote and a page for these six platforms. The che
 | Amazon Bedrock Agents and AgentCore | 14 | 14 | 7 |
 | Google Vertex AI Agent Engine | 13 | 12 | 7 |
 | Microsoft Copilot Studio | 12 | 12 | 7 |
-| OpenAI Agents SDK and Responses API | 13 | 11 | 6 |
+| OpenAI Agents SDK and Responses API | 21 | 19 | 7 |
 | LangGraph with LangSmith | 13 | 13 | 7 |
 
-The passes also read one specification, the OpenTelemetry semantic conventions for generative AI. It is not a platform, and its pages are not on a vendor documentation host. The check did not test it, and this file does not list it.
+The passes also read one specification, the OpenTelemetry semantic conventions for generative AI. It is not a platform, so the table above leaves it out. The passes reported only `traces` for it. The check found the quote on the page in 2 of 2 rows. The section after the six platforms lists them.
 
 A page that the script could not read in full (for example, a page that builds its text in the browser) gives no verified row, even if the page holds the quote.
 
@@ -129,8 +130,16 @@ Not verified: none. Every capability has at least one verified row. This does no
 | `data_seeding` | 1 | Vector stores; Files API; file_search tool | "By creating vector stores and uploading files to them, you can augment the models' inherent knowledge by giving them access to these knowledge bases" | <https://developers.openai.com/api/docs/guides/tools-file-search> |
 | `config_read` | 2 | Agents API `sessions.retrieve`; prompts `id`/`version`/`variables`; pinned model versions | "Retrieve a session to read its status, agent configuration, environment, and required_actions." | <https://developers.openai.com/api/docs/guides/agents-api/sessions/manage> |
 | `config_read` | 2 | Agent object (instructions, model, tools); RunConfig | "Agents, which are LLMs equipped with instructions and tools" | <https://openai.github.io/openai-agents-python/> |
+| `control` | 2 | rollback: Agent Builder workflow version in API calls; prompt spec versioning | "You can create new versions or specify an older version in your API calls." | <https://developers.openai.com/api/docs/guides/agent-builder> |
+| `control` | 2 | failure injection: Agents API tool_result sets success false; SDK ModelStep.raise_error() | "For an error, set success: false and supply an error message that the agent can use." | <https://developers.openai.com/api/docs/guides/agents-api/tools/functions> |
+| `control` | 2 | version switch: `model` parameter with dated model snapshot IDs | "Snapshots let you lock in a specific version of the model so that performance and behavior remain consistent." | <https://developers.openai.com/api/docs/models/gpt-4.1> |
+| `control` | 2 | version switch: Responses API model parameter; pinned model version IDs | "The best way to ensure consistent prompting behavior and model output is to use pinned model versions" | <https://developers.openai.com/api/reference/overview> |
+| `control` | 2 | stop: Responses API cancel a background response; Agents SDK RunResultStreaming.cancel() | "Cancels a model response with the given ID." | <https://developers.openai.com/api/reference/resources/responses/methods/cancel> |
+| `control` | 2 | stop: Responses API `POST /responses/{response_id}/cancel`; Agents SDK `result.cancel()` | "Cancels a model response with the given ID. Only responses created with the background parameter set to true can be cancelled." | <https://developers.openai.com/api/reference/resources/responses/methods/cancel/> |
+| `control` | 2 | rollback: Skills API set default version pointer (default_version) | "Update the default version pointer for a skill." | <https://developers.openai.com/api/reference/resources/skills/methods/update> |
+| `control` | 2 | failure injection: `ModelStep.raise_error()` in Agents SDK testing module | "Use ModelStep.raise_error() to fail one model call." | <https://openai.github.io/openai-agents-python/testing/> |
 
-Not verified: `control`.
+Not verified: none. Every capability has at least one verified row. This does not mean that the platform fully supports the capability.
 
 ## LangGraph with LangSmith
 
@@ -150,6 +159,15 @@ Not verified: `control`.
 | `control` | 2 | Cancel run (interrupt/rollback); assistant `set_latest` version; cron jobs | "You can cancel a single run by ID or cancel multiple runs by thread or status." | <https://docs.langchain.com/langsmith/cancel-run> |
 
 Not verified: none. Every capability has at least one verified row. This does not mean that the platform fully supports the capability.
+
+## OpenTelemetry semantic conventions for generative AI
+
+A trace standard, not a platform. The passes reported only `traces` for it.
+
+| Capability | Passes with a verified quote (of 2) | Documented mechanism (label, not checked) | Quote (verified on the page) | Page |
+|---|---|---|---|---|
+| `traces` | 2 | GenAI semantic conventions (agent spans) | "This document defines semantic conventions for GenAI agent calls that are defined by this whitepaper." | <https://github.com/open-telemetry/semantic-conventions-genai/blob/main/docs/gen-ai/gen-ai-agent-spans.md> |
+| `traces` | 2 | gen_ai.client.inference, invoke_agent, execute_tool, retrieval, embeddings spans; gen_ai.* attributes | "GenAI spans represent logical operations as observed by the caller." | <https://raw.githubusercontent.com/open-telemetry/semantic-conventions-genai/main/docs/gen-ai/gen-ai-spans.md> |
 
 ## Method, for a repeat
 

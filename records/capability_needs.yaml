@@ -1,9 +1,12 @@
-# DRAFT. The needs that two independent model passes agree on. Nobody has checked them at each line yet.
-# `needed`: the capabilities that both passes mark as needed. `lines`: the FAIAS lines (file:line, relative to
-# the FAIAS tree) that either pass cites for those capabilities. `open`: present only where the two passes differ;
-# it lists the needed set of each pass. The order of the two passes has no meaning.
+# DRAFT. Two independent model passes read the Preconditions of each procedure. Where they agree, `needed` is their
+# common set; nobody has checked these entries at each line (5 of them were spot-checked in 0.2.0). Where they
+# differed, a third reading, also a model, read the lines: it settled 17 entries and left 2 open.
+# `needed`: the capabilities that the procedure needs. `lines`: the FAIAS lines (file:line, relative to the FAIAS
+# tree) that a pass or a note cites. `settled`: present where the passes differed and the third reading decided; it
+# keeps the set of each pass and a note with the reason. `open`: present where the passes differ and nothing is
+# decided; it lists the set of each pass and can carry a note. The order of the two passes has no meaning.
 # This is an input file. No tool in this repository writes it. tools/check_records.py checks its form and its lines.
-status: 'draft: the needs that two independent model passes agree on; not yet checked at each line by a person; open entries list where the passes differ'
+status: 'draft: 26 entries are the needs that two independent model passes agree on, not checked at each line (5 spot-checked); 17 entries where the passes differed are settled at the Preconditions lines by a third reading, also a model, not a person; 2 entries stay open'
 needs:
   TP-AGT-002:
     needed: [conversation, traces, tool_routing]
@@ -11,9 +14,10 @@ needs:
   TP-AGT-003:
     needed: [conversation, tool_routing, config_read]
     lines: ['V3_Testing_Playbook/PLAYBOOK_AGT_003.md:11', 'V3_Testing_Playbook/PLAYBOOK_AGT_003.md:12']
-    open:
+    settled:
       pass_1: [conversation, tool_routing, config_read]
       pass_2: [conversation, traces, tool_routing, config_read]
+      note: 'traces: not needed. Line 12 asks for production tool-invocation telemetry (aggregate), a production record that the firm hands over, not a capability of the system under test.'
   TP-AGT-004:
     needed: [conversation, tool_routing, config_read]
     lines: ['V3_Testing_Playbook/PLAYBOOK_AGT_004.md:11', 'V3_Testing_Playbook/PLAYBOOK_AGT_004.md:12']
@@ -24,11 +28,12 @@ needs:
     needed: [conversation, state_read, data_seeding]
     lines: ['V3_Testing_Playbook/PLAYBOOK_AGT_008.md:11', 'V3_Testing_Playbook/PLAYBOOK_AGT_008.md:12']
   TP-AGT-009:
-    needed: [config_read]
+    needed: [conversation, config_read]
     lines: ['V3_Testing_Playbook/PLAYBOOK_AGT_009.md:11', 'V3_Testing_Playbook/PLAYBOOK_AGT_009.md:12']
-    open:
+    settled:
       pass_1: [config_read]
       pass_2: [conversation, traces, config_read]
+      note: 'conversation: needed. Line 11 asks for a staging copy of the agent, and line 12 asks for the behavioural regression suite and every route that reaches the running agent. traces: not needed. No line asks for per-turn records; the monitoring configured to attribute drift (line 12) is configuration.'
   TP-AGT-010:
     needed: [conversation, traces, tool_routing, config_read]
     lines: ['V3_Testing_Playbook/PLAYBOOK_AGT_010.md:11', 'V3_Testing_Playbook/PLAYBOOK_AGT_010.md:12']
@@ -37,40 +42,45 @@ needs:
     lines: ['V3_Testing_Playbook/PLAYBOOK_AGT_012.md:11', 'V3_Testing_Playbook/PLAYBOOK_AGT_012.md:12']
   TP-AGT-014:
     needed: [tool_routing, config_read]
-    lines: ['V3_Testing_Playbook/PLAYBOOK_AGT_014.md:11', 'V3_Testing_Playbook/PLAYBOOK_AGT_014.md:12']
+    lines: ['V3_Testing_Playbook/PLAYBOOK_AGT_014.md:11', 'V3_Testing_Playbook/PLAYBOOK_AGT_014.md:12', 'V3_Testing_Playbook/PLAYBOOK_AGT_014.md:33', 'V3_Testing_Playbook/PLAYBOOK_AGT_014.md:35']
     open:
       pass_1: [tool_routing, config_read]
       pass_2: [conversation, tool_routing, config_read]
+      note: 'Not settled. The Preconditions (lines 11 and 12) name only tool_routing and config_read. Steps 5 and 7 (lines 33 and 35) run the agent and read its full traces, so conversation and traces may be needed although no Preconditions line names them.'
   TP-CON-001:
     needed: [conversation, config_read]
     lines: ['V3_Testing_Playbook/PLAYBOOK_CON_001.md:11', 'V3_Testing_Playbook/PLAYBOOK_CON_001.md:12']
   TP-CON-002:
     needed: [conversation]
-    lines: ['V3_Testing_Playbook/PLAYBOOK_CON_002.md:11', 'V3_Testing_Playbook/PLAYBOOK_CON_002.md:12']
-    open:
+    lines: ['V3_Testing_Playbook/PLAYBOOK_CON_002.md:11', 'V3_Testing_Playbook/PLAYBOOK_CON_002.md:12', 'V3_Testing_Playbook/PLAYBOOK_CON_002.md:68']
+    settled:
       pass_1: [conversation]
       pass_2: [conversation, config_read]
+      note: 'config_read: not needed. Line 12 asks for the complete model input feature list, and line 68 says to insist on the pipeline-level dictionary: a document that the firm hands over.'
   TP-DAT-006:
     needed: [data_seeding, config_read]
     lines: ['V3_Testing_Playbook/PLAYBOOK_DAT_006.md:11', 'V3_Testing_Playbook/PLAYBOOK_DAT_006.md:12', 'V3_Testing_Playbook/PLAYBOOK_DAT_006.md:14']
   TP-DAT-007:
     needed: [conversation, data_seeding, config_read]
-    lines: ['V3_Testing_Playbook/PLAYBOOK_DAT_007.md:11', 'V3_Testing_Playbook/PLAYBOOK_DAT_007.md:12']
-    open:
+    lines: ['V3_Testing_Playbook/PLAYBOOK_DAT_007.md:11', 'V3_Testing_Playbook/PLAYBOOK_DAT_007.md:12', 'V3_Testing_Playbook/PLAYBOOK_DAT_007.md:14']
+    settled:
       pass_1: [conversation, data_seeding, config_read, control]
       pass_2: [conversation, data_seeding, config_read]
+      note: 'control: not needed. Line 11 asks for a replica resettable to a known baseline, and line 14 gives seeding and reset to the RAG platform engineer. A reset of the store is a write to it (data_seeding), not a kill switch, rollback, version switch or failure injection.'
   TP-DAT-008:
     needed: [conversation, traces, data_seeding, config_read]
     lines: ['V3_Testing_Playbook/PLAYBOOK_DAT_008.md:11', 'V3_Testing_Playbook/PLAYBOOK_DAT_008.md:12']
-    open:
+    settled:
       pass_1: [conversation, traces, data_seeding, config_read, control]
       pass_2: [conversation, traces, data_seeding, config_read]
+      note: 'control: not needed, as for TP-DAT-007. Line 11 asks for the replica reset to baseline.'
   TP-DAT-009:
-    needed: [conversation, data_seeding, config_read]
+    needed: [conversation, traces, data_seeding, config_read]
     lines: ['V3_Testing_Playbook/PLAYBOOK_DAT_009.md:11', 'V3_Testing_Playbook/PLAYBOOK_DAT_009.md:12']
-    open:
+    settled:
       pass_1: [conversation, state_read, data_seeding, config_read]
       pass_2: [conversation, traces, data_seeding, config_read]
+      note: 'traces: needed. Line 12 asks for the access logs of the replica, which record each retrieval. state_read: not needed. No line asks for back-office or decision-store state.'
   TP-DAT-010:
     needed: [state_read, data_seeding, control]
     lines: ['V3_Testing_Playbook/PLAYBOOK_DAT_010.md:11', 'V3_Testing_Playbook/PLAYBOOK_DAT_010.md:12']
@@ -81,11 +91,12 @@ needs:
     needed: [conversation, data_seeding, config_read, control]
     lines: ['V3_Testing_Playbook/PLAYBOOK_DAT_012.md:11', 'V3_Testing_Playbook/PLAYBOOK_DAT_012.md:12']
   TP-GOV-003:
-    needed: [conversation, config_read]
+    needed: [conversation, traces, config_read]
     lines: ['V3_Testing_Playbook/PLAYBOOK_GOV_003.md:11', 'V3_Testing_Playbook/PLAYBOOK_GOV_003.md:12']
-    open:
+    settled:
       pass_1: [conversation, state_read, config_read]
       pass_2: [conversation, traces, config_read]
+      note: 'traces: needed. Line 12 asks for read access to usage logs, production or production-representative; in a staging replica these are the per-turn records. state_read: not needed. No line asks for back-office or decision-store state.'
   TP-GOV-013:
     needed: [state_read, config_read]
     lines: ['V3_Testing_Playbook/PLAYBOOK_GOV_013.md:11', 'V3_Testing_Playbook/PLAYBOOK_GOV_013.md:12']
@@ -94,10 +105,11 @@ needs:
     lines: ['V3_Testing_Playbook/PLAYBOOK_MOD_001.md:11', 'V3_Testing_Playbook/PLAYBOOK_MOD_001.md:12']
   TP-MOD-002:
     needed: [conversation, control]
-    lines: ['V3_Testing_Playbook/PLAYBOOK_MOD_002.md:11', 'V3_Testing_Playbook/PLAYBOOK_MOD_002.md:12']
-    open:
+    lines: ['V3_Testing_Playbook/PLAYBOOK_MOD_002.md:11', 'V3_Testing_Playbook/PLAYBOOK_MOD_002.md:12', 'V3_Testing_Playbook/PLAYBOOK_MOD_002.md:13']
+    settled:
       pass_1: [conversation, control]
       pass_2: [conversation, traces, config_read, control]
+      note: 'traces and config_read: not needed. Line 13 asks for the version-pinning configuration for production traffic, a production record that the firm hands over. Line 11 asks for version-pinned access to two versions, which is control. No line asks for per-turn records.'
   TP-MOD-008:
     needed: [conversation]
     lines: ['V3_Testing_Playbook/PLAYBOOK_MOD_008.md:11', 'V3_Testing_Playbook/PLAYBOOK_MOD_008.md:12']
@@ -106,31 +118,35 @@ needs:
     lines: ['V3_Testing_Playbook/PLAYBOOK_MOD_009.md:11', 'V3_Testing_Playbook/PLAYBOOK_MOD_009.md:12']
   TP-MOD-010:
     needed: [conversation, config_read]
-    lines: ['V3_Testing_Playbook/PLAYBOOK_MOD_010.md:11', 'V3_Testing_Playbook/PLAYBOOK_MOD_010.md:12']
-    open:
+    lines: ['V3_Testing_Playbook/PLAYBOOK_MOD_010.md:11', 'V3_Testing_Playbook/PLAYBOOK_MOD_010.md:12', 'V3_Testing_Playbook/PLAYBOOK_MOD_010.md:42']
+    settled:
       pass_1: [conversation, config_read]
       pass_2: [conversation, data_seeding, config_read]
+      note: 'data_seeding: not needed by a Preconditions line. Line 12 asks for access to the rule or policy set, not for a write to it. For a system that keeps its policy set in a knowledge store, the policy-shift run (step 7, line 42) may need data_seeding. Check this for such a system.'
   TP-MOD-011:
     needed: [conversation]
     lines: ['V3_Testing_Playbook/PLAYBOOK_MOD_011.md:11', 'V3_Testing_Playbook/PLAYBOOK_MOD_011.md:12']
-    open:
+    settled:
       pass_1: [conversation]
       pass_2: [conversation, state_read]
+      note: 'state_read: not needed. Line 12 asks for model-selection decision records: documents that the firm hands over, not the decision store of the system.'
   TP-MOD-013:
-    needed: [config_read, control]
+    needed: [conversation, config_read, control]
     lines: ['V3_Testing_Playbook/PLAYBOOK_MOD_013.md:11', 'V3_Testing_Playbook/PLAYBOOK_MOD_013.md:12']
-    open:
+    settled:
       pass_1: [config_read, control]
       pass_2: [conversation, config_read, control]
+      note: 'conversation: needed. Line 11 asks for staging with non-production deployment pathways to exercise, and line 12 asks for the regression suite, which runs through the system. As for TP-AGT-009.'
   TP-MOD-014:
     needed: [conversation, config_read, control]
     lines: ['V3_Testing_Playbook/PLAYBOOK_MOD_014.md:11', 'V3_Testing_Playbook/PLAYBOOK_MOD_014.md:12', 'V3_Testing_Playbook/PLAYBOOK_MOD_014.md:13']
   TP-MOD-016:
     needed: [conversation, config_read]
     lines: ['V3_Testing_Playbook/PLAYBOOK_MOD_016.md:11', 'V3_Testing_Playbook/PLAYBOOK_MOD_016.md:12', 'V3_Testing_Playbook/PLAYBOOK_MOD_016.md:13']
-    open:
+    settled:
       pass_1: [conversation, config_read, control]
       pass_2: [conversation, config_read]
+      note: 'control: not needed by a line. Line 12 asks for a staging replica that runs the task set at a pinned configuration under two framings. If the framing is in the system prompt and not in the input, a switch of it needs control. Check this for each system.'
   TP-RES-002:
     needed: [conversation, tool_routing, config_read, control]
     lines: ['V3_Testing_Playbook/PLAYBOOK_RES_002.md:11', 'V3_Testing_Playbook/PLAYBOOK_RES_002.md:12', 'V3_Testing_Playbook/PLAYBOOK_RES_002.md:13', 'V3_Testing_Playbook/PLAYBOOK_RES_002.md:14']
@@ -138,17 +154,19 @@ needs:
     needed: [conversation, traces, tool_routing, control]
     lines: ['V3_Testing_Playbook/PLAYBOOK_RES_003.md:11', 'V3_Testing_Playbook/PLAYBOOK_RES_003.md:12', 'V3_Testing_Playbook/PLAYBOOK_RES_003.md:13']
   TP-RES-004:
-    needed: [config_read, control]
-    lines: ['V3_Testing_Playbook/PLAYBOOK_RES_004.md:12', 'V3_Testing_Playbook/PLAYBOOK_RES_004.md:13']
-    open:
+    needed: [conversation, config_read, control]
+    lines: ['V3_Testing_Playbook/PLAYBOOK_RES_004.md:12', 'V3_Testing_Playbook/PLAYBOOK_RES_004.md:13', 'V3_Testing_Playbook/PLAYBOOK_RES_004.md:16']
+    settled:
       pass_1: [config_read, control]
       pass_2: [conversation, data_seeding, config_read, control]
+      note: 'conversation: needed. Line 12 asks for a behavioural regression test suite that can be run against a restored state. data_seeding: not needed. Line 13 asks to introduce and then revert a defect through the staging deployment pipeline, which is control. Line 16 asks for a memory store with synthetic session history only, which synthetic sessions can make.'
   TP-RES-006:
-    needed: [config_read]
+    needed: [data_seeding, config_read]
     lines: ['V3_Testing_Playbook/PLAYBOOK_RES_006.md:11', 'V3_Testing_Playbook/PLAYBOOK_RES_006.md:12', 'V3_Testing_Playbook/PLAYBOOK_RES_006.md:13']
-    open:
+    settled:
       pass_1: [data_seeding, config_read]
       pass_2: [config_read, control]
+      note: 'data_seeding: needed. Line 13 asks to replay a synthetic time series through the alerting configuration in an isolated instance: a write to an ingestion route. control: not needed. The replay is input data, not a kill switch, rollback, version switch or failure injection.'
   TP-SEC-001:
     needed: [conversation, config_read]
     lines: ['V3_Testing_Playbook/PLAYBOOK_SEC_001.md:8', 'V3_Testing_Playbook/PLAYBOOK_SEC_001.md:9', 'V3_Testing_Playbook/PLAYBOOK_SEC_001.md:10']
@@ -157,16 +175,18 @@ needs:
     lines: ['V3_Testing_Playbook/PLAYBOOK_SEC_002.md:9']
   TP-SEC-003:
     needed: [conversation, tool_routing, data_seeding]
-    lines: ['V3_Testing_Playbook/PLAYBOOK_SEC_003.md:8', 'V3_Testing_Playbook/PLAYBOOK_SEC_003.md:9', 'V3_Testing_Playbook/PLAYBOOK_SEC_003.md:11']
-    open:
+    lines: ['V3_Testing_Playbook/PLAYBOOK_SEC_003.md:8', 'V3_Testing_Playbook/PLAYBOOK_SEC_003.md:9', 'V3_Testing_Playbook/PLAYBOOK_SEC_003.md:11', 'V3_Testing_Playbook/PLAYBOOK_SEC_003.md:12']
+    settled:
       pass_1: [conversation, tool_routing, data_seeding]
       pass_2: [conversation, tool_routing, data_seeding, config_read]
+      note: 'config_read: not needed. Line 12 asks for context-assembly and sanitisation code, a document that the firm hands over, and for any injection-screening configuration, which the line makes optional.'
   TP-SEC-004:
-    needed: [conversation, tool_routing, config_read]
+    needed: [conversation, tool_routing, data_seeding, config_read]
     lines: ['V3_Testing_Playbook/PLAYBOOK_SEC_004.md:9', 'V3_Testing_Playbook/PLAYBOOK_SEC_004.md:10', 'V3_Testing_Playbook/PLAYBOOK_SEC_004.md:12']
-    open:
+    settled:
       pass_1: [conversation, tool_routing, config_read]
       pass_2: [conversation, tool_routing, data_seeding, config_read]
+      note: 'data_seeding: needed. Line 9 asks for a test inbox and staged web pages that the reviewer controls: routes for untrusted content that the reviewer writes to.'
   TP-SEC-005:
     needed: [conversation, data_seeding, config_read]
     lines: ['V3_Testing_Playbook/PLAYBOOK_SEC_005.md:8', 'V3_Testing_Playbook/PLAYBOOK_SEC_005.md:10', 'V3_Testing_Playbook/PLAYBOOK_SEC_005.md:11']
@@ -174,11 +194,12 @@ needs:
     needed: [conversation, config_read]
     lines: ['V3_Testing_Playbook/PLAYBOOK_SEC_006.md:8', 'V3_Testing_Playbook/PLAYBOOK_SEC_006.md:9', 'V3_Testing_Playbook/PLAYBOOK_SEC_006.md:10', 'V3_Testing_Playbook/PLAYBOOK_SEC_006.md:11', 'V3_Testing_Playbook/PLAYBOOK_SEC_006.md:12']
   TP-SEC-008:
-    needed: [conversation, config_read]
+    needed: [conversation, traces, config_read]
     lines: ['V3_Testing_Playbook/PLAYBOOK_SEC_008.md:8', 'V3_Testing_Playbook/PLAYBOOK_SEC_008.md:9', 'V3_Testing_Playbook/PLAYBOOK_SEC_008.md:11', 'V3_Testing_Playbook/PLAYBOOK_SEC_008.md:13']
-    open:
+    settled:
       pass_1: [conversation, config_read]
       pass_2: [conversation, traces, config_read]
+      note: 'traces: needed. Line 8 asks for staging telemetry, observability and logging that match production, and line 13 asks to trace the egress of synthetic marker content; the test reads where the content goes.'
   TP-SEC-010:
     needed: [conversation, tool_routing, config_read]
     lines: ['V3_Testing_Playbook/PLAYBOOK_SEC_010.md:8', 'V3_Testing_Playbook/PLAYBOOK_SEC_010.md:9', 'V3_Testing_Playbook/PLAYBOOK_SEC_010.md:11']
@@ -193,7 +214,8 @@ needs:
     lines: ['V3_Testing_Playbook/PLAYBOOK_SEC_014.md:10', 'V3_Testing_Playbook/PLAYBOOK_SEC_014.md:11']
   TP-TPR-006:
     needed: [conversation, config_read, control]
-    lines: ['V3_Testing_Playbook/PLAYBOOK_TPR_006.md:8', 'V3_Testing_Playbook/PLAYBOOK_TPR_006.md:9', 'V3_Testing_Playbook/PLAYBOOK_TPR_006.md:12']
+    lines: ['V3_Testing_Playbook/PLAYBOOK_TPR_006.md:8', 'V3_Testing_Playbook/PLAYBOOK_TPR_006.md:9', 'V3_Testing_Playbook/PLAYBOOK_TPR_006.md:10', 'V3_Testing_Playbook/PLAYBOOK_TPR_006.md:12', 'V3_Testing_Playbook/PLAYBOOK_TPR_006.md:13']
     open:
       pass_1: [conversation, config_read, control]
       pass_2: [conversation, state_read, data_seeding, config_read, control]
+      note: 'Partly settled. data_seeding: needed (lines 9 and 10 ask for a synthetic corpus with known relevant documents, and prefer it). state_read: not settled. Line 13 asks to exercise the export of the vector database against the staging instance, and none of the seven capabilities reads the knowledge store. This is an open point about the interface.'

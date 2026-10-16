@@ -34,4 +34,4 @@ A second build gives byte-identical files. The checker compares each record with
 - The records copy what FAIAS states. They do not add test steps. FAIAS states the steps.
 - The records copy the ★ rating of each procedure. The harness never computes it.
 - The 45 procedures are those whose core observations come from running a system and that need no human labelling or judgement of outputs. FAIAS has 109 procedures. This folder does not cover the others.
-- The capability needs are a draft: the needs on which two independent model passes agree. Nobody has checked them at each line. See `docs/ARCHITECTURE.md`, section 9.
+- The capability needs are a draft: 26 entries on which two independent model passes agree, 17 entries settled at the lines by a third reading (also a model) and 2 open entries. No person has checked them. See `docs/ARCHITECTURE.md`, section 9.

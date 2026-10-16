@@ -4,8 +4,8 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "faias-harness"
-version = "0.1.0"
-description = "A test harness for FAIAS, the Financial AI Independent Assurance Standard (version 0.1: design, records and preflight)."
+version = "0.2.0"
+description = "A test harness for FAIAS, the Financial AI Independent Assurance Standard (version 0.2: design, records and preflight)."
 readme = "README.md"
 requires-python = ">=3.11"
 license = { text = "Apache-2.0" }

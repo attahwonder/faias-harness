@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.2.0 (16 October 2026)
+
+Second release. It settles most of the capability needs, completes the platform survey and adds to the SRD-1 specification. It still runs no test.
+
+- `records/capability_needs.yaml`: a third reading, also a model, settled 17 of the 19 entries where the two passes differed, at the Preconditions lines. Each settled entry keeps both sets and a note with the reason and the lines. 2 entries stay open (TP-AGT-014 and TP-TPR-006). 5 of the 26 agreed entries were spot-checked, and no error was found.
+- `tools/check_records.py` checks the `settled` entries. Its seeded-fault test has 8 faults.
+- The preflight counts in `docs/ARCHITECTURE.md` follow the settled needs.
+- `targets/srd1/SPEC.md` (version 0.2): rows A-09 and S-03 state that SRD-1 keeps a change log and usage logs from its first version, and A-21 lists the trace and decision store. `targets/srd1/profile.yaml`: 6 rows changed, 3 of them to `met` (TP-GOV-003 access and artefacts, TP-MOD-014 artefacts).
+- `docs/PLATFORMS.md` lists the two OpenTelemetry rows. The check now also reads the project's own repository for that specification, and found both quotes on 16 October 2026.
+- `docs/PLATFORMS.md`: a second round asked both passes about OpenAI `control`. The check found all 8 quotes on the page, so every platform now has a verified row for each of the seven capabilities. The survey holds 84 of 87 rows.
+
 ## 0.1.0 (16 October 2026)
 
 First release. It shows the design and the direction. It runs no test.

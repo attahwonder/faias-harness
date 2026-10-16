@@ -6,13 +6,13 @@ It prints, for each procedure with a record, the capabilities it needs, the capa
 a result: full, partly or none. Full: every need is present. None: the procedure needs `conversation` and the
 profile lacks it, or every need is missing. Partly: anything else.
 The capability needs are a DRAFT (records/capability_needs.yaml): the needs that two independent model passes
-agree on. A procedure with an open entry in that file is one where the two passes differ.
+agree on, or that a third reading settled where they differed. A procedure with an open entry is not settled.
 
 With --start, it refuses unless the isolation attestation file exists and is not empty, and the settings
-provider, model_id and cap_usd are set. Version 0.1 has no run engine. Even when every condition is met,
+provider, model_id and cap_usd are set. Version 0.2 has no run engine. Even when every condition is met,
 it starts nothing.
 
-Exit codes: 0 table printed; 2 start refused or profile invalid; 3 start conditions met, but v0.1 has no run engine.
+Exit codes: 0 table printed; 2 start refused or profile invalid; 3 start conditions met, but v0.2 has no run engine.
 """
 import argparse
 import sys
@@ -102,7 +102,7 @@ def report(profile, needs, records_dir=RECORDS_DIR):
         print(f"Status: {profile.status}")
     print(f"Capabilities offered: {', '.join(profile.capabilities) or 'none'}")
     print("Capability needs are a DRAFT: see records/capability_needs.yaml. "
-          f"{len(open_entries())} of {len(needs)} procedures have an open entry (the two passes differ).")
+          f"{len(open_entries())} of {len(needs)} procedures have an open entry (the two passes differ; not settled).")
     print()
     counts = {"full": 0, "partly": 0, "none": 0}
     for tp in sorted(needs):
@@ -130,7 +130,7 @@ def report(profile, needs, records_dir=RECORDS_DIR):
 def main(argv=None):
     ap = argparse.ArgumentParser(prog="faias_harness.preflight", description=__doc__.split("\n\n")[0])
     ap.add_argument("--profile", required=True, help="path to a target profile YAML")
-    ap.add_argument("--start", action="store_true", help="check the start conditions; v0.1 never starts a run")
+    ap.add_argument("--start", action="store_true", help="check the start conditions; v0.2 never starts a run")
     a = ap.parse_args(argv)
     try:
         profile = load_profile(a.profile)
@@ -150,7 +150,7 @@ def main(argv=None):
             print(f"  - {p}")
         return 2
     print("Start conditions are met.")
-    print("No run starts: no run engine in v0.1.")
+    print("No run starts: no run engine in v0.2.")
     return 3
 
 

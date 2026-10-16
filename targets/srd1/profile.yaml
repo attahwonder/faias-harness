@@ -107,12 +107,12 @@ precondition_map:
   TP-DAT-012:
     environment: {status: met, ids: [C-05]}
     access: {status: met, ids: [C-05, C-16]}
-    artefacts: {status: partly, ids: [A-08], note: "No corpus change history or past re-index events"}
+    artefacts: {status: partly, ids: [A-08, A-09], note: "The A-09 change log holds corpus change history, corpus volume and re-index events from the first version (build phase only); history from production: none (principle 4). Canary testing: none; the line makes it optional"}
     personnel: {status: met, ids: [R-01, R-03, R-07], note: "R-07: the vendor-management role is declared"}
   TP-GOV-003:
     environment: {status: met, ids: [C-01, C-10, H-01]}
-    access: {status: partly, ids: [A-02, C-15, C-17], note: "No production usage logs"}
-    artefacts: {status: partly, ids: [A-02, A-10], note: "No change records over a review period"}
+    access: {status: met, ids: [A-02, C-15, C-17, S-03], note: "Usage logs are production-representative, as the line allows: S-03 traffic recorded by the one logging configuration (C-15) with task type, synthetic user identity and timestamp"}
+    artefacts: {status: met, ids: [A-02, A-09, A-10, S-03], note: "Change records: the A-09 change log from the first version. Usage logs for the review period: S-03 traffic in C-15; the review period runs from the first version to the run"}
     personnel: {status: met, ids: [R-01, R-03, R-04]}
   TP-GOV-013:
     environment: {status: met, ids: [C-15, H-03]}
@@ -152,12 +152,12 @@ precondition_map:
   TP-MOD-013:
     environment: {status: met, ids: [C-17]}
     access: {status: met, ids: [C-17]}
-    artefacts: {status: partly, ids: [A-09], note: "No change-approval history or incidents over a period"}
+    artefacts: {status: partly, ids: [A-09], note: "Change-approval records: the A-09 change log from the first version (build phase only). Incidents over a period: none (principle 4)"}
     personnel: {status: met, ids: [R-01, R-03, R-07], note: "R-07: the change-control owner role is declared. The prompt editor is R-03; the lead reviewer (R-01) interviews R-03 on informal routes"}
   TP-MOD-014:
     environment: {status: met, ids: [C-03, C-04]}
     access: {status: met, ids: [C-03, C-04, C-17]}
-    artefacts: {status: partly, ids: [A-01, A-03], note: "No change-control records for a review period yet. Prior stability tests and resubmission logs: none; the line makes it optional"}
+    artefacts: {status: met, ids: [A-01, A-03, A-09], note: "Change-control records: the A-09 change log from the first version. Prior stability tests and resubmission logs: none; the line makes it optional"}
     personnel: {status: met, ids: [R-01, R-03, R-04]}
   TP-MOD-016:
     environment: {status: met, ids: [C-04, C-17], note: "The comparison with production inputs is conditional in the line and is not performed (principle 4)"}
@@ -186,7 +186,7 @@ precondition_map:
     personnel: {status: met, ids: [R-01, R-03]}
   TP-SEC-001:
     environment: {status: met, ids: [C-04, C-10, H-01]}
-    access: {status: partly, ids: [C-17], note: "No release-governance records for two past changes yet; met if two changes pass A-09 change control before the run"}
+    access: {status: partly, ids: [C-17, A-09], note: "The A-09 change log runs from the first version. Met when two model or prompt changes have passed A-09 before the run; no change is made only to fill the log (principle 1)"}
     artefacts: {status: met, ids: [H-03]}
     personnel: {status: met, ids: [R-01, R-03, R-04]}
   TP-SEC-002:

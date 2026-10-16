@@ -5,9 +5,9 @@
 Steps:
   1. rebuild the records twice: the output is byte-identical, and equal to the files in the repository
   2. check_records passes
-  3. the seeded-fault test passes (6 faults caught: 4 in records, 2 in the capability needs)
+  3. the seeded-fault test passes (8 faults caught: 4 in records, 4 in the capability needs)
   4. preflight: the SRD-1 profile gives 45 full; the example profiles give stable, correct counts;
-     --start refuses without an attestation file and without settings; v0.1 starts nothing
+     --start refuses without an attestation file and without settings; v0.2 starts nothing
   5. the firm-values file of SRD-1 lists exactly the keys of the records
   6. the sweep for barred terms and key-like strings finds 0 hits
 """
@@ -98,7 +98,7 @@ def main():
 
     print("3. seeded faults")
     rc, out = run(["tools/test_check_records.py", "--faias", faias])
-    expect(rc == 0 and "6 seeded faults caught" in out, f"test_check_records failed: {out[-400:]}")
+    expect(rc == 0 and "8 seeded faults caught" in out, f"test_check_records failed: {out[-400:]}")
     print("  ", out.strip().splitlines()[-1])
 
     print("4. preflight")
@@ -124,7 +124,7 @@ def main():
         empty.write_text("  \n", encoding="utf-8")
         good = dict(provider="example-provider", model_id="example-model", cap_usd=5.0)
         rc, out = preflight(write_profile(tmp / "ok.yaml", att, **good), "--start")
-        expect(rc == 3 and "no run engine in v0.1" in out, f"start with every condition met: exit {rc}, {out[-200:]}")
+        expect(rc == 3 and "no run engine in v0.2" in out, f"start with every condition met: exit {rc}, {out[-200:]}")
         rc, out = preflight(write_profile(tmp / "empty.yaml", empty, **good), "--start")
         expect(rc == 2 and "empty" in out, "--start did not refuse an empty attestation file")
         rc, out = preflight(write_profile(tmp / "nocap.yaml", att, provider="example-provider", model_id="example-model"), "--start")

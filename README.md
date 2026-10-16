@@ -1,29 +1,29 @@
 # FAIAS harness
 
-An open-source test harness for FAIAS, the Financial AI Independent Assurance Standard. The harness is planned to run the FAIAS test procedures against an AI system in a test environment. A firm describes its own system in a target profile. The harness reaches that system through one target interface. This repository holds version 0.1: the design, the procedure records, a record checker and a preflight. It does not run tests.
+An open-source test harness for FAIAS, the Financial AI Independent Assurance Standard. The harness is planned to run the FAIAS test procedures against an AI system in a test environment. A firm describes its own system in a target profile. The harness reaches that system through one target interface. This repository holds version 0.2: the design, the procedure records, a record checker and a preflight. It does not run tests.
 
-## Status: version 0.1
+## Status: version 0.2
 
 **What works now**
 
 - **Records.** One generic record for each of 45 FAIAS test procedures, built from the published standard. Each copied item carries its file and line (`records/`).
-- **Record checker.** It compares every record with the FAIAS source lines (`tools/check_records.py`). It also checks the form of the capability needs and the FAIAS lines that they cite. A test seeds six faults and confirms that the checker catches them.
+- **Record checker.** It compares every record with the FAIAS source lines (`tools/check_records.py`). It also checks the form of the capability needs and the FAIAS lines that they cite. A test seeds eight faults and confirms that the checker catches them.
 - **Preflight.** It compares a target profile with the draft capability needs of each procedure and prints which procedures can run in full, in part, or not at all (`faias_harness/preflight.py`). It makes no network call.
-- **Platform survey.** `docs/PLATFORMS.md` lists what the public documentation of six agent platforms says about the seven capabilities. On 16 October 2026, a script found the quote of 76 of 79 survey rows on the vendor page. The survey is documentation only. It is not an adapter and not a test.
+- **Platform survey.** `docs/PLATFORMS.md` lists what the public documentation of six agent platforms says about the seven capabilities. On 16 October 2026, a script found the quote of 84 of 87 survey rows on the vendor page. The survey is documentation only. It is not an adapter and not a test.
 
 **What does not work**
 
 - The harness runs no test. It has no run engine.
 - No adapter is tested. One adapter is written and untested. The harness supports no platform.
 - SRD-1, the example reference system in `targets/srd1/`, is not built. Its profile and specification are drafts.
-- The capability needs are a draft. They hold the needs on which two independent model passes agree. Nobody has checked them at each line. For 19 of the 45 procedures the two passes differ, and the file shows both sets as an open entry.
+- The capability needs are a draft. Two independent model passes read the Preconditions of each procedure. For 26 procedures they agree, and nobody has checked these entries at each line. For the 19 where they differed, a third reading, also a model, settled 17 at the lines and left 2 open. No person has checked the file.
 
 ## Safety rules
 
 These rules come first. They bind every use of the harness.
 
 1. **Never test production.** Run the harness only against test or staging systems. The preflight cannot check whether a system is a production system. The operator carries that duty. FAIAS states the same rule for reviewers (`00_Admin/METHODOLOGY_STANDARDS.md`, "Non-Production Rule").
-2. **No run without an isolation attestation.** The profile names an attestation file. The preflight refuses to start without one. Version 0.1 checks that the file exists and is not empty. It does not check what the file says.
+2. **No run without an isolation attestation.** The profile names an attestation file. The preflight refuses to start without one. Version 0.2 checks that the file exists and is not empty. It does not check what the file says.
 3. **Synthetic data only.** Do not use real customer data.
 4. **Inert test objectives.** A test item asks for a harmless marker, not for harmful content. See the benign-payload principle in `PLAYBOOK_SEC_001.md` of FAIAS.
 5. **Keys only in environment variables.** A key never goes in a file, a log or an error message. A profile holds the name of the variable, not the key.

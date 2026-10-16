@@ -54,12 +54,25 @@ def line_outside_file(r):
     r["needs"]["TP-SEC-001"]["lines"][0] = "V3_Testing_Playbook/PLAYBOOK_SEC_001.md:9999"
 
 
+def settled_outside_passes(r):
+    e = next(e for e in r["needs"].values() if "settled" in e)
+    both = e["settled"]["pass_1"] + e["settled"]["pass_2"]
+    e["needed"].append(next(c for c in check_records.CAPABILITIES if c not in both))
+
+
+def open_and_settled(r):
+    e = next(e for e in r["needs"].values() if "settled" in e)
+    e["open"] = {"pass_1": e["settled"]["pass_1"], "pass_2": e["settled"]["pass_2"]}
+
+
 CASES = [("wrong star", "TP-SEC-001", wrong_star, "does not equal the Confidence line"),
          ("number not at its line", "TP-SEC-003", number_moved, "number '90%' not at"),
          ("missing basis", "TP-AGT-004", no_basis, "basis None is not one of"),
          ("firm basis without a firm value key", "TP-AGT-002", firm_without_key, "firm basis without firm_value_key"),
          ("unknown capability in the needs file", "capability_needs", unknown_capability, "unknown capability 'telepathy'"),
-         ("needs line outside its file", "capability_needs", line_outside_file, "line outside the file")]
+         ("needs line outside its file", "capability_needs", line_outside_file, "line outside the file"),
+         ("settled needs outside both passes", "capability_needs", settled_outside_passes, "not drawn from the two passes"),
+         ("open and settled in one entry", "capability_needs", open_and_settled, "both open and settled")]
 
 
 def main():

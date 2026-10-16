@@ -1,6 +1,6 @@
 # SRD-1 — specification
 
-`targets/srd1/SPEC.md` · specification of a reference system, draft, version 0.1. **SRD-1 is planned. It is not built.** This file lists its components, data, documents and roles. `profile.yaml` in this folder maps the preconditions of the 45 procedures to the IDs below. The "worked case" is a planned safety case for SRD-1, built with FAIAS. It does not exist yet. Items marked "(assumption, to be validated)" are choices that nobody has confirmed.
+`targets/srd1/SPEC.md` · specification of a reference system, draft, version 0.2. **SRD-1 is planned. It is not built.** This file lists its components, data, documents and roles. `profile.yaml` in this folder maps the preconditions of the 45 procedures to the IDs below. The "worked case" is a planned safety case for SRD-1, built with FAIAS. It does not exist yet. Items marked "(assumption, to be validated)" are choices that nobody has confirmed.
 
 ## 1. What SRD-1 is
 
@@ -33,7 +33,7 @@ A synthetic retail-bank customer-service agent. A customer chats with it. It ans
 | C-12 | Case-note memory (L1) | Notes written and read back across sessions, with provenance tags (AI-written or system fact); derived embeddings, a cache and a backup; retention and erasure functions | AGT-008, DAT-010 |
 | C-13 | Document upload (L2) | Customer uploads a document (PDF or image, with an OCR route) as evidence for a complaint or refund; the agent reads it; it never enters the document store | SEC-004 |
 | C-14 | Agent identity and secrets | The agent's own credential per tool server, scoped, with a lifetime and a revocation function; secrets from environment variables; a marked synthetic placeholder secret for extraction tests | SEC-006, SEC-011 |
-| C-15 | Trace and decision store | Every prompt, retrieval, tool call, output, model ID, prompt version and configuration version; retention settings; a hash chain for tamper evidence; a decision store that can be queried by model version, configuration, prompt version and date | AGT-011, GOV-010, GOV-013, SEC-008 |
+| C-15 | Trace and decision store | Every prompt, retrieval, tool call, output, model ID, prompt version and configuration version; retention settings; a hash chain for tamper evidence; a decision store that can be queried by model version, configuration, prompt version and date | AGT-011, GOV-003, GOV-010, GOV-013, SEC-008 |
 | C-16 | Monitor and alerts | Metrics: input-topic mix, harmful-output rate, refusal rate, grounding failures, containment rate, alert counts; thresholds with trend logic; alerts to a test destination only; outcome metrics by customer subgroup (S-01 signals): refund grant rate and escalation rate, with the labels joined only in the monitoring calculation and never read by the agent | DAT-011, MOD-010, RES-006, CON-001, CON-002 |
 | C-17 | Configuration and change control | Prompts, decoding settings, model pin, index build and memory schema in version control; a regression suite that gates each change; a rollback procedure per component | AGT-009, MOD-013, RES-004 |
 | C-18 | Kill switch | An out-of-band stop for the agent and its in-flight tool calls, with a stated time-to-stop objective | AGT-012, RES-003 |
@@ -56,7 +56,7 @@ Harness-side items (built with the harness, not part of SRD-1):
 |---|---|---|
 | S-01 | Customers and accounts | Two entitlement domains; tenure and value bands; subgroup signals for fairness tests, with labels held in a separate store |
 | S-02 | Product, fee and policy documents | Terms, tariff of charges, rights information (the ground truth); superseded and current, draft and final, and regional pairs; complaint letters and emails. Procedures held as numbered steps with conditions, as in τ-Banking. The tariff uses the fee fields of the Open Banking PCA specification v2.4.0 (MIT), with synthetic values. Size at least τ-Banking's 698 documents, a public synthetic bank store (assumption, to be validated); no ratio to a real bank's store is available, so it stays a stated limit (TP-SEC-005) |
-| S-03 | Task distribution | Ordinary queries, seeded from Banking77 (CC BY 4.0, with attribution); core, adjacent and out-of-scope strata; complaint, refund and contact-change journeys |
+| S-03 | Task distribution | Ordinary queries, seeded from Banking77 (CC BY 4.0, with attribution); core, adjacent and out-of-scope strata; complaint, refund and contact-change journeys; SRD-1 serves this traffic from its first version, and the one logging configuration (C-15) records each event with its task type (the S-03 stratum), the synthetic user identity and the timestamp. These usage logs are production-representative, not production |
 | S-04 | Session histories | At least 3 tenants × 5 users × 20 sessions, with traceable markers (TP-DAT-010) |
 | S-05 | Labelled vulnerable-customer transcripts | Mapped to the four FG21/1 drivers; a second labeller |
 | S-06 | Input time series | For drift and decay injection |
@@ -74,7 +74,7 @@ Harness-side items (built with the harness, not part of SRD-1):
 | A-06 | Entitlement model |
 | A-07 | Memory design: what is written, provenance, validation before reuse, retention and erasure procedure; escalation to C-11 where a decision rests materially on carried-forward memory |
 | A-08 | Document-store procedure: metadata, precedence rule, ingestion routes, re-index policy, embedding pin; deduplication rule and reconciliation schedule |
-| A-09 | Change control: process for prompts, decoding, model and index changes; regression suite and its promotion rule; rollback per component with RTO and RPO |
+| A-09 | Change control: process for prompts, decoding, model and index changes; regression suite and its promotion rule; rollback per component with RTO and RPO; it runs from SRD-1's first version. Its change log, held with C-17, has one entry per prompt, decoding, model pin, index or task-scoping change (version, date, reason, approver, regression result), and holds corpus change history, corpus volume and each re-index event. Build-phase changes are its first entries. No change is made only to fill the log |
 | A-10 | Monitoring design and response playbooks: security playbooks (prompt injection, memory injection, retrieval poisoning) adapted from the CoSAI AI Incident Response Framework V1.0 under its OASIS notice; conduct playbooks (a wrong fee answer, a missed vulnerability) written new |
 | A-11 | Containment design: kill switch, time-to-stop objective, compensating actions per tool |
 | A-12 | Degraded-mode specification and reply templates |
@@ -86,7 +86,7 @@ Harness-side items (built with the harness, not part of SRD-1):
 | A-18 | Supported languages: English only (assumption, to be validated) |
 | A-19 | Fairness: outcome measures (refund grant rate, escalation rate), metric choice and its reasons |
 | A-20 | Decision-store schema, query function, retention schedule, and the owner of cohort remediation; the trigger for proactive cohort remediation: a defect signature from monitoring (C-16) or review starts a decision-store query and remediation by the cohort-remediation owner, with no inbound complaint needed; each activation is recorded with its cohort count |
-| A-21 | Data inventory: one row per store (case-note memory with its derived embeddings, cache, search index and backup; the conversation store; the document store), each with its owning role, the data held, its lawful basis, its retention rule and its erasure route |
+| A-21 | Data inventory: one row per store (case-note memory with its derived embeddings, cache, search index and backup; the conversation store; the document store; the trace and decision store (C-15), which holds the usage logs), each with its owning role, the data held, its lawful basis, its retention rule and its erasure route |
 
 ## 6. Roles (R)
 
