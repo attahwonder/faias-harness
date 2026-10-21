@@ -2,7 +2,7 @@
 
 The harness reaches every system under test through this one interface. No target has a private path.
 A target implements the method groups for the capabilities it exposes. Every other method raises
-NotImplementedError. Version 0.2 defines the interface only. No target implements it fully.
+NotImplementedError. Version 0.3 defines the interface. No target implements it fully.
 """
 from typing import Any, Protocol
 

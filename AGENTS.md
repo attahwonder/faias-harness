@@ -4,9 +4,9 @@ A guide for any person or software agent that works on this repository. It does 
 
 ## Purpose and status
 
-This repository is the FAIAS harness, version 0.2. FAIAS is the Financial AI Independent Assurance Standard. The harness is planned to run the FAIAS test procedures against an AI system in a test environment.
+This repository is the FAIAS harness, version 0.3. FAIAS is the Financial AI Independent Assurance Standard. The harness is planned to run the FAIAS test procedures against an AI system in a test environment.
 
-Version 0.2 holds the design, 45 procedure records, a record checker and a preflight. It runs no test. The working copy also holds an unreleased engine spike (version 0.3): one procedure, TP-SEC-001, on 20 items, run on SRD-1 minimal, tested against a local stand-in for the model host. It has run live through OpenRouter on 20 and 21 October 2026: six runs of 180 calls, against three hosted models. Those run logs are not in the repository. Its result is labelled "engine spike, not a finding". The harness supports no platform. Do not write text that says or implies more.
+Version 0.3 holds the design, 45 procedure records, a record checker, a preflight and an engine spike: one procedure, TP-SEC-001, on 20 items, run on SRD-1 minimal, tested against a local stand-in for the model host. It has run live through OpenRouter on 20 and 21 October 2026: six runs of 180 calls, against three hosted models. Those run logs are not in the repository. Its result is labelled "engine spike, not a finding". The harness supports no platform. Do not write text that says or implies more.
 
 ## Layout
 

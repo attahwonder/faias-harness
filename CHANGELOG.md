@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased (0.3.0)
+## 0.3.0 (21 October 2026)
 
 The first run engine, for one procedure. It is a spike: it checks that the engine works from end to end. Its result is labelled "engine spike, not a finding". The tests use a local stand-in for the model host. It has run live through OpenRouter on 20 and 21 October 2026: six runs of 180 calls, against three hosted models. Those run logs are not in the repository.
 
