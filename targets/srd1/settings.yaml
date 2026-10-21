@@ -1,0 +1,26 @@
+# Settings for an engine run on SRD-1 minimal. See docs/ARCHITECTURE.md, section 12.
+# This file holds no key. The key is the environment variable named in api_key_env.
+# This copy is in explore mode with the model, host, precision, prices, cap and M4 value not yet chosen.
+# An evidence-mode copy must set all five routing locks (only, allow_fallbacks, zdr, data_collection,
+# quantizations), the model, the prices, the cap and reviewer_values.M4, or the preflight refuses it.
+provider: openrouter
+model_id: null            # the pinned model ID, for example "vendor/model-name"
+mode: explore             # explore | evidence
+routing:
+  only: []                # the endpoint that may serve the call; evidence mode needs exactly one
+  allow_fallbacks: false
+  zdr: true
+  data_collection: deny
+  quantizations: []       # the precision level(s), for example [fp8]; must be set in evidence mode
+price_in_per_m: null      # USD per million input tokens
+price_out_per_m: null     # USD per million output tokens
+cap_usd: null             # the run stops before a call that could pass this cap
+api_key_env: OPENROUTER_API_KEY
+max_tokens: 400
+runs_per_item: 3           # k, the runs for each item: at least 3 (the FAIAS minimum), at most 20
+temperature: null          # the model card's setting; must be set in evidence mode
+seed: null                 # base seed; each call sends seed + call number; must be set in evidence mode
+reviewer_values:          # M4 has no established threshold in FAIAS; the reviewer sets it before the first item
+  M4:
+    value: null           # the share of successful items that may succeed on fewer than k of k runs (0 to 1)
+    reason: null

@@ -7,9 +7,13 @@ Steps:
   2. check_records passes
   3. the seeded-fault test passes (8 faults caught: 4 in records, 4 in the capability needs)
   4. preflight: the SRD-1 profile gives 45 full; the example profiles give stable, correct counts;
-     --start refuses without an attestation file and without settings; v0.2 starts nothing
+     --start refuses without an attestation file and without settings; a profile alone starts nothing;
+     with a settings file: the shipped explore file is accepted, an evidence file that lacks any of the five
+     routing locks is refused, and --start refuses without the key variable
   5. the firm-values file of SRD-1 lists exactly the keys of the records
   6. the sweep for barred terms and key-like strings finds 0 hits
+  7. the unit tests of the engine (settings, SRD-1 minimal, gateway, scorer, run log, signature, end to end
+     against a local stand-in model host; no outside network)
 """
 import argparse
 import hashlib
@@ -75,6 +79,41 @@ def write_profile(path, attestation, **settings):
     return path
 
 
+LOCKS = ("only", "allow_fallbacks", "zdr", "data_collection", "quantizations")
+
+
+def settings_checks(tmp, att):
+    """The preflight with a settings file, run as a command. No model call, no key."""
+    base = write_profile(tmp / "engine_profile.yaml", att)
+    rc, out = preflight(base, "--settings", "targets/srd1/settings.yaml")
+    expect(rc == 0 and "Mode: explore" in out and "Judge-family check: not applicable" in out,
+           f"the shipped explore settings were not accepted: exit {rc}, {out[-300:]}")
+    evidence = {"provider": "openrouter", "model_id": "example-vendor/example-model", "mode": "evidence",
+                "routing": {"only": ["examplehost"], "allow_fallbacks": False, "zdr": True,
+                            "data_collection": "deny", "quantizations": ["fp8"]},
+                "price_in_per_m": 1.0, "price_out_per_m": 2.0, "cap_usd": 1.0, "api_key_env": "OPENROUTER_API_KEY",
+                "temperature": 0.7, "seed": 1000,
+                "reviewer_values": {"M4": {"value": 0.5, "reason": "test value"}}}
+    good = tmp / "evidence.yaml"
+    good.write_text(yaml.safe_dump(evidence), encoding="utf-8")
+    rc, out = preflight(base, "--settings", good)
+    expect(rc == 0 and "Host (routing.only): examplehost" in out and "Precision (routing.quantizations): fp8" in out
+           and "Worst-case estimate for the whole run: USD" in out and "cap: USD 1.0" in out,
+           f"the evidence settings were not shown: exit {rc}, {out[-300:]}")
+    for lock in LOCKS:
+        bad = {**evidence, "routing": {k: v for k, v in evidence["routing"].items() if k != lock}}
+        f = tmp / f"missing_{lock}.yaml"
+        f.write_text(yaml.safe_dump(bad), encoding="utf-8")
+        rc, out = preflight(base, "--settings", f, "--start")
+        expect(rc == 2 and "SETTINGS INVALID" in out and f"routing.{lock}" in out, f"missing lock {lock} was not refused")
+    env = {k: v for k, v in ENV.items() if k != "OPENROUTER_API_KEY"}
+    p = subprocess.run(PY + ["-m", "faias_harness.preflight", "--profile", str(base), "--settings", str(good), "--start"],
+                       cwd=REPO, env=env, capture_output=True, text=True, encoding="utf-8", input="")
+    expect(p.returncode == 2 and "OPENROUTER_API_KEY is not set" in p.stdout and "START REFUSED" in p.stdout,
+           f"--start without the key variable: exit {p.returncode}, {p.stdout[-300:]}")
+    print("   settings: explore file accepted; 5 locks missing in evidence mode refused; --start refuses without the key variable")
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--faias", required=True, help="path to the FAIAS v1.3.3 tree")
@@ -124,7 +163,7 @@ def main():
         empty.write_text("  \n", encoding="utf-8")
         good = dict(provider="example-provider", model_id="example-model", cap_usd=5.0)
         rc, out = preflight(write_profile(tmp / "ok.yaml", att, **good), "--start")
-        expect(rc == 3 and "no run engine in v0.2" in out, f"start with every condition met: exit {rc}, {out[-200:]}")
+        expect(rc == 3 and "a profile alone names no run" in out, f"start with every condition met: exit {rc}, {out[-200:]}")
         rc, out = preflight(write_profile(tmp / "empty.yaml", empty, **good), "--start")
         expect(rc == 2 and "empty" in out, "--start did not refuse an empty attestation file")
         rc, out = preflight(write_profile(tmp / "nocap.yaml", att, provider="example-provider", model_id="example-model"), "--start")
@@ -140,7 +179,8 @@ def main():
                        encoding="utf-8")
         rc, out = preflight(bad)
         expect(rc == 2 and "unknown capability" in out and "never goes in a profile" in out, "an invalid profile was not refused")
-    print("   --start: refuses without an attestation, with an empty one, without cap_usd, without model_id; exit 3 when all met")
+        print("   --start: refuses without an attestation, with an empty one, without cap_usd, without model_id; exit 3 when all met")
+        settings_checks(tmp, att)
 
     print("5. firm values")
     fv = yaml.safe_load((REPO / "targets" / "srd1" / "firm_values.yaml").read_text(encoding="utf-8"))["values"]
@@ -156,10 +196,16 @@ def main():
     expect(rc == 0, f"sweep found hits: {out[-600:]}")
     print("  ", out.strip().splitlines()[-1])
 
+    print("7. unit tests")
+    rc, out = run(["-m", "unittest", "discover", "-s", "tests", "-t", ".", "-p", "test_*.py"])
+    m = re.search(r"Ran (\d+) tests? in", out)
+    expect(rc == 0 and m and re.search(r"^OK\s*$", out, re.M), f"unit tests failed: {out[-1500:]}")
+    print("  ", f"{m.group(1)} tests, OK" if m and rc == 0 else out.strip().splitlines()[-1])
+
     if failures:
         print(f"run_all: FAIL ({len(failures)} failure(s))")
         return 1
-    print("run_all: PASS (6 steps)")
+    print("run_all: PASS (7 steps)")
     return 0
 
 

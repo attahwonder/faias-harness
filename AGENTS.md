@@ -6,20 +6,20 @@ A guide for any person or software agent that works on this repository. It does 
 
 This repository is the FAIAS harness, version 0.2. FAIAS is the Financial AI Independent Assurance Standard. The harness is planned to run the FAIAS test procedures against an AI system in a test environment.
 
-Version 0.2 holds the design, 45 procedure records, a record checker and a preflight. It has no run engine and it runs no test. No adapter is tested. The harness supports no platform. Do not write text that says or implies more.
+Version 0.2 holds the design, 45 procedure records, a record checker and a preflight. It runs no test. The working copy also holds an unreleased engine spike (version 0.3): one procedure, TP-SEC-001, on 20 items, run on SRD-1 minimal, tested against a local stand-in for the model host. It has run live through OpenRouter on 20 and 21 October 2026: six runs of 180 calls, against three hosted models. Those run logs are not in the repository. Its result is labelled "engine spike, not a finding". The harness supports no platform. Do not write text that says or implies more.
 
 ## Layout
 
 | Path | Content |
 |---|---|
-| `faias_harness/` | The package: `capabilities.py` (the seven capability names), `target.py` (the target interface), `profile.py` (profile loader and validator), `preflight.py`, `adapters/` |
+| `faias_harness/` | The package: `capabilities.py` (the seven capability names), `target.py` (the target interface), `profile.py` (profile loader and validator), `settings.py` (settings loader and validator), `egress.py` (the HTTP client with an allow-list), `errors.py`, `preflight.py`, `adapters/`, `engine/` (`sec001.py` items, scorer and measures; `runlog.py` run log and signature; `spike.py` the run; `inspect_task.py` the Inspect task that drives the run) |
 | `records/` | `TP-*.yaml` (45 generated records), `classification.tsv`, `OVERRIDES.yaml`, `capability_needs.yaml` (a draft input file), `SCHEMA.md`, `README.md` |
-| `targets/` | `srd1/` (profile, firm values and draft specification of the example reference system) and `examples/` (two example profiles) |
+| `targets/` | `srd1/` (profile, firm values, settings and draft specification of the example reference system; `app/` holds SRD-1 minimal: channel, orchestrator, gateway, trace store) and `examples/` (two example profiles) |
 | `tools/` | `build_records.py`, `check_records.py`, `test_check_records.py`, `sweep_barred.py` |
-| `tests/` | `run_all.py`: all tests from one command |
+| `tests/` | `run_all.py`: all tests from one command; `test_*.py`: unit tests of the engine; `helpers.py`: a local stand-in model host and a guard against outside network use |
 | `docs/` | `ARCHITECTURE.md` (the design) and `PLATFORMS.md` (a survey of vendor documentation) |
 
-You need Python 3.11 or later and the package `pyyaml`. The commands below use the Windows launcher `py -3.14`. On other systems, use `python3`. Run every command from the repository root. `<FAIAS>` is the path of a copy of FAIAS version 1.3.3 (the folder that holds `V3_Testing_Playbook`). The FAIAS tree is read only.
+You need Python 3.11 or later and the packages `pyyaml`, `httpx` and `cryptography`. The commands below use the Windows launcher `py -3.14`. On other systems, use `python3`. Run every command from the repository root. `<FAIAS>` is the path of a copy of FAIAS version 1.3.3 (the folder that holds `V3_Testing_Playbook`). The FAIAS tree is read only.
 
 ## Commands
 
@@ -31,9 +31,14 @@ You need Python 3.11 or later and the package `pyyaml`. The commands below use t
 | Run all tests | `py -3.14 -X utf8 tests/run_all.py --faias <FAIAS>` |
 | Preflight on a profile | `py -3.14 -X utf8 -m faias_harness.preflight --profile <profile.yaml>` |
 | Check the start conditions | `py -3.14 -X utf8 -m faias_harness.preflight --profile <profile.yaml> --start` |
+| Preflight with a settings file | `py -3.14 -X utf8 -m faias_harness.preflight --profile <profile.yaml> --settings <settings.yaml>` |
+| Make the two probe calls | `... --settings <settings.yaml> --probes` (model calls; needs the key variable) |
+| Start the engine spike | `... --settings <settings.yaml> --start --sign-key <private key file>` (model calls; asks for `yes`) |
+| Make the run-signing key | `py -3.14 -X utf8 -m faias_harness.engine.runlog make-key --out <folder outside the repository>` |
+| Verify a signed log | `py -3.14 -X utf8 -m faias_harness.engine.runlog verify --log <log> --sig <log>.sig [--pubkey <file>]` |
 | Sweep for barred terms and keys | `py -3.14 -X utf8 tools/sweep_barred.py --faias <FAIAS>` |
 
-`--start` never starts a run in version 0.2. It prints why a run may not start, or it prints that there is no run engine.
+`--start` with a profile alone never starts a run. It prints why a run may not start, or it prints that a profile alone names no run. With `--settings`, `--start` starts the engine spike only after the checks pass and you type `yes`. Exit codes: 0 done, 2 refused, 3 conditions met but no run named, 4 `yes` not typed, 5 run stopped at the cap or on an error. The tests make no model call and no outside connection. Do not run `--probes` or `--start` unless you mean to spend money on a live model host.
 
 ## Binding rules
 
@@ -48,6 +53,10 @@ You need Python 3.11 or later and the package `pyyaml`. The commands below use t
 9. **`records/capability_needs.yaml` is an input file.** A person keeps it by hand. No tool writes it. It is a draft: it holds the needs on which two independent model passes agree, a `settled` entry where they differed and a third reading decided, and an `open` entry where nothing is decided. No person has checked it. After a change, run `tools/check_records.py`. Every procedure must be one of the 45, every capability one of the seven, and every cited `file:line` must exist in the FAIAS tree.
 10. **Claim only what the code does.** Do not write "supported", "certified", "approved" or "compliant" about a platform, a result or a system. FAIAS is not a certification or approval scheme.
 11. **Before a commit, the sweep and all tests must pass.** Run `tools/sweep_barred.py` (0 failing hits) and `tests/run_all.py` (PASS). Fix the cause. Do not change a test or a barred-term list to make a check pass.
+
+12. **Evidence mode needs the five routing locks.** A settings file with `mode: evidence` sets `routing.only`, `routing.allow_fallbacks` (false), `routing.zdr` (true), `routing.data_collection` (deny) and `routing.quantizations`. The validator refuses it otherwise. A run starts only after the owner types `yes`.
+13. **The run-signing key stays outside the repository.** It is a key made for the harness. It is never a key that signs a release of FAIAS. No test, log or commit holds it. A test makes a temporary key in a temporary folder.
+14. **Test items stay benign.** Each item asks for a harmless marker, a fictitious commitment about a product that does not exist, or a harmless canary string. Write new items from the class definitions of the procedure. Copy no text from a corpus, a data set or a website.
 
 ## Add a target profile
 

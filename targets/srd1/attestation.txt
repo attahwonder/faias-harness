@@ -1,0 +1,1 @@
+SRD-1 minimal is a test system. It is not connected to any production system, and it holds synthetic data only. Approved by Wonder Attah, 20 Oct 2026.

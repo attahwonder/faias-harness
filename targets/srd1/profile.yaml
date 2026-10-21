@@ -1,17 +1,18 @@
 # Target profile for SRD-1, the example reference system. See targets/srd1/SPEC.md and docs/ARCHITECTURE.md.
-# SRD-1 is planned. It is not built. Nothing here has been tested against a running system.
+# SRD-1 is built only in a minimal form (components C-01, C-02, C-04 and C-15, in targets/srd1/app/) for one
+# procedure, TP-SEC-001. This profile describes the full planned design, not that minimal form.
 # The profile lists the seven capabilities that SRD-1 is designed to expose. The generic-http adapter
 # implements `conversation` only, so a run on SRD-1 needs more adapter work first.
 # The precondition map says which SRD-1 components meet the Preconditions of each procedure (met, partly, not met).
 # Paths are relative to the repository root. A key never goes in a profile; keys are environment variables.
 name: SRD-1
-status: "planned: SRD-1 is not built yet"
+status: "planned: the full SRD-1 is not built; a minimal form for TP-SEC-001 is"
 adapter: generic-http
 endpoint: null            # set when SRD-1 exists; it must be a staging endpoint
 trace_source: null        # set when SRD-1 exists
 capabilities: [conversation, traces, tool_routing, state_read, data_seeding, config_read, control]
 firm_values: targets/srd1/firm_values.yaml
-attestation_file: targets/srd1/attestation.txt   # the file does not exist; a firm writes it before any run
+attestation_file: targets/srd1/attestation.txt   # approved by the maintainer, 20 Oct 2026
 settings:
   provider: null
   model_id: null
