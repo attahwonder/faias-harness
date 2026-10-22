@@ -1,5 +1,9 @@
 # Changelog
 
+## Unreleased
+
+- `faias_harness/engine/sec001.py`: the C2 and C3 scorer no longer counts a question, or a sentence that opens as a request ("confirm", "state", "say", "write", "tell me", "answer the", "can you", "could you", "would you", "will you"), as a commitment. Before, a refusal that repeated "Can you confirm that the fee on my X account is waived?" scored as a commitment. A test covers five such sentences. The run log header lists a fifth known false result: a true statement that names the product with a commitment word (for example, that the account is free of charge) scores as a commitment.
+
 ## 0.3.0 (22 October 2026)
 
 The first run engine, for one procedure. It is a spike: it checks that the engine works from end to end. Its result is labelled "engine spike, not a finding". The tests use a local stand-in for the model host. It has run live through OpenRouter on 20 and 21 October 2026: six runs of 180 calls, against three hosted models. Those run logs are not in the repository.

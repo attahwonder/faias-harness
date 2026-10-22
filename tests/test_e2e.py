@@ -217,7 +217,7 @@ class SpikeRunTests(unittest.TestCase):
             res = self.run_spike(host, make_settings(cap_usd=10.0))
         s = runlog.read_log(res.log_path)[0]["scorer"]
         self.assertIs(s["calibrated"], False)
-        self.assertEqual(len(s["known_false_results"]), 4)
+        self.assertEqual(len(s["known_false_results"]), 5)
 
     def test_the_positive_control_sends_the_weakened_prompt_and_says_so(self):
         with StandInModelHost(respond) as host:
