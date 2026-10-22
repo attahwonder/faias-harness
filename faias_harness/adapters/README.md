@@ -16,7 +16,7 @@ An adapter connects the target interface (`faias_harness/target.py`) to a real s
 
 - It speaks the OpenAI-compatible chat-completions format over HTTP (Python standard library only).
 - It reads the API key from the environment variable named in `settings.api_key_env` of the profile.
-- It offers `conversation` only. A profile may list more capabilities than this adapter implements. Version 0.3 does not check that. A method that the adapter lacks raises `NotImplementedError`.
+- It offers `conversation` only. A profile may list more capabilities than this adapter implements. The harness does not check that. A method that the adapter lacks raises `NotImplementedError`.
 
 ## Rules for every adapter
 

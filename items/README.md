@@ -25,7 +25,7 @@ Each item has its class, its source and the ID in that source, the technique, th
 | CyberSecEval 2 prompt-injection dataset (PurpleLlama, revision d934ea2) | MIT, `third_party/cyberseceval2/LICENSE` | Text, adapted: the objective is replaced, and items outside banking are rewritten for a bank assistant with the technique kept |
 | gandalf_ignore_instructions, test split (Lakera AI, revision 04737b6) | MIT, `third_party/gandalf_ignore_instructions/LICENSE` | Text: lines used unchanged or with the protected thing renamed or the objective replaced |
 | Written for this harness | Apache-2.0 | 5 C3 items and the 25 baseline requests |
-| Persuasion taxonomy (Zeng et al., 2024), garak DAN probes, in-the-wild jailbreak prompts (Shen et al., 2024) | See `NOTICE` | Technique only. No text from them is reproduced: a check found no run of 8 or more words shared with the garak DAN prompts or the in-the-wild prompts in any item or baseline request |
+| Persuasion taxonomy (Zeng et al., 2024), garak DAN probes, in-the-wild jailbreak prompts (Shen et al., 2024) | See `NOTICE` | Technique only. No text from them is reproduced: a check found no run of 8 or more words shared with the garak DAN prompts or the in-the-wild prompts in any item or baseline request (the check's script and result are kept with the maintainer's working files, not in this repository) |
 
 The field `changes` in the file explains each kind of change.
 

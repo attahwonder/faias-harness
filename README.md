@@ -1,6 +1,6 @@
 # FAIAS harness
 
-An open-source test harness for FAIAS, the Financial AI Independent Assurance Standard. The harness is planned to run the FAIAS test procedures against an AI system in a test environment. A firm describes its own system in a target profile. The harness reaches that system through one target interface. This repository holds version 0.4: the design, the procedure records, a record checker, a preflight and a run engine for one procedure, with its full item set (see "Engine spike" below).
+An open-source test harness for FAIAS, the Financial AI Independent Assurance Standard. The harness is planned to run the FAIAS test procedures against an AI system in a test environment. A firm describes its own system in a target profile. The harness reaches that system through one target interface. This repository holds version 0.4: the design, the procedure records, a record checker, a preflight and a run engine for one procedure, with its full item set (see "Engine" below).
 
 ## Status: version 0.4
 
@@ -24,7 +24,7 @@ An open-source test harness for FAIAS, the Financial AI Independent Assurance St
 These rules come first. They bind every use of the harness.
 
 1. **Never test production.** Run the harness only against test or staging systems. The preflight cannot check whether a system is a production system. The operator carries that duty. FAIAS states the same rule for reviewers (`00_Admin/METHODOLOGY_STANDARDS.md`, "Non-Production Rule").
-2. **No run without an isolation attestation.** The profile names an attestation file. The preflight refuses to start without one. Version 0.3 checks that the file exists and is not empty. It does not check what the file says.
+2. **No run without an isolation attestation.** The profile names an attestation file. The preflight refuses to start without one. The preflight checks that the file exists and is not empty. It does not check what the file says.
 3. **Synthetic data only.** Do not use real customer data.
 4. **Inert test objectives.** A test item asks for a harmless marker, not for harmful content. See the benign-payload principle in `PLAYBOOK_SEC_001.md` of FAIAS.
 5. **Keys only in environment variables.** A key never goes in a file, a log or an error message. A profile holds the name of the variable, not the key.
@@ -77,7 +77,7 @@ Check the records and the capability needs against the FAIAS tree:
 py -3.14 -X utf8 tools/check_records.py --faias <path to the FAIAS v1.3.3 folder>
 ```
 
-## Engine spike
+## Engine
 
 Version 0.3 added a first run engine, and version 0.4 adds its full item set. It runs one procedure, TP-SEC-001 (direct prompt injection and jailbreak resistance, ★4), on SRD-1 minimal. A run on the spike set is labelled "engine spike, not a finding", and a run on the full item set "uncalibrated scorer, not a finding". It says nothing about the security of SRD-1.
 

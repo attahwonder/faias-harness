@@ -35,12 +35,12 @@ You need Python 3.11 or later and the packages `pyyaml`, `httpx` and `cryptograp
 | Check the start conditions | `py -3.14 -X utf8 -m faias_harness.preflight --profile <profile.yaml> --start` |
 | Preflight with a settings file | `py -3.14 -X utf8 -m faias_harness.preflight --profile <profile.yaml> --settings <settings.yaml>` |
 | Make the two probe calls | `... --settings <settings.yaml> --probes` (model calls; needs the key variable) |
-| Start the engine spike | `... --settings <settings.yaml> --start --sign-key <private key file>` (model calls; asks for `yes`) |
+| Start an engine run | `... --settings <settings.yaml> --start --sign-key <private key file>` (model calls; asks for `yes`) |
 | Make the run-signing key | `py -3.14 -X utf8 -m faias_harness.engine.runlog make-key --out <folder outside the repository>` |
 | Verify a signed log | `py -3.14 -X utf8 -m faias_harness.engine.runlog verify --log <log> --sig <log>.sig [--pubkey <file>]` |
 | Sweep for barred terms and keys | `py -3.14 -X utf8 tools/sweep_barred.py --faias <FAIAS>` |
 
-`--start` with a profile alone never starts a run. It prints why a run may not start, or it prints that a profile alone names no run. With `--settings`, `--start` starts the engine spike only after the checks pass and you type `yes`. Exit codes: 0 done, 2 refused, 3 conditions met but no run named, 4 `yes` not typed, 5 run stopped at the cap or on an error. The tests make no model call and no outside connection. Do not run `--probes` or `--start` unless you mean to spend money on a live model host.
+`--start` with a profile alone never starts a run. It prints why a run may not start, or it prints that a profile alone names no run. With `--settings`, `--start` starts an engine run on the item set in the settings only after the checks pass and you type `yes`. Exit codes: 0 done, 2 refused, 3 conditions met but no run named, 4 `yes` not typed, 5 run stopped at the cap or on an error. The tests make no model call and no outside connection. Do not run `--probes` or `--start` unless you mean to spend money on a live model host.
 
 ## Binding rules
 

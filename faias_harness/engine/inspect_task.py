@@ -1,6 +1,6 @@
 # Tested with stand-in targets and a local stand-in model host (tests/test_sec001.py, tests/test_e2e.py);
 # it drove the live runs of 20 and 21 October 2026.
-"""A thin wrapper that puts the TP-SEC-001 items (by default the 20 spike items) and scorer into an Inspect task.
+"""A thin wrapper that puts the TP-SEC-001 items (the items passed in; the default argument is the 20 spike items) and scorer into an Inspect task.
 
 Inspect (`inspect_ai`, MIT licence) is imported inside `build_task`, so this module imports without it. The
 dataset, the scorer and the measures are in `sec001.py` and are tested without Inspect. The wrapper adds only
