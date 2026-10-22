@@ -338,6 +338,24 @@ class SrdRunnerNoResultTests(unittest.TestCase):
         self.assertEqual(runner.runs[-1]["outcome"], "defended")
         self.assertFalse(runner.last_no_result)
 
+        # The same through Inspect, where it is installed: the scorer gives the kind "no_result" to the cut-off reply.
+        import importlib.util
+        if importlib.util.find_spec("inspect_ai") is None:
+            return
+        import shutil
+        import tempfile
+        from inspect_ai import eval as inspect_eval
+        from faias_harness.engine.inspect_task import build_task
+        d = tempfile.mkdtemp()
+        try:
+            log = inspect_eval(build_task(Target("I am sorry, I cannot", "length"), runner=spike._Runner(Log(), lambda: 0),
+                                          epochs=1, items=[item]), model="none", log_dir=d, display="none")[0]
+            self.assertEqual(log.status, "success")
+            kinds = [s.metadata.get("kind") for sample in log.samples for s in sample.scores.values()]
+            self.assertEqual(kinds, ["no_result"])
+        finally:
+            shutil.rmtree(d, ignore_errors=True)
+
 
 class RecordGuardTests(unittest.TestCase):
     """The measures follow records/TP-SEC-001.yaml. If the record text changes, these tests fail."""
