@@ -29,7 +29,7 @@ The harness reaches every system under test through one interface, the **target 
              target interface            <- seven capabilities
                     |
                  adapter                 <- srd1-http; channel adapters: directline, openai-responses,
-                    |                       a2a, generic-http (each tested against a local stand-in only)
+                    |                       a2a, json-http, generic-http (each tested against a local stand-in only)
         system under test (staging only)
                     |
      tools pointed at the harness tool emulator (MCP), where the firm wires them
@@ -155,6 +155,7 @@ An adapter implements the target interface for a real system. `faias_harness/ada
 | `directline` (`directline.py`) | 0.5. Direct Line 3.0: Microsoft Copilot Studio agents and Azure Bot Service bots. `conversation` only. Tested against a local stand-in only. |
 | `openai-responses` (`openai_responses.py`) | 0.5. The Responses API: OpenAI, and Azure AI Foundry agents through a project's Responses endpoint. `conversation` only. Tested against a local stand-in only. |
 | `a2a` (`a2a.py`) | 0.5. Agent2Agent JSON-RPC, protocol 1.0 or 0.3. `conversation` only. Tested against a local stand-in only. |
+| `json-http` (`json_http.py`) | 0.5. A firm's own chat endpoint, JSON over HTTP, from a request template and paths into the response. `conversation` only. Tested against a local stand-in only. |
 | `generic-http` (`openai_chat.py`) | OpenAI-compatible chat completions. `conversation` only. Since 0.5 it sends through the egress client and is tested against a local stand-in only. |
 | `srd1-http` (`srd1_http.py`) | 0.3. SRD-1 minimal. `conversation` and `traces`. Section 11. |
 | Contact-centre platforms, Amazon Bedrock InvokeAgent | Not built. |
@@ -275,7 +276,7 @@ Each run has one outcome: attacked (the scorer found a success, also in a cut-of
 | Model | Pinned ID; the served model and host recorded per call | Declared by the operator (`declared.model_id`, `declared.target_version`), recorded as declared. `pinned: false`. A run record names a model only where the channel's response names one. |
 | Host per call | The host that served the model | The channel host that answered |
 | Block | Provider block types and finish reason `content_filter` | Only what the channel names (adapters/README.md) |
-| Probe | A tool-call probe and a reasoning-text probe | One channel probe: one benign message; the run refuses to start without a usable reply |
+| Probe | A tool-call probe and a reasoning-text probe | One channel probe: one benign message. It reaches the firm's agent, so `--probes` also needs the attestation file. The run refuses to start without a usable reply. |
 | Positive control | The weakened system prompt | Not available: the harness cannot weaken a deployed agent. The operator runs a second staging agent with no rules, with its own profile. |
 | Stops | Cap, host mismatch in evidence mode, error | Cap, an authentication or configuration error, `max_consecutive_errors` channel errors in a row, other error |
 | Run log | Schema 2 | Schema 3 |
@@ -286,7 +287,7 @@ Each run has one outcome: attacked (the scorer found a success, also in a cut-of
 
 **Run log, schema 3** (`runlog.build_external_header`). The header holds `target` (adapter, channel, what the channel shows, endpoint host, profile name and SHA-256 of the profile file, and the declared model and version with the basis "declared by the operator in the settings; not observed by the harness"), `model` (`declared_id`, `pinned: false`, a note), `budget` (cap, cost per call, cost basis, `max_calls`, call budget), `pacing`, the thresholds with their bases, the corpus, the variant `external`, and `not_in_run`. The lock covers the procedure, the thresholds, the settings hash, the target, the model block, the budget, the variant and the item set. Each run record holds the reply, the score, the outcome, the finish reason, the block and its type, `served_host` (the channel host), `served_model` (or null), the token use (or null), the calls charged and their estimated cost, the time taken, the retries and the channel IDs and statuses. `verify` checks the signature, the target and budget blocks, `pinned: false`, and in evidence mode the declared model and version.
 
-**Preflight.** With external settings, the preflight prints the adapter, the endpoint host, what the channel shows, the declared model and version, the calls against the call budget, the pacing and whether the key variable is present. `--probes` makes the channel probe. `--start` needs the attestation file, the key variable where the adapter needs one, and a signing key outside the repository; it makes the probe, refuses if the probe gets no usable reply, and starts only after the owner types `yes`. It refuses `--positive-control`.
+**Preflight.** With external settings, the preflight prints the adapter, the endpoint host, what the channel shows, the declared model and version, the calls against the call budget, the pacing and whether the key variable is present. `--probes` makes the channel probe. `--probes` and `--start` need the attestation file and the key variable where the adapter needs one; `--start` also needs the M4 value with its reason and a signing key outside the repository; it makes the probe, refuses if the probe gets no usable reply, and starts only after the owner types `yes`. It refuses `--positive-control`.
 
 **Channel choice.** An external run tests the path through the channel that the adapter reaches. A test through A2A of an agent that customers reach through Direct Line measures a different path: a control in the customer channel is not in it.
 
@@ -298,9 +299,9 @@ Each run has one outcome: attacked (the scorer found a success, also in a cut-of
 |---|---|
 | Tools file | Each tool has a name, a description, an input schema and one fixed result: `text` or `error`. Results are synthetic. No tool acts on any system. |
 | Transport | MCP Streamable HTTP. One endpoint, POST only, on 127.0.0.1. Every response is one JSON object. GET gets 405. A platform in the cloud reaches it only through a tunnel that the operator runs. |
-| Protocol versions | 2026-07-28: per-request metadata, no session; the headers MCP-Protocol-Version, Mcp-Method and Mcp-Name must match the body (HTTP 400, error -32020); an unsupported version gets HTTP 400, error -32022, with the list of versions; `server/discover`. 2025-03-26, 2025-06-18 and 2025-11-25: `initialize` opens a session with an Mcp-Session-Id; a request without it gets 400, an unknown one 404; DELETE ends it. |
+| Protocol versions | 2026-07-28: per-request metadata, no session; the headers MCP-Protocol-Version, Mcp-Method and Mcp-Name must match the body (HTTP 400, error -32020); an unsupported version gets HTTP 400, error -32022, with the list of versions; a request without `io.modelcontextprotocol/clientCapabilities` in `_meta` gets HTTP 400, error -32602; `server/discover`; the results of `server/discover` and tools/list say `ttlMs: 0` and `cacheScope: private` (no caching). 2025-03-26, 2025-06-18 and 2025-11-25: `initialize` opens a session with an Mcp-Session-Id; a request without it gets 400, an unknown one 404; an MCP-Protocol-Version header that differs from the session's version gets 400; DELETE ends it. |
 | Methods | tools/list, tools/call and ping in both eras. An unknown tool gets error -32602. |
-| Access | An Origin header that is present and not on the allowed list gets 403. With a key variable set, a request without the matching key header gets 401. The body is read before any refusal, so a kept-alive connection stays in step. |
-| Ledger | One JSON line for each tools/call: sequence, time, era, protocol version, session (first 8 characters), tool, arguments, error flag, and a SHA-256 hash chained to the line before. `verify_ledger` finds an edited, removed or reordered line, and with the expected head a removed last line. It does not stop a person who rewrites the whole file. The key never goes in it. |
+| Access | An Origin header that is present and not on the allowed list gets 403. With a key variable set, a request without the matching key header gets 401. These checks use the headers only: a refused body is never read, and the connection is closed. A connection that sends nothing for 15 seconds is closed. At most 256 legacy sessions are kept; the oldest is dropped first. |
+| Ledger | One JSON line for each tools/call, also a refused one (an unknown tool, or arguments that are not an object): sequence, time, era, protocol version, session (first 8 characters), tool, arguments, error flag, the reason for a refusal, and a SHA-256 hash chained to the line before. `verify_ledger` finds an edited, removed or reordered line, and with the expected head a removed last line. It does not stop a person who rewrites the whole file. The key never goes in it. |
 
 What it does not do: resources, prompts, sampling, elicitation, subscriptions, event streams, OAuth or the deprecated HTTP+SSE transport. It does not configure any platform. No engine uses it yet. It is tested with a local client only, not with any platform's MCP client.

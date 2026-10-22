@@ -17,10 +17,13 @@ What it does:
   an Mcp-Session-Id. Every response is a single JSON object (no event stream).
 - It offers tools only: tools/list and tools/call, with server/discover (modern) or initialize (legacy), and ping.
 - It refuses a request whose Origin header is present and not on the allowed list (HTTP 403), and, with an API key
-  variable set, a request without the matching key header (HTTP 401). The key comes from an environment variable
-  and never goes in the ledger or a message.
-- It appends one line to the ledger for each tools/call: the time, the era, the protocol version, the tool, the
-  arguments, whether the result is an error, and a hash chained to the line before. `verify_ledger` finds an
+  variable set, a request without the matching key header (HTTP 401). These checks use the headers only: a refused
+  body is never read, and the connection is closed. The key comes from an environment variable and never goes in
+  the ledger or a message. A connection that sends nothing for 15 seconds is closed; at most 256 legacy sessions
+  are kept.
+- It appends one line to the ledger for each tools/call, including a call that it refuses (an unknown tool, or
+  arguments that are not an object): the time, the era, the protocol version, the tool, the arguments, whether the
+  result is an error, the reason for a refusal, and a hash chained to the line before. `verify_ledger` finds an
   edited, removed or reordered line. It does not stop a person who rewrites the whole file.
 
 What it does not do: resources, prompts, sampling, elicitation, subscriptions or event streams; the deprecated
@@ -53,11 +56,15 @@ MODERN = ("2026-07-28",)
 LEGACY = ("2025-11-25", "2025-06-18", "2025-03-26")
 META_VERSION = "io.modelcontextprotocol/protocolVersion"
 META_SERVER = "io.modelcontextprotocol/serverInfo"
+META_CAPS = "io.modelcontextprotocol/clientCapabilities"
+MAX_SESSIONS = 256          # legacy sessions kept at most; the oldest is dropped first
+SOCKET_TIMEOUT_S = 15       # a connection that sends nothing for this long is closed
 TOOL_NAME = re.compile(r"[A-Za-z0-9_.\-]{1,64}")
 LOOPBACK = ("127.0.0.1", "::1", "localhost")
 MAX_BODY = 1_000_000
 HEADER_MISMATCH, UNSUPPORTED_VERSION = -32020, -32022
 PARSE_ERROR, INVALID_REQUEST, METHOD_NOT_FOUND, INVALID_PARAMS = -32700, -32600, -32601, -32602
+CACHE = {"ttlMs": 0, "cacheScope": "private"}   # the tool list may change between runs: no caching
 
 
 # ---------- tools file ----------
@@ -220,6 +227,7 @@ class ToolEmulator:
         class Handler(BaseHTTPRequestHandler):
             protocol_version = "HTTP/1.1"
             server_version = "faias-tool-emulator"
+            timeout = SOCKET_TIMEOUT_S
 
             def log_message(self, *a):
                 pass
@@ -236,20 +244,24 @@ class ToolEmulator:
                 if data:
                     self.wfile.write(data)
 
+            def _refuse(self, status, message):
+                """Refuse before the body is read, and close the connection so it cannot fall out of step."""
+                self.close_connection = True
+                self._send(status, {"jsonrpc": "2.0", "error": {"code": INVALID_REQUEST, "message": message}},
+                           {"Connection": "close"})
+                return False
+
             def _gate(self):
-                """Path, Origin and key checks. Returns True if the request may go on."""
+                """Path, Origin and key checks, from the headers only. Returns True if the request may go on."""
                 if self.path.split("?")[0] != outer.path:
-                    self._send(404, {"jsonrpc": "2.0", "error": {"code": INVALID_REQUEST, "message": "not the MCP endpoint"}})
-                    return False
+                    return self._refuse(404, "not the MCP endpoint")
                 origin = self.headers.get("Origin")
                 if origin is not None and origin.rstrip("/").lower() not in outer.allowed_origins:
-                    self._send(403, {"jsonrpc": "2.0", "error": {"code": INVALID_REQUEST, "message": "origin not allowed"}})
-                    return False
+                    return self._refuse(403, "origin not allowed")
                 if outer._key is not None:
                     given = self.headers.get(outer.api_key_header) or ""
                     if not hmac.compare_digest(given.encode("utf-8"), outer._key.encode("utf-8")):
-                        self._send(401, {"jsonrpc": "2.0", "error": {"code": INVALID_REQUEST, "message": "missing or wrong API key"}})
-                        return False
+                        return self._refuse(401, "missing or wrong API key")
                 return True
 
             def do_GET(self):
@@ -266,18 +278,16 @@ class ToolEmulator:
                     self._send(405 if not sid else 404, None, {"Allow": "POST"})
 
             def do_POST(self):
+                if not self._gate():                     # headers only: an unauthorised body is never read
+                    return
                 try:
                     n = int(self.headers.get("Content-Length") or 0)
                 except ValueError:
                     n = -1
                 if n < 0 or n > MAX_BODY:
-                    self.close_connection = True      # the body is not read, so the connection cannot be reused
-                    self._send(413, {"jsonrpc": "2.0", "error": {"code": INVALID_REQUEST, "message": "body too large"}},
-                               {"Connection": "close"})
+                    self._refuse(413, "body too large")
                     return
-                raw = self.rfile.read(n)                 # read before any refusal, so a kept-alive connection stays in step
-                if not self._gate():
-                    return
+                raw = self.rfile.read(n)
                 try:
                     msg = json.loads(raw.decode("utf-8"))
                 except (ValueError, UnicodeDecodeError):
@@ -330,14 +340,18 @@ class ToolEmulator:
     def _call(self, params, era, version, session):
         name = params.get("name") if isinstance(params, dict) else None
         args = params.get("arguments", {}) if isinstance(params, dict) else None
-        if name not in self.by_name:
-            return None, {"code": INVALID_PARAMS, "message": "unknown tool"}
-        if not isinstance(args, dict):
-            return None, {"code": INVALID_PARAMS, "message": "arguments must be an object"}
+        refused = "unknown tool" if not isinstance(name, str) or name not in self.by_name else \
+            "arguments must be an object" if not isinstance(args, dict) else None
+        if refused:                     # a refused call is evidence too: it goes in the ledger before the error
+            self.ledger.append({"era": era, "protocol_version": version, "session": session,
+                                "tool": name if isinstance(name, str) else None,
+                                "arguments": args if isinstance(args, dict) else None, "is_error": True,
+                                "refused": refused})
+            return None, {"code": INVALID_PARAMS, "message": refused}
         r = self.by_name[name]["result"]
         is_error = "error" in r
         self.ledger.append({"era": era, "protocol_version": version, "session": session, "tool": name,
-                            "arguments": args, "is_error": is_error})
+                            "arguments": args, "is_error": is_error, "refused": None})
         return {"content": [{"type": "text", "text": r.get("error") if is_error else r["text"]}], "isError": is_error}, None
 
     @staticmethod
@@ -367,15 +381,17 @@ class ToolEmulator:
             return 400, self._err(mid, HEADER_MISMATCH, "Header mismatch: Mcp-Method"), None
         if method == "tools/call" and _decode_header(headers.get("Mcp-Name")) != params.get("name"):
             return 400, self._err(mid, HEADER_MISMATCH, "Header mismatch: Mcp-Name"), None
+        if not isinstance(params.get("_meta", {}).get(META_CAPS), dict):
+            return 400, self._err(mid, INVALID_PARAMS, f"_meta must hold {META_CAPS}"), None
         if mid is None:
             return 202, None, None
         if method == "server/discover":
             result = {"supportedVersions": list(MODERN), "capabilities": {"tools": {}},
-                      "_meta": {META_SERVER: self._server_info()}}
+                      "_meta": {META_SERVER: self._server_info()}, **CACHE}
             if self.tools.get("instructions"):
                 result["instructions"] = self.tools["instructions"]
         elif method == "tools/list":
-            result = {"tools": self._tool_list()}
+            result = {"tools": self._tool_list(), **CACHE}
         elif method == "tools/call":
             result, err = self._call(params, "modern", version, None)
             if err:
@@ -392,6 +408,8 @@ class ToolEmulator:
             asked = params.get("protocolVersion") if isinstance(params, dict) else None
             version = asked if asked in LEGACY else LEGACY[0]
             sid = secrets.token_hex(16)
+            while len(self.sessions) >= MAX_SESSIONS:
+                self.sessions.pop(next(iter(self.sessions)))
             self.sessions[sid] = {"version": version}
             result = {"protocolVersion": version, "capabilities": {"tools": {"listChanged": False}},
                       "serverInfo": self._server_info()}
@@ -404,6 +422,9 @@ class ToolEmulator:
         session = self.sessions.get(sid)
         if session is None:
             return 404, self._err(mid, INVALID_REQUEST, "unknown or ended session"), None
+        hv = headers.get("MCP-Protocol-Version")
+        if hv is not None and hv != session["version"]:     # 2025-03-26 clients send no header; later ones must match
+            return 400, self._err(mid, INVALID_REQUEST, "MCP-Protocol-Version does not match the session"), None
         if mid is None:                           # a notification, for example notifications/initialized
             return 202, None, None
         if method == "tools/list":

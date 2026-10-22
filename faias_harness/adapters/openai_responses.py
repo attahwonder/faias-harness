@@ -15,8 +15,8 @@ Profile:
           {agent: {name: <agent name>, type: agent_reference}}. It may not hold `input`, `previous_response_id`,
           `stream` or a key-like field.
     query: fixed query parameters, for example {api-version: <version>}
-    auth_header: Authorization (default) or api-key
-    auth_scheme: Bearer (default) or none
+    auth_header: the header that carries the key: Authorization (default), api-key, Ocp-Apim-Subscription-Key or another
+    auth_scheme: Bearer (default for Authorization) or none (default for any other header)
     max_output_tokens: the output limit sent with each request (default 400)
     store: true or false (default false); with chain: true, set it to true so the service keeps the earlier turn
     chain: true (default) or false
@@ -30,7 +30,7 @@ It does not show the host that served the model, so `served_host` is the channel
 """
 from urllib.parse import urlencode
 
-from .base import ChannelError, ChannelTarget, host_entry
+from .base import HEADER_NAME, ChannelError, ChannelTarget, host_entry
 
 OPTION_KEYS = ("body", "query", "auth_header", "auth_scheme", "max_output_tokens", "store", "chain")
 BODY_FORBIDDEN = {"input", "previous_response_id", "stream", "api_key", "key", "secret", "token", "password"}
@@ -53,8 +53,10 @@ def validate_options(options, profile_settings):
     q = o.get("query")
     if q is not None and not (isinstance(q, dict) and all(isinstance(v, (str, int)) for v in q.values())):
         problems.append("adapter_options.query must be a mapping of names to text values")
-    if o.get("auth_header", "Authorization") not in ("Authorization", "api-key"):
-        problems.append("adapter_options.auth_header must be Authorization or api-key")
+    ah = o.get("auth_header", "Authorization")
+    if not (isinstance(ah, str) and HEADER_NAME.fullmatch(ah)):
+        problems.append("adapter_options.auth_header must be a header name, for example Authorization, api-key "
+                        "or Ocp-Apim-Subscription-Key")
     if o.get("auth_scheme", "Bearer") not in ("Bearer", "none"):
         problems.append("adapter_options.auth_scheme must be Bearer or none")
     mot = o.get("max_output_tokens")
@@ -95,7 +97,7 @@ class ResponsesTarget(ChannelTarget):
         self.body = dict(o.get("body") or {})
         self.query = dict(o.get("query") or {})
         self.auth_header = o.get("auth_header", "Authorization")
-        self.auth_scheme = o.get("auth_scheme", "Bearer" if self.auth_header == "Authorization" else "none")
+        self.auth_scheme = o.get("auth_scheme", "Bearer" if self.auth_header.lower() == "authorization" else "none")
         self.max_output_tokens = o.get("max_output_tokens", 400)
         self.store = bool(o.get("store", False))
         self.chain = bool(o.get("chain", True))

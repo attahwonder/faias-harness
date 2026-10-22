@@ -19,7 +19,7 @@ from faias_harness.engine import external, runlog, sec001
 from faias_harness.profile import load_profile
 from faias_harness.settings import external_from_raw, validate_external
 from tests.helpers import FAKE_KEY_VALUE, no_outside_network
-from tests.standins import StandInA2A, StandInDirectLine, StandInResponses
+from tests.standins import StandInA2A, StandInDirectLine, StandInJsonApp, StandInResponses
 
 REPO = Path(__file__).resolve().parents[1]
 KEY_ENV = "EXAMPLE_CHANNEL_KEY"
@@ -160,6 +160,20 @@ class ExternalRunTests(unittest.TestCase):
             self.assertEqual(recs[-1]["measures"]["M1"]["overall"]["successful_items"], 3)
             self.assertTrue(runlog.verify_log(res.log_path, res.sig_path, self.pub, repo=REPO)[0])
 
+    def test_json_http_run(self):
+        settings, _ = ext_settings()
+        opts = {"request": {"conversationId": "{session_id}", "message": "{message}"}, "reply_path": "data.reply.text",
+                "session_path": "data.conversationId", "blocked_path": "data.safety.blocked",
+                "model_path": "data.meta.model", "auth_header": "X-Api-Key"}
+        with StandInJsonApp(respond, key_header="X-Api-Key", key=FAKE_KEY_VALUE) as app:
+            p = self.profile("json-http", app.base_url + "/api/chat", opts, name="j.yaml")
+            res = self.run_ext(p, settings, name="json")
+        recs = runlog.read_log(res.log_path)
+        self.assertEqual(res.status, "complete", recs[-1])
+        self.assertEqual(recs[-1]["measures"]["M1"]["overall"]["successful_items"], 3)
+        self.assertTrue(all(r["served_model"] == "example-app-model" for r in recs if r["type"] == "run"))
+        self.assertTrue(runlog.verify_log(res.log_path, res.sig_path, self.pub, repo=REPO)[0])
+
     def test_check_log_rules_for_schema_3(self):
         settings, _ = ext_settings(mode="evidence")
         with StandInDirectLine(respond, secret=FAKE_KEY_VALUE) as dl:
@@ -228,6 +242,33 @@ class ExternalRunTests(unittest.TestCase):
                                "--start", "--sign-key", str(self.priv), "--run-dir", str(self.dir / "silent")])
             self.assertEqual(rc, 2, out[-400:])
             self.assertIn("the channel probe got no usable reply", out)
+
+    def test_review_fixes_probe_attestation_m4_and_start_event_estimate(self):
+        s = self.write_settings()
+        with StandInDirectLine(respond, secret=FAKE_KEY_VALUE) as dl:
+            noatt = self.profile("directline", dl.base_url, {"auth": "secret", "poll_ms": 50, "settle_ms": 0},
+                                 name="noatt2.yaml", attestation=False)
+            rc, out = self.pf(["--profile", str(noatt), "--settings", str(s), "--probes"])
+            self.assertEqual(rc, 2)
+            self.assertIn("PROBES REFUSED", out)
+            self.assertIn("attestation", out)
+            self.assertEqual(dl.requests, [])                  # nothing reached the agent
+            nom4 = self.write_settings(reviewer_values={"M4": {"value": None, "reason": None}})
+            rc, out = self.pf(["--profile", str(self.dl_profile(dl)), "--settings", str(nom4), "--start",
+                               "--sign-key", str(self.priv)])
+            self.assertEqual(rc, 2)
+            self.assertIn("reviewer_values.M4 needs a value and a reason", out)
+            greet = self.profile("directline", dl.base_url, {"auth": "secret", "poll_ms": 50, "settle_ms": 0,
+                                                             "start_event": True}, name="greet.yaml")
+            settings, _ = ext_settings()
+            self.assertEqual(external.estimate(settings, profile=load_profile(greet))["calls"], 120)
+            self.assertEqual(external.estimate(settings, profile=load_profile(self.dl_profile(dl)))["calls"], 60)
+
+    def test_shipped_example_settings_cannot_start_until_m4_is_set(self):
+        rc, out = self.pf(["--profile", "targets/examples/copilot_studio.yaml", "--settings",
+                           "targets/examples/external_settings.yaml", "--start", "--sign-key", str(self.priv)])
+        self.assertEqual(rc, 2)
+        self.assertIn("reviewer_values.M4 needs a value and a reason", out)
 
     def test_preflight_refuses_a_profile_that_cannot_drive_an_external_run(self):
         s = self.write_settings()

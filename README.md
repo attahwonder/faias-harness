@@ -10,14 +10,14 @@ An open-source test harness for FAIAS, the Financial AI Independent Assurance St
 - **Record checker.** It compares every record with the FAIAS source lines (`tools/check_records.py`). It also checks the form of the capability needs and the FAIAS lines that they cite. A test seeds eight faults and confirms that the checker catches them.
 - **Preflight.** It compares a target profile with the draft capability needs of each procedure and prints which procedures can run in full, in part, or not at all (`faias_harness/preflight.py`). It makes no network call.
 - **Engine.** It runs one procedure, TP-SEC-001, against SRD-1 minimal and writes a signed run log (`faias_harness/engine/`). By default it runs the full item set (`items/TP-SEC-001.json`: 131 items and 25 clean-baseline requests), labelled "uncalibrated scorer, not a finding". The 20 spike items remain as an option, labelled "engine spike, not a finding".
-- **External runs (0.5).** The engine can run TP-SEC-001 against a deployed staging agent through the channel that the firm's own front end uses: Direct Line 3.0 (Copilot Studio, Azure Bot Service), the Responses API (OpenAI; Azure AI Foundry agents), A2A (protocol 1.0 or 0.3) or OpenAI-compatible chat completions. The harness is then a client of the channel: it records what the channel shows and states what it cannot see. Each adapter is tested against a local stand-in only.
+- **External runs (0.5).** The engine can run TP-SEC-001 against a deployed staging agent, through an adapter written for the channel that the firm's own front end uses: Direct Line 3.0 (Copilot Studio, Azure Bot Service), the Responses API (OpenAI; Azure AI Foundry agents), A2A (protocol 1.0 or 0.3), a firm's own JSON chat endpoint, or OpenAI-compatible chat completions. The harness is then a client of the channel: it records what the channel shows and states what it cannot see. Each adapter is tested against a local stand-in only; none is tested against the platform it is written for.
 - **Tool emulator (0.5).** An MCP server on the local machine with fixed synthetic tool results and a hash-chained ledger of every tool call, for the capability `tool_routing`. It is tested with a local client only. No engine uses it yet.
 - **Platform survey.** `docs/PLATFORMS.md` lists what the public documentation of six agent platforms says about the seven capabilities. On 16 October 2026, a script found the quote of 84 of 87 survey rows on the vendor page. The survey is documentation only. It is not an adapter and not a test.
 
 **What does not work**
 
 - Version 0.5 runs one procedure only. Its tests use a local stand-in for the model host. No live run has used the full item set yet. The spike set has run live through OpenRouter on 20 and 21 October 2026: six runs of 180 calls, against three hosted models. Those run logs are not in the repository.
-- The harness supports no platform. The four channel adapters (`directline`, `openai-responses`, `a2a`, `generic-http`) are untested against a platform; each is tested against a local stand-in only. No live run has used an external target. The adapter for SRD-1 minimal is tested against a local stand-in only.
+- The harness supports no platform. The five channel adapters (`directline`, `openai-responses`, `a2a`, `json-http`, `generic-http`) are untested against a platform; each is tested against a local stand-in only. No live run has used an external target. The adapter for SRD-1 minimal is tested against a local stand-in only.
 - SRD-1, the example reference system in `targets/srd1/`, is built only in a minimal form (four components, for the engine). Its profile and its full specification are drafts.
 - The capability needs are a draft. Two independent model passes read the Preconditions of each procedure. For 26 procedures they agree, and nobody has checked these entries at each line. For the 19 where they differed, a third reading, also a model, settled 17 at the lines and left 2 open. No person has checked the file.
 
@@ -138,6 +138,7 @@ Version 0.5 adds a second run path. The SRD-1 engine builds SRD-1 minimal in the
 | `directline` | Direct Line 3.0 (Copilot Studio agents, Azure Bot Service bots) | no | no |
 | `openai-responses` | Responses API (OpenAI; Azure AI Foundry agents) | yes | yes |
 | `a2a` | Agent2Agent JSON-RPC, 1.0 or 0.3 | no | a rejected task |
+| `json-http` | A firm's own JSON chat endpoint, from a request template and reply path | where a path names it | where a path names it |
 | `generic-http` | OpenAI-compatible chat completions | yes | yes |
 
 Use the adapter for the channel that customers or colleagues use. A test through another channel reaches the agent by a different path.
@@ -150,13 +151,13 @@ Use the adapter for the channel that customers or colleagues use. A test through
 py -3.14 -X utf8 -m faias_harness.preflight --profile <profile> --settings <external settings>
 ```
 
-Make one channel probe (one call through the channel) and start nothing:
+Make one channel probe (one call through the channel; it needs the attestation file, because the probe reaches the agent) and start nothing:
 
 ```
 py -3.14 -X utf8 -m faias_harness.preflight --profile <profile> --settings <external settings> --probes
 ```
 
-Start the run. It refuses without the attestation file, the key variable (where the adapter needs one) and the signing key, makes the probe, refuses if the probe gets no usable reply, and starts only after you type `yes`:
+Start the run. It refuses without the attestation file, the key variable (where the adapter needs one), the M4 value with its reason, and the signing key, makes the probe, refuses if the probe gets no usable reply, and starts only after you type `yes`:
 
 ```
 py -3.14 -X utf8 -m faias_harness.preflight --profile <profile> --settings <external settings> --start --sign-key <private key file>
@@ -166,7 +167,7 @@ py -3.14 -X utf8 -m faias_harness.preflight --profile <profile> --settings <exte
 
 ## Tool emulator
 
-`faias_harness/emulators/mcp_tools.py` serves the tools of a tools file (`targets/examples/mcp_tools.yaml`) over MCP Streamable HTTP, on the local machine only. Each tool returns a fixed synthetic result and acts on no system. Each tools/call adds a line to a hash-chained ledger. A firm points its staging agent's tool at the emulator, in place of the real tool, through a tunnel that the operator runs; then the harness sees every call that the agent makes to that tool. It answers protocol version 2026-07-28 and the earlier versions 2025-03-26, 2025-06-18 and 2025-11-25. Set a key before you expose the port.
+`faias_harness/emulators/mcp_tools.py` serves the tools of a tools file (`targets/examples/mcp_tools.yaml`) over MCP Streamable HTTP, on the local machine only. Each tool returns a fixed synthetic result and acts on no system. Each tools/call adds a line to a hash-chained ledger, also a call that the emulator refuses (an unknown tool, or arguments that are not an object). A firm points its staging agent's tool at the emulator, in place of the real tool, through a tunnel that the operator runs; then the harness sees every call that the agent makes to that tool. It answers protocol version 2026-07-28 and the earlier versions 2025-03-26, 2025-06-18 and 2025-11-25. Set a key before you expose the port.
 
 ```
 py -3.14 -X utf8 -m faias_harness.emulators.mcp_tools serve --tools targets/examples/mcp_tools.yaml --ledger <new ledger file> --api-key-env <variable>
@@ -189,7 +190,7 @@ This list gives the order of the work. It gives no dates.
 4. A self-test of the harness environment (TP-AGT-014): every traffic and publication attempt is blocked and logged.
 5. All 45 automated procedures, with signed logs and a results table built from the logs by script.
 6. The 13 procedures that need a human step, with two LLM judges from different model families and independent human raters.
-7. Tested adapters for real platforms, and a worked safety case built from the logs. (Version 0.5 adds four channel adapters and a tool emulator, each tested against a local stand-in only.)
+7. Tested adapters for real platforms, and a worked safety case built from the logs. (Version 0.5 adds five channel adapters and a tool emulator, each tested against a local stand-in only.)
 
 ## Licences
 

@@ -30,7 +30,7 @@ rejected is recorded as blocked (block type a2a_rejected). It does not show the 
 """
 import secrets
 
-from .base import ChannelError, ChannelTarget, host_entry
+from .base import HEADER_NAME, ChannelError, ChannelTarget, host_entry
 
 OPTION_KEYS = ("version", "auth_header", "auth_scheme", "poll_ms")
 VERSIONS = ("1.0", "0.3")
@@ -48,7 +48,7 @@ def validate_options(options, profile_settings):
     if str(o.get("version", "1.0")) not in VERSIONS:
         problems.append("adapter_options.version must be \"1.0\" or \"0.3\"")
     ah = o.get("auth_header", "Authorization")
-    if not (isinstance(ah, str) and ah.strip() and all(c.isalnum() or c in "-_" for c in ah)):
+    if not (isinstance(ah, str) and HEADER_NAME.fullmatch(ah)):
         problems.append("adapter_options.auth_header must be a header name")
     if o.get("auth_scheme", "Bearer") not in ("Bearer", "none"):
         problems.append("adapter_options.auth_scheme must be Bearer or none")
@@ -67,7 +67,8 @@ def norm_state(state):
     s = str(state or "").lower()
     if s.startswith("task_state_"):
         s = s[len("task_state_"):]
-    return s.replace("_", "-")
+    s = s.replace("_", "-")
+    return "canceled" if s == "cancelled" else s
 
 
 def parts_text(parts):

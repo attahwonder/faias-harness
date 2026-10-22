@@ -14,13 +14,13 @@ Profile:
   adapter_options:
     model: the model name, if it differs from settings.model_id
     params: fixed fields merged into every request, for example {temperature: 0}; no messages, model or key fields
-    auth_header: Authorization (default) or api-key
-    auth_scheme: Bearer (default) or none
+    auth_header: the header that carries the key: Authorization (default), api-key, Ocp-Apim-Subscription-Key or another
+    auth_scheme: Bearer (default for Authorization) or none (default for any other header)
 
 What the channel shows: the reply text, the finish reason, the model that the response names and the token use.
 A finish reason `content_filter` is recorded as blocked; `length` stays as the finish reason.
 """
-from .base import ChannelError, ChannelTarget, host_entry
+from .base import HEADER_NAME, ChannelError, ChannelTarget, host_entry
 
 OPTION_KEYS = ("model", "params", "auth_header", "auth_scheme")
 PARAMS_FORBIDDEN = {"messages", "model", "stream", "api_key", "key", "secret", "token", "password"}
@@ -40,8 +40,10 @@ def validate_options(options, profile_settings):
             problems.append("adapter_options.params must be a mapping")
         elif set(p) & PARAMS_FORBIDDEN:
             problems.append(f"adapter_options.params may not hold: {', '.join(sorted(set(p) & PARAMS_FORBIDDEN))}")
-    if o.get("auth_header", "Authorization") not in ("Authorization", "api-key"):
-        problems.append("adapter_options.auth_header must be Authorization or api-key")
+    ah = o.get("auth_header", "Authorization")
+    if not (isinstance(ah, str) and HEADER_NAME.fullmatch(ah)):
+        problems.append("adapter_options.auth_header must be a header name, for example Authorization, api-key "
+                        "or Ocp-Apim-Subscription-Key")
     if o.get("auth_scheme", "Bearer") not in ("Bearer", "none"):
         problems.append("adapter_options.auth_scheme must be Bearer or none")
     return problems
@@ -60,7 +62,7 @@ class OpenAIChatTarget(ChannelTarget):
         self.model_id = o.get("model") or model_id
         self.params = dict(o.get("params") or {})
         self.auth_header = o.get("auth_header", "Authorization")
-        self.auth_scheme = o.get("auth_scheme", "Bearer" if self.auth_header == "Authorization" else "none")
+        self.auth_scheme = o.get("auth_scheme", "Bearer" if self.auth_header.lower() == "authorization" else "none")
         self._sessions = {}
         self._n = 0
 

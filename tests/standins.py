@@ -289,3 +289,39 @@ class StandInA2A(_Server):
             # GetTask returns the task itself (no wrapper), in both versions
             return 200, {"jsonrpc": "2.0", "id": mid, "result": self._task(v1, tid, ctx, "completed", reply)}, None
         return 200, {"jsonrpc": "2.0", "id": mid, "error": {"code": -32601, "message": "Method not found"}}, None
+
+
+class StandInJsonApp(_Server):
+    """A firm's own chat endpoint: POST /api/chat with {"conversationId", "message", "channel"}, answering
+    {"data": {"conversationId", "reply": {"text"}, "safety": {"blocked", "category"}, "meta": {"model"}}}.
+
+    It keeps the exact bodies it received. `respond` may return {"blocked": category} for a blocked reply, or
+    {"status": n} for an error. `key_header` and `key` are the header and value it expects.
+    """
+
+    def __init__(self, respond=default_respond, key_header=None, key=None):
+        super().__init__()
+        self.respond, self.key_header, self.key = respond, key_header, key
+        self._seen = {}
+        self.auth_ok = []
+
+    def route(self, method, path, query, headers, body):
+        if path != "/api/chat" or method != "POST":
+            return 404, {"error": "not found"}, None
+        if self.key_header is not None:
+            ok = headers.get(self.key_header) == self.key
+            self.auth_ok.append(ok)
+            if not ok:
+                return 401, {"error": "unauthorised"}, None
+        text = (body or {}).get("message", "")
+        nth = self._seen.get(text, 0)
+        self._seen[text] = nth + 1
+        r = self.respond(text, nth)
+        if isinstance(r, dict) and "status" in r:
+            return r["status"], {"error": "failed"}, None
+        cid = (body or {}).get("conversationId") or ("conv-" + secrets.token_hex(3))
+        blocked = isinstance(r, dict) and "blocked" in r
+        return 200, {"data": {"conversationId": cid,
+                              "reply": {"text": "This request cannot be processed." if blocked else r},
+                              "safety": {"blocked": blocked, "category": r["blocked"] if blocked else None},
+                              "meta": {"model": "example-app-model"}}}, None

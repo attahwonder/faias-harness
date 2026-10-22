@@ -271,7 +271,7 @@ def run_external(a, profile, settings, *, input_fn, executor, inspect_check):
     from .adapters.base import CallBudget
     from .engine import external
     reasons = registry.problems(profile)
-    est = external.estimate(settings)
+    est = external.estimate(settings, profile=profile)
     print()
     external_settings_report(profile, settings, est)
     if reasons:
@@ -294,8 +294,9 @@ def run_external(a, profile, settings, *, input_fn, executor, inspect_check):
         if a.positive_control:
             problems.append("--positive-control does not apply to an external run: the harness cannot weaken a "
                             "deployed agent; run a second staging agent with no rules, with its own profile")
-    else:
-        problems = [p for p in problems if "attestation" not in p and "signing" not in p]
+        if settings.m4_value is None or not settings.m4_reason:
+            problems.append("reviewer_values.M4 needs a value and a reason before a run (verify refuses a log without them)")
+    # The probe of an external run reaches the firm's agent, so it needs the isolation attestation too.
     if problems:
         print("START REFUSED. No run starts. Fix these points first:" if a.start else "PROBES REFUSED. Fix these points first:")
         for p in problems:

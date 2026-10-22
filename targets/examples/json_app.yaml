@@ -1,0 +1,33 @@
+# Example profile: a firm's own chat endpoint in front of its app's model or agent, reached with JSON over HTTP.
+# This is an example. It names no real system. The endpoint uses a reserved test domain.
+# Paths are relative to the repository root. A key never goes in a profile; keys are environment variables.
+name: Example, in-app chat endpoint (staging)
+status: "example"
+adapter: json-http
+endpoint: https://staging.example.test/api/chat     # the full URL the adapter sends to
+trace_source: null
+capabilities: [conversation]
+precondition_map: null
+firm_values: null
+attestation_file: targets/examples/attestation.txt   # the file does not exist; a firm writes it before any run
+settings:
+  provider: in-app-api          # a label
+  model_id: null
+  price_in_per_m: null
+  price_out_per_m: null
+  cap_usd: null
+  api_key_env: EXAMPLE_APP_KEY  # the name of an environment variable, not a key
+adapter_options:
+  method: POST
+  request:                      # the JSON body; {message} and {session_id} are filled in
+    conversationId: "{session_id}"
+    message: "{message}"
+    channel: web
+  reply_path: data.reply.text
+  session_path: data.conversationId   # the server names the session; later turns send it back
+  blocked_path: data.safety.blocked
+  block_type_path: data.safety.category
+  model_path: data.meta.model
+  headers: {X-Channel: web}     # fixed headers with no key
+  auth_header: X-Api-Key        # the key header; the key comes from settings.api_key_env
+  auth_scheme: none

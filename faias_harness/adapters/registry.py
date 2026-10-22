@@ -5,7 +5,7 @@ same process. Every adapter here reaches a deployed staging agent from outside, 
 """
 from dataclasses import dataclass
 
-from . import a2a, directline, openai_chat, openai_responses
+from . import a2a, directline, json_http, openai_chat, openai_responses
 
 
 @dataclass(frozen=True)
@@ -26,6 +26,10 @@ ADAPTERS = {
                               "channel host, HTTP status, time"),
     "a2a": Entry(a2a, a2a.A2ATarget, "Agent2Agent (A2A) JSON-RPC, protocol version 1.0 or 0.3",
                  "reply text, task state, task and context IDs, channel host, HTTP status, time"),
+    "json-http": Entry(json_http, json_http.JsonHttpTarget,
+                       "templated JSON over HTTP (a firm's own chat endpoint in front of its app's model or agent)",
+                       "reply text at the configured path; block, model and finish signals where configured paths "
+                       "name them; channel host, HTTP status, time"),
     "generic-http": Entry(openai_chat, openai_chat.OpenAIChatTarget, "OpenAI-compatible chat completions",
                           "reply text, finish reason, model named in the response, token use, channel host, HTTP status, time"),
 }

@@ -6,6 +6,7 @@ against a stand-in. They do not show that an adapter works with a platform.
 import contextlib
 import io
 import unittest
+from unittest import mock
 
 from faias_harness.adapters import registry
 from faias_harness.adapters.a2a import A2ATarget, norm_state, split_result
@@ -16,7 +17,7 @@ from faias_harness.adapters.openai_responses import ResponsesTarget
 from faias_harness.egress import EgressClient
 from faias_harness.errors import CapReached, EgressRefused
 from tests.helpers import FAKE_KEY_VALUE, StandInModelHost, no_outside_network
-from tests.standins import StandInA2A, StandInDirectLine, StandInResponses
+from tests.standins import StandInA2A, StandInDirectLine, StandInJsonApp, StandInResponses
 
 KEY_ENV = "EXAMPLE_CHANNEL_KEY"
 ENV = {KEY_ENV: FAKE_KEY_VALUE}
@@ -266,3 +267,133 @@ class RegistryTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class JsonHttpTests(unittest.TestCase):
+    OPTS = {"request": {"conversationId": "{session_id}", "message": "{message}", "channel": "web",
+                        "note": "from {session_id}"},
+            "reply_path": "data.reply.text", "session_path": "data.conversationId",
+            "blocked_path": "data.safety.blocked", "block_type_path": "data.safety.category",
+            "model_path": "data.meta.model", "headers": {"X-Channel": "web"},
+            "auth_header": "X-Api-Key"}
+
+    def target(self, app, **changes):
+        from faias_harness.adapters.json_http import JsonHttpTarget
+        return JsonHttpTarget(app.base_url + "/api/chat", egress_for(app.base_url), options={**self.OPTS, **changes},
+                              api_key_env=KEY_ENV, env=ENV, reply_timeout_s=5)
+
+    def test_template_session_paths_and_custom_key_header(self):
+        tricky = 'Say "hi"\nand {session_id} and {"x": 1}'
+        with no_outside_network(), StandInJsonApp(lambda t, n: "Hello.", key_header="X-Api-Key", key=FAKE_KEY_VALUE) as app:
+            t = self.target(app)
+            sid = t.open_session()
+            self.assertEqual(t.send(sid, tricky), "Hello.")
+            first_conv = t.last_exchange["ids"]["session"]
+            t.send(sid, "second")
+        b1, b2 = app.requests[0]["body"], app.requests[1]["body"]
+        self.assertEqual(b1["message"], tricky)            # the message is sent as it is: never filled again
+        self.assertIsNone(b1["conversationId"])            # not yet known: null
+        self.assertEqual(b1["note"], "from ")
+        self.assertEqual(b2["conversationId"], first_conv)  # the server's session ID on the next turn
+        self.assertEqual(b2["note"], f"from {first_conv}")
+        self.assertEqual(app.auth_ok, [True, True])
+        self.assertEqual(t.last_exchange["served_model"], "example-app-model")
+        self.assertIsNone(t.last_exchange["blocked"])
+
+    def test_blocked_missing_path_and_errors(self):
+        def respond(text, nth):
+            return {"blocked": "self_harm"} if text == "a" else {"status": 500} if text == "c" else "fine"
+        with no_outside_network(), StandInJsonApp(respond, key_header="X-Api-Key", key=FAKE_KEY_VALUE) as app:
+            t = self.target(app)
+            sid = t.open_session()
+            t.send(sid, "a")
+            self.assertEqual((t.last_exchange["blocked"], t.last_exchange["block_type"]), (True, "self_harm"))
+            t2 = self.target(app, reply_path="data.answer")
+            with self.assertRaises(ChannelError) as cm:
+                t2.send(t2.open_session(), "b")
+            self.assertEqual(cm.exception.kind, "channel_error")
+            with self.assertRaises(ChannelError) as cm:
+                t.send(sid, "c")
+            self.assertEqual(cm.exception.kind, "agent_error")
+        with no_outside_network(), StandInJsonApp(key_header="X-Api-Key", key="another-one") as app:
+            t = self.target(app)
+            with self.assertRaises(ChannelError) as cm:
+                t.send(t.open_session(), "x")
+            self.assertEqual(cm.exception.kind, "auth")
+
+    def test_harness_session_id_without_session_path(self):
+        opts = {k: v for k, v in self.OPTS.items() if k != "session_path"}
+        with no_outside_network(), StandInJsonApp(key_header="X-Api-Key", key=FAKE_KEY_VALUE) as app:
+            from faias_harness.adapters.json_http import JsonHttpTarget
+            t = JsonHttpTarget(app.base_url + "/api/chat", egress_for(app.base_url), options=opts,
+                               api_key_env=KEY_ENV, env=ENV)
+            sid = t.open_session()
+            t.send(sid, "1")
+            t.send(sid, "2")
+        self.assertEqual(app.requests[0]["body"]["conversationId"], sid)
+        self.assertEqual(app.requests[1]["body"]["conversationId"], sid)
+
+    def test_option_rules(self):
+        from faias_harness.adapters.json_http import get_path, validate_options
+        self.assertEqual(validate_options(self.OPTS, {}), [])
+        bad = [
+            ({**self.OPTS, "request": {"text": "fixed"}}, "{message}"),
+            ({**self.OPTS, "reply_path": "data..x"}, "reply_path"),
+            ({**self.OPTS, "headers": {"X-Api-Key": "v"}}, "key header"),
+            ({**self.OPTS, "method": "GET"}, "method"),
+            ({**self.OPTS, "auth_header": "bad header"}, "auth_header"),
+        ]
+        for opts, needle in bad:
+            with self.subTest(needle=needle):
+                self.assertTrue(any(needle in p for p in validate_options(opts, {})))
+        self.assertEqual(get_path({"a": [{"b": "x"}]}, "a.0.b"), "x")
+
+
+class ReviewFixAdapterTests(unittest.TestCase):
+    """Fixes from the review of 22 October 2026."""
+
+    def test_list_body_negative_retry_after_and_cancelled(self):
+        from faias_harness.adapters.a2a import norm_state
+        self.assertEqual(norm_state("TASK_STATE_CANCELLED"), "canceled")
+        calls = {"n": 0}
+
+        def respond(text, nth):
+            calls["n"] += 1
+            return {"status": 429, "body": {}, "headers": {"Retry-After": "-5"}} if calls["n"] == 1 else \
+                {"status": 200, "body": ["a", "list"]}
+        sleeps = Sleeps()
+        with no_outside_network(), StandInResponses(respond, key=FAKE_KEY_VALUE) as s:
+            t = ResponsesTarget(s.base_url, egress_for(s.base_url), options={"body": {"model": "m"}},
+                                api_key_env=KEY_ENV, env=ENV, sleep=sleeps)
+            self.assertEqual(t.send(t.open_session(), "x"), "")     # a list body is not a response: no text, no crash
+        self.assertEqual(sleeps.waits, [0.0])
+
+    def test_directline_read_is_retried_without_charge(self):
+        budget = CallBudget(1.0, 0.1)
+        with no_outside_network(), StandInDirectLine(lambda t, n: "Answer.", secret=FAKE_KEY_VALUE) as dl:
+            real = dl._get
+            state = {"n": 0}
+
+            def flaky(conv, query):
+                state["n"] += 1
+                return (503, {"error": {"code": "ServiceUnavailable"}}, {"Retry-After": "0"}) if state["n"] == 1 else real(conv, query)
+            dl._get = flaky
+            t = DirectLineTarget(dl.base_url, egress_for(dl.base_url), options={"auth": "secret", **FAST_DL},
+                                 api_key_env=KEY_ENV, env=ENV, reply_timeout_s=5, before_send=budget.charge,
+                                 sleep=Sleeps())
+            self.assertEqual(t.send(t.open_session(), "q"), "Answer.")
+        self.assertEqual(budget.calls, 1)
+        self.assertIn("read_http_503", t.last_exchange["retry_reasons"])
+
+    def test_greeting_wait_is_bounded(self):
+        from faias_harness.adapters import directline
+        with no_outside_network(), StandInDirectLine(lambda t, n: "Answer.", greeting=None) as dl, \
+                mock.patch.object(directline, "GREETING_WAIT_S", 0.2):
+            t = DirectLineTarget(dl.base_url, egress_for(dl.base_url),
+                                 options={"auth": "token_endpoint", "token_endpoint": dl.base_url + "/token",
+                                          "start_event": True, **FAST_DL}, reply_timeout_s=30)
+            import time as _t
+            t0 = _t.monotonic()
+            sid = t.open_session()
+            self.assertLess(_t.monotonic() - t0, 5)
+            self.assertEqual(t.send(sid, "q"), "Answer.")

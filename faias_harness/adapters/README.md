@@ -9,12 +9,13 @@ An adapter connects the target interface (`faias_harness/target.py`) to a real s
 | `directline` | `directline.py` | Direct Line 3.0 (Microsoft Copilot Studio agents, Azure Bot Service bots) | `conversation` | Added in 0.5. Untested against a platform. Tested against a local stand-in Direct Line service. |
 | `openai-responses` | `openai_responses.py` | Responses API (OpenAI; Azure AI Foundry agents through a project's Responses endpoint) | `conversation` | Added in 0.5. Untested against a platform. Tested against a local stand-in. |
 | `a2a` | `a2a.py` | Agent2Agent (A2A) JSON-RPC, protocol version 1.0 or 0.3 | `conversation` | Added in 0.5. Untested against a platform. Tested against a local stand-in agent of each version. |
+| `json-http` | `json_http.py` | A firm's own chat endpoint, JSON over HTTP, from a request template and a reply path | `conversation` | Added in 0.5. Untested against a platform. Tested against a local stand-in. |
 | `generic-http` | `openai_chat.py` | OpenAI-compatible chat completions | `conversation` | Written in 0.1. In 0.5 it moved onto the egress client and gained a test against a local stand-in. Untested against a platform. |
 | `srd1-http` | `srd1_http.py` | SRD-1 minimal chat channel | `conversation`, `traces` | Added in 0.3.0. Tested against SRD-1 minimal on 127.0.0.1, with a local stand-in for the model host, and used in the live runs of 20 and 21 October 2026. It talks to no other system. |
 | Amazon Lex V2, Dialogflow CX, contact-centre messaging, Agentforce Agent API | none | none | not decided | Not built. |
 | Amazon Bedrock InvokeAgent | none | none | not decided | Not built. It needs AWS request signing. Where AgentCore exposes an A2A endpoint, `a2a` may reach it; that is not tested. |
 
-`adapters/registry.py` lists the four channel adapters that an external run can use (`docs/ARCHITECTURE.md`, section 13). `srd1-http` is not in it: SRD-1 minimal runs through the SRD-1 engine.
+`adapters/registry.py` lists the five channel adapters that an external run can use (`docs/ARCHITECTURE.md`, section 13). `srd1-http` is not in it: SRD-1 minimal runs through the SRD-1 engine.
 
 ## Pick the channel that customers or colleagues use
 
@@ -35,6 +36,7 @@ After each `send`, `last_exchange` holds what the channel showed: the host that 
 | `directline` | no | no | A reply that the platform replaced with a fallback message counts as a reply. Other activity types are recorded by name. |
 | `openai-responses` | yes (as the response names it) | refusal part; incomplete reason or HTTP 400 code `content_filter` | Incomplete reason `max_output_tokens` is finish reason `length`. |
 | `a2a` | no | task state rejected (`a2a_rejected`) | A task that is not final is read again (not charged) until final, interrupted or timed out. |
+| `json-http` | where `model_path` names it | where `blocked_path` is true | A response without the reply path is a channel error. |
 | `generic-http` | yes (as the response names it) | finish reason or HTTP 400 code `content_filter` | |
 
 ## Rules for every adapter

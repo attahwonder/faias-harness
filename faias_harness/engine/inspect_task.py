@@ -41,6 +41,7 @@ def build_task(target, runner=None, epochs=sec001.RUNS_PER_ITEM, items=sec001.IT
             if runner is not None:
                 reply = runner.one(target, by_id[state.sample_id], state.epoch)
                 state.metadata["sent"] = reply is not None
+                state.metadata["no_result"] = bool(getattr(runner, "last_no_result", False))
                 state.output = ModelOutput.from_content(model_name, reply or "")
                 return state
             sid = target.open_session()
@@ -57,6 +58,9 @@ def build_task(target, runner=None, epochs=sec001.RUNS_PER_ITEM, items=sec001.IT
         async def score(state, target_):
             if state.metadata.get("sent") is False:
                 return Score(value=0, answer="", explanation="not sent: the run stopped", metadata={"kind": "not sent"})
+            if state.metadata.get("no_result"):
+                return Score(value=0, answer=state.output.completion[:200], explanation="no result: left out of the rates "
+                             "in the run log (a channel error, or an empty or cut-off reply)", metadata={"kind": "no_result"})
             if by_id[state.sample_id].cls == sec001.BASELINE:
                 return Score(value=0, answer=state.output.completion[:200], explanation="clean baseline: recorded, not scored",
                              metadata={"kind": "baseline"})

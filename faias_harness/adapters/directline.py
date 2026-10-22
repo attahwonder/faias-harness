@@ -14,7 +14,7 @@ Profile:
     token_endpoint: with `auth: token_endpoint`, the agent's token endpoint (Copilot Studio: Channels, Mobile app)
     locale: the locale sent with each message (default en-GB)
     start_event: true to send the startConversation event first, so the greeting topic runs (default false);
-                 the greeting is read and dropped, and the event counts as a call
+                 the greeting is read (for at most 10 seconds) and dropped, and the event counts as a call
     poll_ms: the wait between reads of the activity set (default 500)
     settle_ms: after the first reply, how long no new reply must arrive before the reply is complete (default 1500)
 
@@ -34,6 +34,8 @@ API = "/v3/directline"
 AUTH_MODES = ("secret", "token_endpoint")
 OPTION_KEYS = ("auth", "token_endpoint", "locale", "start_event", "poll_ms", "settle_ms")
 FATAL_STATUSES = (401, 403, 404)
+GREETING_WAIT_S = 10.0      # the longest wait for a greeting after the start event
+READ_RETRIES = 3            # a read of the activity set that gets HTTP 429 or 503 is tried again, without charge
 
 
 def validate_options(options, profile_settings):
@@ -150,7 +152,7 @@ class DirectLineTarget(ChannelTarget):
         self._sessions[sid] = {"cid": cid, "token": token, "user": user_id, "watermark": None}
         if self.start_event:
             self._post_activity(sid, {"type": "event", "name": "startConversation"})
-            self._read_replies(sid, None)          # the greeting: read and dropped
+            self._read_replies(sid, None, timeout_s=min(self.reply_timeout_s, GREETING_WAIT_S))  # read and dropped
         return sid
 
     # ---- messages ----
@@ -163,19 +165,27 @@ class DirectLineTarget(ChannelTarget):
         data = self._check(r, "send")
         return data.get("id") if isinstance(data, dict) else None
 
-    def _read_replies(self, sid, sent_id):
+    def _read(self, url, token):
+        """One read of the activity set. HTTP 429 and 503 are tried again (the reads are not charged)."""
+        for attempt in range(READ_RETRIES + 1):
+            r = self._request("GET", url, headers={"Authorization": f"Bearer {token}"}, timeout=30)
+            if r.status_code not in (429, 503) or attempt == READ_RETRIES:
+                return self._check(r, "read")
+            self.last_exchange["retry_reasons"].append(f"read_http_{r.status_code}")
+            self.sleep(self._wait_s(r, attempt))
+
+    def _read_replies(self, sid, sent_id, timeout_s=None):
         """Read the activity set until the reply is complete, the conversation ends or the timeout passes."""
         s = self._sessions[sid]
         ex = self.last_exchange
         texts, reply_ids, types = [], [], {}
-        deadline = self.clock() + self.reply_timeout_s
+        deadline = self.clock() + (self.reply_timeout_s if timeout_s is None else timeout_s)
         last_new, ended, polls = None, False, 0
         while True:
             url = f"{self.endpoint}{API}/conversations/{s['cid']}/activities"
             if s["watermark"] is not None:
                 url += f"?watermark={s['watermark']}"
-            data = self._check(self._request("GET", url, headers={"Authorization": f"Bearer {s['token']}"},
-                                             timeout=30), "read")
+            data = self._read(url, s["token"])
             polls += 1
             for a in data.get("activities") or []:
                 if not isinstance(a, dict) or (a.get("from") or {}).get("id") == s["user"]:

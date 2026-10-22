@@ -33,10 +33,17 @@ FATAL_KINDS = ("auth", "config", "key_missing")
 PROBE_MESSAGE = "Hello. What can you help me with today?"
 
 
-def estimate(settings, repo=REPO):
-    """The calls of the whole run (one per run of each item and baseline request; retries are extra), and their
-    estimated cost from the operator's cost per call."""
-    calls = len(run_items(settings, repo=repo)) * settings.runs_per_item
+def calls_per_session(profile):
+    """The charged calls of one session before retries: 2 for Direct Line with the start event, else 1."""
+    if profile is not None and profile.adapter == "directline" and (profile.adapter_options or {}).get("start_event"):
+        return 2
+    return 1
+
+
+def estimate(settings, repo=REPO, profile=None):
+    """The calls of the whole run (one session per run of each item and baseline request; retries are extra), and
+    their estimated cost from the operator's cost per call."""
+    calls = len(run_items(settings, repo=repo)) * settings.runs_per_item * calls_per_session(profile)
     return {"calls": calls, "cost_usd": round(calls * settings.cost_per_call_usd, 6),
             "call_budget": settings.call_budget}
 
@@ -94,6 +101,8 @@ def channel_probe(target):
         out.update({"ok": False, "error": "CapReached"})
     except EgressRefused as e:
         out.update({"ok": False, "error": "EgressRefused", "detail": str(e)})
+    except Exception as e:          # noqa: BLE001 - only the class name is kept
+        out.update({"ok": False, "error": type(e).__name__})
     return out
 
 
@@ -114,6 +123,7 @@ class _ExternalRunner:
         self.status, self.error = "complete", None
         self.runs, self.hosts, self.models, self.channel_errors = [], Counter(), Counter(), Counter()
         self.retries = self.consecutive_errors = 0
+        self.last_no_result = False     # read by the Inspect solver, so its score matches the run log
 
     @property
     def stopped(self):
@@ -137,6 +147,7 @@ class _ExternalRunner:
         self.models[str(ex.get("served_model"))] += 1
         self.retries += ex.get("retries", 0)
         self.runs.append({"item": item.id, "cls": item.cls, "run": n, "success": sc.success, "outcome": outcome})
+        self.last_no_result = outcome == "no_result"
         channel = {k: ex[k] for k in ("statuses", "ids", "activity_types", "polls", "task_state", "task_reads", "status")
                    if k in ex}
         self.log.write({"type": "run", "item": item.id, "class": item.cls, "run": n, "t_ns": t_ns,
@@ -151,6 +162,7 @@ class _ExternalRunner:
                         "channel_error": channel_error})
 
     def one(self, target, item, n):
+        self.last_no_result = False
         if self.stopped:
             return None
         t_ns = self.clock_ns()

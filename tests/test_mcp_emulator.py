@@ -25,7 +25,7 @@ def modern_meta(version="2026-07-28"):
             "io.modelcontextprotocol/clientCapabilities": {}}
 
 
-class EmulatorTests(unittest.TestCase):
+class _Base(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
         self.dir = Path(self.tmp.name)
@@ -57,6 +57,9 @@ class EmulatorTests(unittest.TestCase):
             body["id"] = mid
         return self.post(e, body, h)
 
+
+
+class EmulatorTests(_Base):
     def test_legacy_session_flow(self):
         e = self.emu()
         r = self.post(e, {"jsonrpc": "2.0", "id": 1, "method": "initialize",
@@ -83,7 +86,9 @@ class EmulatorTests(unittest.TestCase):
         self.assertEqual(self.http.delete(e.url, headers={"Mcp-Session-Id": sid}).status_code, 200)
         self.assertEqual(self.post(e, {"jsonrpc": "2.0", "id": 8, "method": "tools/list"}, h).status_code, 404)
         entries = mt.read_ledger(e.ledger.path)
-        self.assertEqual([x["tool"] for x in entries], ["request_fee_refund", "update_contact_address"])
+        # the refused call to an unknown tool is in the ledger too (since the review of 22 October 2026)
+        self.assertEqual([(x["tool"], x["refused"]) for x in entries],
+                         [("request_fee_refund", None), ("update_contact_address", None), ("nope", "unknown tool")])
         self.assertEqual(entries[0]["arguments"], {"account_ref": "TEST-0001", "fee_id": "F1"})
         self.assertEqual((entries[0]["era"], entries[0]["protocol_version"]), ("legacy", "2025-06-18"))
         self.assertEqual(mt.read_tool_ledger(e.ledger.path, tool="update_contact_address")[0]["is_error"], True)
@@ -175,3 +180,50 @@ class EmulatorTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class ReviewFixTests(_Base):
+    """Fixes from the review of 22 October 2026: refused calls in the ledger, the client capabilities, the legacy
+    header, the cache fields, and refusal before the body is read."""
+
+    def test_refused_calls_are_in_the_ledger(self):
+        e = self.emu(name="refused.jsonl")
+        self.modern(e, "tools/call", {"name": "transfer_funds", "arguments": {"to": "X"}})
+        self.modern(e, "tools/call", {"name": "get_account_summary", "arguments": ["not", "an", "object"]})
+        entries = mt.read_ledger(e.ledger.path)
+        self.assertEqual([(x["tool"], x["refused"]) for x in entries],
+                         [("transfer_funds", "unknown tool"), ("get_account_summary", "arguments must be an object")])
+        self.assertEqual(entries[0]["arguments"], {"to": "X"})
+        self.assertTrue(mt.verify_ledger(e.ledger.path)[0])
+
+    def test_client_capabilities_legacy_header_and_cache_fields(self):
+        e = self.emu(name="caps.jsonl")
+        meta = {mt.META_VERSION: "2026-07-28"}
+        r = self.post(e, {"jsonrpc": "2.0", "id": 1, "method": "tools/list", "params": {"_meta": meta}},
+                      {"MCP-Protocol-Version": "2026-07-28", "Mcp-Method": "tools/list"})
+        self.assertEqual((r.status_code, r.json()["error"]["code"]), (400, mt.INVALID_PARAMS))
+        res = self.modern(e, "tools/list").json()["result"]
+        self.assertEqual((res["ttlMs"], res["cacheScope"]), (0, "private"))
+        try:
+            import mcp.types as mtypes          # optional: check the shapes against the MCP SDK when it is installed
+        except ImportError:
+            mtypes = None
+        if mtypes is not None:
+            mtypes.ListToolsResult.model_validate(res)
+            mtypes.DiscoverResult.model_validate(self.modern(e, "server/discover").json()["result"])
+            call = self.modern(e, "tools/call", {"name": "get_account_summary", "arguments": {"account_ref": "TEST-0001"}})
+            mtypes.CallToolResult.model_validate(call.json()["result"])
+        sid = self.post(e, {"jsonrpc": "2.0", "id": 2, "method": "initialize",
+                            "params": {"protocolVersion": "2025-06-18"}}).headers["Mcp-Session-Id"]
+        bad = self.post(e, {"jsonrpc": "2.0", "id": 3, "method": "tools/list"},
+                        {"Mcp-Session-Id": sid, "MCP-Protocol-Version": "2025-11-25"})
+        self.assertEqual(bad.status_code, 400)
+        ok = self.post(e, {"jsonrpc": "2.0", "id": 4, "method": "tools/list"}, {"Mcp-Session-Id": sid})
+        self.assertEqual(ok.status_code, 200)      # a 2025-03-26 client sends no header
+
+    def test_refusal_does_not_read_the_body_and_closes(self):
+        e = self.emu(name="key.jsonl", api_key_env="EMU_KEY", env={"EMU_KEY": FAKE_KEY_VALUE})
+        r = self.post(e, {"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {}})
+        self.assertEqual((r.status_code, r.headers.get("Connection")), (401, "close"))
+        r2 = self.post(e, {"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {}}, {"X-Api-Key": FAKE_KEY_VALUE})
+        self.assertEqual(r2.status_code, 200)

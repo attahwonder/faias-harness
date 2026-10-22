@@ -116,7 +116,8 @@ def settings_checks(tmp, att):
     print("   settings: explore file accepted; 5 locks missing in evidence mode refused; --start refuses without the key variable")
 
 
-EXTERNAL_EXAMPLES = (("copilot_studio", "directline"), ("responses_agent", "openai-responses"), ("a2a_agent", "a2a"))
+EXTERNAL_EXAMPLES = (("copilot_studio", "directline"), ("responses_agent", "openai-responses"), ("a2a_agent", "a2a"),
+                     ("json_app", "json-http"))
 
 
 def external_checks(tmp):

@@ -14,6 +14,7 @@ Rules every channel adapter follows:
   statuses, the time taken, the retries, and any block or finish signal. It never holds a header or a key.
 """
 import os
+import re
 import time
 from urllib.parse import urlsplit
 
@@ -22,6 +23,7 @@ import httpx
 from ..errors import CapReached
 from ..target import Target
 
+HEADER_NAME = re.compile(r"[A-Za-z0-9!#$%&'*+.^_`|~-]{1,64}")   # an HTTP header name (RFC 9110 token)
 RETRY_STATUSES = (429, 503)      # the request was not processed: safe to send again
 MAX_RETRY_AFTER_S = 60.0
 BACKOFF_S = (2.0, 4.0, 8.0)
@@ -143,16 +145,18 @@ class ChannelTarget(Target):
     def _wait_s(response, attempt):
         ra = response.headers.get("Retry-After")
         try:
-            return min(float(ra), MAX_RETRY_AFTER_S) if ra is not None else BACKOFF_S[min(attempt, len(BACKOFF_S) - 1)]
+            return max(0.0, min(float(ra), MAX_RETRY_AFTER_S)) if ra is not None else BACKOFF_S[min(attempt, len(BACKOFF_S) - 1)]
         except ValueError:
             return BACKOFF_S[min(attempt, len(BACKOFF_S) - 1)]
 
     @staticmethod
     def _json(response):
+        """The JSON body if it is an object, else {} (a list, a number or text is not a channel response)."""
         try:
-            return response.json()
+            data = response.json()
         except ValueError:
             return {}
+        return data if isinstance(data, dict) else {}
 
     def _auth_headers(self, header="Authorization", scheme="Bearer"):
         """The auth header from the profile's key variable, or {} if the profile names no key variable."""
