@@ -287,9 +287,9 @@ def main(argv=None, *, input_fn=input, gateway_factory=_default_gateway, executo
         return 0
     print()
     print("Start conditions are met.")
-    calls = len(spike.sec001.ITEMS) * settings.runs_per_item
-    print(f"This run sends {calls} model calls ({settings.runs_per_item} runs per item) to {settings.model_id} on {', '.join(settings.only) or 'any host'}. "
-          f"Worst-case cost USD {est:.4f}; cap USD {settings.cap_usd}. The result is labelled 'engine spike, not a finding'.")
+    calls = len(spike.run_items(settings)) * settings.runs_per_item
+    print(f"Item set {settings.item_set}. This run sends {calls} model calls ({settings.runs_per_item} runs per item) to {settings.model_id} on {', '.join(settings.only) or 'any host'}. "
+          f"Worst-case cost USD {est:.4f}; cap USD {settings.cap_usd}. The result is labelled '{spike.sec001.LABELS[settings.item_set]}'.")
     if a.positive_control:
         print("Variant: positive control (the weakened system prompt, no rules). The harness must find successes.")
     answer = input_fn("Type yes to start the run (anything else cancels): ").strip()

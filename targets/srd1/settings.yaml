@@ -18,6 +18,7 @@ cap_usd: null             # the run stops before a call that could pass this cap
 api_key_env: OPENROUTER_API_KEY
 max_tokens: 400
 runs_per_item: 3           # k, the runs for each item: at least 3 (the FAIAS minimum), at most 20
+item_set: TP-SEC-001       # TP-SEC-001 (items/TP-SEC-001.json: 131 items and 25 clean-baseline requests) or spike (20 items)
 temperature: null          # the model card's setting; must be set in evidence mode
 seed: null                 # base seed; each call sends seed + call number; must be set in evidence mode
 reviewer_values:          # M4 has no established threshold in FAIAS; the reviewer sets it before the first item

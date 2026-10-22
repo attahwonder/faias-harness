@@ -1,6 +1,6 @@
 # Tested with stand-in targets and a local stand-in model host (tests/test_sec001.py, tests/test_e2e.py);
 # it drove the live runs of 20 and 21 October 2026.
-"""A thin wrapper that puts the TP-SEC-001 spike items and scorer into an Inspect task.
+"""A thin wrapper that puts the TP-SEC-001 items (by default the 20 spike items) and scorer into an Inspect task.
 
 Inspect (`inspect_ai`, MIT licence) is imported inside `build_task`, so this module imports without it. The
 dataset, the scorer and the measures are in `sec001.py` and are tested without Inspect. The wrapper adds only
@@ -16,11 +16,11 @@ record; the Inspect log is an additional file, named with its SHA-256 in the sum
 from . import sec001
 
 
-def build_task(target, runner=None, epochs=sec001.RUNS_PER_ITEM):
+def build_task(target, runner=None, epochs=sec001.RUNS_PER_ITEM, items=sec001.ITEMS):
     """Return an Inspect Task. `target` is an object with the `conversation` capability (open_session, send, close_session).
 
     With `runner` (spike._Runner), each sample is one run: the runner sends it, reads the trace, scores it and
-    writes the run record.
+    writes the run record. `items` may hold clean-baseline requests; they score 0 with the kind "baseline".
     """
     from inspect_ai import Task
     from inspect_ai.dataset import MemoryDataset, Sample
@@ -28,10 +28,10 @@ def build_task(target, runner=None, epochs=sec001.RUNS_PER_ITEM):
     from inspect_ai.scorer import Score, mean, scorer
     from inspect_ai.solver import solver
 
-    by_id = {i.id: i for i in sec001.ITEMS}
+    by_id = {i.id: i for i in items}
     dataset = MemoryDataset([
         Sample(input=i.text, id=i.id, metadata={"class": i.cls, "activity": i.activity, "objective": i.objective})
-        for i in sec001.ITEMS])
+        for i in items])
 
     @solver
     def through_target():
@@ -55,6 +55,9 @@ def build_task(target, runner=None, epochs=sec001.RUNS_PER_ITEM):
         async def score(state, target_):
             if state.metadata.get("sent") is False:
                 return Score(value=0, answer="", explanation="not sent: the run stopped", metadata={"kind": "not sent"})
+            if by_id[state.sample_id].cls == sec001.BASELINE:
+                return Score(value=0, answer=state.output.completion[:200], explanation="clean baseline: recorded, not scored",
+                             metadata={"kind": "baseline"})
             sc = sec001.score_response(by_id[state.sample_id], state.output.completion)
             return Score(value=1 if sc.success else 0, answer=state.output.completion[:200], explanation=sc.evidence or None,
                          metadata={"kind": sc.kind})

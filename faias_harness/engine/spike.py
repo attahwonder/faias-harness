@@ -1,7 +1,8 @@
-"""The engine spike: estimate, probes and the run of TP-SEC-001 on SRD-1 minimal.
+"""The engine: estimate, probes and the run of TP-SEC-001 on SRD-1 minimal.
 
-`execute` starts SRD-1 minimal on 127.0.0.1 and, through an Inspect task (the default engine), sends the 20 items
-k times each (`runs_per_item`, 3 to 20) through the target interface
+`execute` starts SRD-1 minimal on 127.0.0.1 and, through an Inspect task (the default engine), sends the items of
+the set in the settings (`item_set`: the 131 items and 25 clean-baseline requests of items/TP-SEC-001.json, or the
+20 spike items), k times each (`runs_per_item`, 3 to 20), through the target interface
 (the `conversation` capability), reads the trace of each run through the `traces` capability, scores the
 replies, writes the signed run log, and stops at the spend cap. It is called by the preflight after the owner
 types `yes`. It makes model calls only through the SRD-1 gateway.
@@ -30,6 +31,12 @@ def _srd1():
     return build, gateway, orchestrator, trace
 
 
+def run_items(settings, repo=REPO):
+    """Everything a run sends, in order: the items of the set, then its clean-baseline requests."""
+    items, baseline = sec001.load_items(settings.item_set, repo=repo)
+    return items + baseline
+
+
 def estimate(settings):
     """The worst-case cost of the whole run, in USD, or None if the prices are not set.
 
@@ -39,9 +46,10 @@ def estimate(settings):
         return None
     _, gw, orch, _ = _srd1()
     system = orch.load_system_prompt()
+    sent = run_items(settings)
     in_tokens = sum(gw.estimate_tokens([{"role": "system", "content": system}, {"role": "user", "content": i.text}])
-                    for i in sec001.ITEMS) * settings.runs_per_item
-    calls = len(sec001.ITEMS) * settings.runs_per_item
+                    for i in sent) * settings.runs_per_item
+    calls = len(sent) * settings.runs_per_item
     return (in_tokens * settings.price_in_per_m + calls * settings.max_tokens * settings.price_out_per_m) / 1_000_000
 
 
@@ -123,8 +131,12 @@ class _Runner:
         if self.stopped:
             self._stop(item, n, t_ns)
             return None
-        sc = sec001.score_response(item, reply)
-        outcome = sec001.outcome(sc, reply, turn.get("finish_reason"), turn.get("blocked"))
+        if item.cls == sec001.BASELINE:     # a clean-baseline request is recorded, never scored
+            sc = sec001.Score(False, "baseline", "")
+            outcome = sec001.baseline_outcome(reply, turn.get("finish_reason"), turn.get("blocked"))
+        else:
+            sc = sec001.score_response(item, reply)
+            outcome = sec001.outcome(sc, reply, turn.get("finish_reason"), turn.get("blocked"))
         self.hosts[str(turn["served_host"])] += 1
         self.models[str(turn["model_served"])] += 1
         self.mismatches += 1 if turn["host_ok"] is False else 0
@@ -153,8 +165,8 @@ def inspect_available():
     return importlib.util.find_spec("inspect_ai") is not None
 
 
-def _run_direct(target, runner, runs_per_item):
-    for item in sec001.ITEMS:
+def _run_direct(target, runner, runs_per_item, items):
+    for item in items:
         for n in range(1, runs_per_item + 1):
             if runner.stopped:
                 return {"name": "direct"}
@@ -162,14 +174,14 @@ def _run_direct(target, runner, runs_per_item):
     return {"name": "direct"}
 
 
-def _run_inspect(target, runner, run_dir, runs_per_item):
+def _run_inspect(target, runner, run_dir, runs_per_item, items):
     """One pass driven by Inspect: one sample per item, one epoch per run, one sample at a time, Inspect model
     `none` (SRD-1 makes the model calls through its own gateway). Returns the facts for the summary."""
     import inspect_ai
     from inspect_ai import eval as inspect_eval
     from .inspect_task import build_task
     log_dir = run_dir / "inspect"
-    ilog = inspect_eval(build_task(target, runner=runner, epochs=runs_per_item), model="none", log_dir=str(log_dir), log_format="json",
+    ilog = inspect_eval(build_task(target, runner=runner, epochs=runs_per_item, items=items), model="none", log_dir=str(log_dir), log_format="json",
                         display="none", max_samples=1)[0]
     path = Path(urlsplit(ilog.location).path if "://" in ilog.location else ilog.location)
     if not path.is_absolute() and not path.exists():
@@ -218,8 +230,9 @@ def execute(settings, *, run_dir, sign_key, confirmation, probes=None, base_url=
         runner = _Runner(log, clock_ns, halt_on_mismatch=settings.mode == "evidence")
         srd1.server.start()
         try:
-            k = settings.runs_per_item
-            engine_facts = _run_inspect(target, runner, run_dir, k) if engine == "inspect" else _run_direct(target, runner, k)
+            k, items = settings.runs_per_item, run_items(settings, repo=repo)
+            engine_facts = (_run_inspect(target, runner, run_dir, k, items) if engine == "inspect"
+                            else _run_direct(target, runner, k, items))
         finally:
             srd1.server.stop()
         status, error, runs = runner.status, runner.error, runner.runs
@@ -227,9 +240,10 @@ def execute(settings, *, run_dir, sign_key, confirmation, probes=None, base_url=
         chain_ok, chain_problems = trace_mod.verify_chain(srd1.trace.path, expected_head=srd1.trace.head)
         egress.close()
         summary = {
-            "type": "summary", "label": sec001.LABEL, "status": status, "error": error,
+            "type": "summary", "label": sec001.LABELS[settings.item_set], "status": status, "error": error,
             "runs_recorded": len(runs), "measures_complete": status == "complete",
             "measures": sec001.compute_measures(runs, settings.m4_value, settings.runs_per_item),
+            "results_table": sec001.results_table(runs),
             "cost_usd": round(srd1.gateway.cap.spent_usd, 8), "model_calls": srd1.gateway.cap.calls,
             "cap_usd": settings.cap_usd, "served_hosts": dict(hosts), "served_models": dict(models),
             "host_mismatches": mismatches, "usage_missing_calls": usage_missing, "retries": runner.retries,

@@ -11,8 +11,10 @@ from tests.helpers import make_settings
 REPO = Path(__file__).resolve().parents[1]
 
 
-def build_log(path, settings=None, lock_ns=1_000, run_ns=2_000, with_summary=True, mutate=None):
+def build_log(path, settings=None, lock_ns=1_000, run_ns=2_000, with_summary=True, mutate=None, request=None):
     s = settings or make_settings()
+    if request is None:     # the text of C1-01 in the set of the settings, as a real run sends it
+        request = next(i.text for i in sec001.load_items(s.item_set)[0] if i.id == "C1-01")
     h = runlog.build_header(s, allow_hosts=["openrouter.ai", "127.0.0.1:9"], system_prompt_sha256="p" * 64,
                             confirmation={"typed": "yes", "time": "2026-01-01T00:00:00Z"}, probes=None,
                             engine="direct")
@@ -21,7 +23,7 @@ def build_log(path, settings=None, lock_ns=1_000, run_ns=2_000, with_summary=Tru
         mutate(h)
     log = runlog.RunLog(path)
     log.write(h)
-    log.write({"type": "run", "item": "C1-01", "class": "C1", "run": 1, "t_ns": run_ns, "request": "r", "reply": "p",
+    log.write({"type": "run", "item": "C1-01", "class": "C1", "run": 1, "t_ns": run_ns, "request": request, "reply": "p",
                "score": {"success": False, "kind": "override", "evidence": ""}, "served_host": "ExampleHost",
                "served_model": "m/x"})
     if with_summary:
@@ -56,8 +58,9 @@ class HeaderTests(unittest.TestCase):
         self.assertEqual(h["corpus"]["per_class"], {"C1": 5, "C2": 5, "C3": 5, "C4": 5})
         self.assertEqual(h["corpus"]["runs_per_item"], 3)
         self.assertIn("not a network sandbox", h["egress"]["limit"])
-        self.assertTrue(any("C-10" in x for x in h["not_in_spike"]))
-        self.assertTrue(any("config_read" in x and "M1 to M4" in x for x in h["not_in_spike"]))
+        self.assertTrue(any("C-10" in x for x in h["not_in_run"]))
+        self.assertTrue(any("config_read" in x and "M1 to M4" in x for x in h["not_in_run"]))
+        self.assertTrue(any("clean-baseline" in x for x in h["not_in_run"]))   # the spike set has no baseline arm
         self.assertEqual(h["owner_confirmation"]["typed"], "yes")
         self.assertIn("served_host", h["host_per_call"])
         self.assertEqual(h["lock"]["time_ns"], 1_000)

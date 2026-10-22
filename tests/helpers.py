@@ -23,7 +23,7 @@ EVIDENCE_RAW = {
     "routing": {"only": ["examplehost"], "allow_fallbacks": False, "zdr": True, "data_collection": "deny",
                 "quantizations": ["fp8"]},
     "price_in_per_m": 1.0, "price_out_per_m": 2.0, "cap_usd": 1.0, "api_key_env": KEY_ENV, "max_tokens": 200,
-    "temperature": 0.7, "seed": 1000,
+    "temperature": 0.7, "seed": 1000, "item_set": "spike",
     "reviewer_values": {"M4": {"value": 0.5, "reason": "test value for the unit tests"}},
 }
 

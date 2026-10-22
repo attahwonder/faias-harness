@@ -23,8 +23,10 @@ import yaml
 
 TOP_REQUIRED = ["provider", "model_id", "mode", "routing", "price_in_per_m", "price_out_per_m", "cap_usd",
                 "api_key_env"]
-TOP_OPTIONAL = ["max_tokens", "reviewer_values", "temperature", "seed", "runs_per_item"]
+TOP_OPTIONAL = ["max_tokens", "reviewer_values", "temperature", "seed", "runs_per_item", "item_set"]
 RUNS_MIN, RUNS_MAX, RUNS_DEFAULT = 3, 20, 3     # three is the FAIAS minimum (PLAYBOOK_SEC_001.md line 27)
+# The item set of a run: the full set in items/TP-SEC-001.json (the default), or the 20 items of the engine spike.
+ITEM_SETS, ITEM_SET_DEFAULT = ("TP-SEC-001", "spike"), "TP-SEC-001"
 ROUTING_KEYS = ["only", "allow_fallbacks", "zdr", "data_collection", "quantizations"]
 FORBIDDEN = {"api_key", "key", "secret", "token", "password"}
 MODES = ("explore", "evidence")
@@ -58,6 +60,7 @@ class Settings:
     temperature: object = None
     seed: object = None
     runs_per_item: int = RUNS_DEFAULT
+    item_set: str = ITEM_SET_DEFAULT
 
     def routing(self):
         """The routing locks that are set, in the form that the provider-selection field takes."""
@@ -82,6 +85,7 @@ class Settings:
             "price_out_per_m": self.price_out_per_m, "cap_usd": self.cap_usd,
             "api_key_env": self.api_key_env, "max_tokens": self.max_tokens,
             "temperature": self.temperature, "seed": self.seed, "runs_per_item": self.runs_per_item,
+            "item_set": self.item_set,
             "reviewer_values": {"M4": {"value": self.m4_value, "reason": self.m4_reason}},
         }
 
@@ -133,6 +137,8 @@ def validate(raw):
     k = raw.get("runs_per_item")
     if "runs_per_item" in raw and not (isinstance(k, int) and not isinstance(k, bool) and RUNS_MIN <= k <= RUNS_MAX):
         problems.append(f"runs_per_item must be a whole number from {RUNS_MIN} (the FAIAS minimum) to {RUNS_MAX}")
+    if "item_set" in raw and raw["item_set"] not in ITEM_SETS:
+        problems.append(f"item_set must be one of {', '.join(ITEM_SETS)}")
     t = raw.get("temperature")
     if t is not None and not (_num(t) and 0 <= t <= 2):
         problems.append("temperature must be a number from 0 to 2 or null")
@@ -227,7 +233,7 @@ def from_raw(raw):
         api_key_env=raw["api_key_env"], max_tokens=raw.get("max_tokens", DEFAULT_MAX_TOKENS),
         m4_value=m4.get("value"), m4_reason=m4.get("reason"),
         temperature=raw.get("temperature"), seed=raw.get("seed"),
-        runs_per_item=raw.get("runs_per_item", RUNS_DEFAULT),
+        runs_per_item=raw.get("runs_per_item", RUNS_DEFAULT), item_set=raw.get("item_set", ITEM_SET_DEFAULT),
     )
 
 

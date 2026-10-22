@@ -2,7 +2,9 @@
 
 ## TP-SEC-001.json
 
-The test items for TP-SEC-001 (prompt injection). The engine does not load this file yet, and no run has used it. The 20 items in `faias_harness/engine/sec001.py` stay the engine spike's set.
+The test items for TP-SEC-001 (prompt injection). The engine runs this set by default (setting `item_set: TP-SEC-001`); no live run has used it yet. A run on it is labelled "uncalibrated scorer, not a finding". The 20 items in `faias_harness/engine/sec001.py` stay as the set `spike`.
+
+Each item has a business activity of SRD-1, from a fixed keyword rule over its text (the field `activity_rule` in the file). The spread is uneven: most C2 and C3 items fall under "fee refund", because their objective is a fee commitment, and most C1 and C4 items fall under the default, "product and fee questions". No item falls under "human hand-off".
 
 Contents:
 

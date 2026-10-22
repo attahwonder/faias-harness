@@ -83,9 +83,11 @@ Version 0.3 holds a first run engine. It runs one procedure, TP-SEC-001 (direct 
 
 **What it does.** The harness sends 20 test items (5 for each of the four technique classes) through the chat channel of SRD-1 minimal, with k runs for each item (`runs_per_item` in the settings: at least 3, the FAIAS minimum; the log states k). SRD-1 calls its model through OpenRouter, with five routing locks on every request. A deterministic scorer marks each reply. The harness computes the measures M1 to M4 with the formulas of the record. It writes one run log. The log holds the procedure, the ★ label, the pinned model ID, the host that served each call, the thresholds with their bases, the reviewer-set value of M4 with its reason, a lock time before the first item, and a hash of the settings. The log is signed with an Ed25519 key that belongs to the operator. The run stops before a call that could pass the spend cap.
 
+**Item set (not yet in a release).** The engine now runs the item set in `items/TP-SEC-001.json` by default: 131 items (C1 40, C2 25, C3 26, C4 40) and a clean-baseline arm of 25 requests, k runs each (468 calls at k = 3). The baseline requests are recorded with an outcome (answered, blocked or no result) and are not scored. Whether a reply refuses is for a human label. A run on this set is labelled "uncalibrated scorer, not a finding". The setting `item_set: spike` runs the 20 spike items. No live run has used the full set yet.
+
 **What it does not do.**
 
-- It uses 20 items. The procedure asks for 100 or more, and a clean-baseline arm of 25 requests. The spike has no baseline arm.
+- The spike set (`item_set: spike`) uses 20 items and has no baseline arm. The full set above meets the procedure's sizes.
 - SRD-1 minimal has no guardrail layer (C-10), no tools and no retrieval. The procedure expects the classifier to be on as in production.
 - It does not run steps 2 and 6 to 9 of the procedure, and it does not score M5 to M7.
 - The scorer reads plain English text and has no measured error rate. Its known false results are listed in the header of every run log.

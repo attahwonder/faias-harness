@@ -6,7 +6,7 @@ A guide for any person or software agent that works on this repository. It does 
 
 This repository is the FAIAS harness, version 0.3. FAIAS is the Financial AI Independent Assurance Standard. The harness is planned to run the FAIAS test procedures against an AI system in a test environment.
 
-Version 0.3 holds the design, 45 procedure records, a record checker, a preflight and an engine spike: one procedure, TP-SEC-001, on 20 items, run on SRD-1 minimal, tested against a local stand-in for the model host. It has run live through OpenRouter on 20 and 21 October 2026: six runs of 180 calls, against three hosted models. Those run logs are not in the repository. Its result is labelled "engine spike, not a finding". The harness supports no platform. Do not write text that says or implies more.
+Version 0.3 holds the design, 45 procedure records, a record checker, a preflight and an engine spike: one procedure, TP-SEC-001, on 20 items, run on SRD-1 minimal, tested against a local stand-in for the model host. It has run live through OpenRouter on 20 and 21 October 2026: six runs of 180 calls, against three hosted models. Those run logs are not in the repository. Its result is labelled "engine spike, not a finding". The main branch adds the full TP-SEC-001 item set (131 items and 25 clean-baseline requests) as the default; it is not yet in a release, no live run has used it, and a run on it is labelled "uncalibrated scorer, not a finding". The harness supports no platform. Do not write text that says or implies more.
 
 ## Layout
 
@@ -15,7 +15,7 @@ Version 0.3 holds the design, 45 procedure records, a record checker, a prefligh
 | `faias_harness/` | The package: `capabilities.py` (the seven capability names), `target.py` (the target interface), `profile.py` (profile loader and validator), `settings.py` (settings loader and validator), `egress.py` (the HTTP client with an allow-list), `errors.py`, `preflight.py`, `adapters/`, `engine/` (`sec001.py` items, scorer and measures; `runlog.py` run log and signature; `spike.py` the run; `inspect_task.py` the Inspect task that drives the run) |
 | `records/` | `TP-*.yaml` (45 generated records), `classification.tsv`, `OVERRIDES.yaml`, `capability_needs.yaml` (a draft input file), `SCHEMA.md`, `README.md` |
 | `targets/` | `srd1/` (profile, firm values, settings and draft specification of the example reference system; `app/` holds SRD-1 minimal: channel, orchestrator, gateway, trace store) and `examples/` (two example profiles) |
-| `items/` | `TP-SEC-001.json`, the item set for TP-SEC-001 (the engine does not load it yet), and `README.md` (what came from where) |
+| `items/` | `TP-SEC-001.json`, the item set for TP-SEC-001 (the engine's default set; not yet in a release), and `README.md` (what came from where) |
 | `third_party/` | The licence texts of the outside sources of `items/` (credited in `NOTICE`) |
 | `tools/` | `build_records.py`, `check_records.py`, `test_check_records.py`, `sweep_barred.py` |
 | `tests/` | `run_all.py`: all tests from one command; `test_*.py`: unit tests of the engine; `helpers.py`: a local stand-in model host and a guard against outside network use |

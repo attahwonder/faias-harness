@@ -37,7 +37,8 @@ from .. import __version__
 from . import sec001
 
 REPO = Path(__file__).resolve().parents[2]
-SCHEMA = "faias-harness-run-log/1"
+SCHEMA = "faias-harness-run-log/2"   # 2 adds the item set, the clean-baseline arm and the list `not_in_run`
+SCHEMA_V1 = "faias-harness-run-log/1"  # logs of the engine spike in version 0.3; still checked
 EGRESS_LIMIT = ("client-level control: requests made through the shared client are checked against the allow-list. "
                 "It is not a network sandbox.")
 VARIANTS = {
@@ -58,14 +59,18 @@ SCORER_STATUS = {
     "outcomes": "attacked, defended, blocked (a filter, guardrail or provider refusal declined the call; a defended run), "
                 "no_result (an empty reply, or a reply cut off at the output limit, that is not a success; left out of the rates)",
 }
-NOT_IN_SPIKE = [
-    "the clean-baseline arm of 25 requests",
+NOT_IN_RUN = [
     "the guardrail layer C-10 (the procedure expects the classifier to be enabled as in production)",
     "procedure steps 2 and 6 to 9 (code inspection, consequence assessments, action-gate review, release records, teardown)",
-    "measures M5 to M7 (findings, not scored by the spike)",
-    "the capability config_read (the spike does not offer it, so no prompt or configuration is read through the interface; only M1 to M4 are scored)",
-    "a corpus of 100 or more items (the spike has 20)",
+    "measures M5 to M7 (findings, not scored by the engine)",
+    "the capability config_read (SRD-1 minimal does not offer it, so no prompt or configuration is read through the interface; only M1 to M4 are scored)",
+    "human labels or a model judge (the scorer is not calibrated; items that only a judge can mark are not in the set)",
 ]
+NOT_IN_SPIKE = ["the clean-baseline arm of 25 requests"] + NOT_IN_RUN[:4] + ["a corpus of 100 or more items (the spike has 20)"]
+
+
+def not_in_run(item_set):
+    return NOT_IN_SPIKE if item_set == "spike" else NOT_IN_RUN
 
 
 def canonical(obj):
@@ -81,17 +86,18 @@ def iso(ns=None):
     return datetime.fromtimestamp(t, timezone.utc).isoformat(timespec="microseconds")
 
 
-def items_digest():
+def items_digest(items=sec001.ITEMS, baseline=()):
     return sha256_hex(canonical([[i.id, i.cls, i.activity, i.objective, i.text, i.marker, i.subject]
-                                 for i in sec001.ITEMS]))
+                                 for i in tuple(items) + tuple(baseline)]))
 
 
 def build_header(settings, *, allow_hosts, system_prompt_sha256, confirmation, probes=None, repo=REPO,
                  variant="standard", engine="inspect"):
     """The header, without the lock. `lock_header` adds the lock."""
     rec = sec001.load_record(repo=repo)
+    items, baseline = sec001.load_items(settings.item_set, repo=repo)
     return {
-        "type": "header", "schema": SCHEMA, "label": sec001.LABEL, "engine_version": __version__,
+        "type": "header", "schema": SCHEMA, "label": sec001.LABELS[settings.item_set], "engine_version": __version__,
         "procedure": {"tp": rec["tp"], "title": rec["title"], "irq": rec["irq"], "star": rec["star"],
                       "star_note": "copied from the Confidence line of the procedure; the harness never computes it",
                       "faias_version": sec001.FAIAS_VERSION, "source": rec["source"]},
@@ -101,18 +107,19 @@ def build_header(settings, *, allow_hosts, system_prompt_sha256, confirmation, p
         "cap_usd": settings.cap_usd, "max_tokens": settings.max_tokens,
         "settings_hash": settings.digest(),
         "thresholds": sec001.thresholds_for_header(settings, repo=repo),
-        "corpus": {"items": len(sec001.ITEMS), "classes": list(sec001.CLASSES), "runs_per_item": settings.runs_per_item,
+        "corpus": {"item_set": settings.item_set, "items": len(items), "baseline": len(baseline),
+                   "classes": list(sec001.CLASSES), "runs_per_item": settings.runs_per_item,
                    "runs_per_item_basis": "FAIAS minimum 3 (PLAYBOOK_SEC_001.md line 27)" if settings.runs_per_item == 3 else
                    f"set by the reviewer above the FAIAS minimum of 3 (PLAYBOOK_SEC_001.md line 27) and disclosed here",
-                   "per_class": {c: sum(1 for i in sec001.ITEMS if i.cls == c) for c in sec001.CLASSES},
-                   "manifest": sec001.manifest(), "items_sha256": items_digest(),
-                   "scoring": "deterministic; no model judge"},
+                   "per_class": {c: sum(1 for i in items if i.cls == c) for c in sec001.CLASSES},
+                   "manifest": sec001.manifest(items, baseline), "items_sha256": items_digest(items, baseline),
+                   "scoring": "deterministic; no model judge; the clean-baseline requests are recorded, not scored"},
         "variant": {"name": variant, "purpose": VARIANTS[variant]},
         "run_engine": _engine_facts(engine),
         "scorer": SCORER_STATUS,
         "system_prompt_sha256": system_prompt_sha256,
         "egress": {"allow": sorted(allow_hosts), "limit": EGRESS_LIMIT},
-        "not_in_spike": NOT_IN_SPIKE,
+        "not_in_run": not_in_run(settings.item_set),
         "probes": probes, "owner_confirmation": confirmation,
         "host_per_call": "recorded in each run record (served_host)",
     }
@@ -170,8 +177,10 @@ def check_log(path, repo=REPO):
         return ["the first line is not the header"]
     h = recs[0]
     rec = sec001.load_record(repo=repo)
-    if h.get("schema") != SCHEMA:
+    if h.get("schema") not in (SCHEMA, SCHEMA_V1):
         problems.append("unknown schema")
+    # A version 1 log is a spike log: it names no item set.
+    item_set = (h.get("corpus") or {}).get("item_set", "spike") if h.get("schema") == SCHEMA else "spike"
     p = h.get("procedure") or {}
     if p.get("tp") != rec["tp"]:
         problems.append("header: procedure ID differs from the record")
@@ -196,13 +205,21 @@ def check_log(path, repo=REPO):
         problems.append("header: the run engine is missing or unknown")
     if (h.get("variant") or {}).get("name") not in VARIANTS:
         problems.append("header: the variant is missing or unknown")
-    if h.get("label") != sec001.LABEL:
-        problems.append("header: the label 'engine spike, not a finding' is missing")
+    if item_set not in sec001.LABELS:
+        return problems + ["header: the item set is unknown"]
+    if h.get("label") != sec001.LABELS[item_set]:
+        problems.append(f"header: the label '{sec001.LABELS[item_set]}' is missing")
+    items, baseline = sec001.load_items(item_set, repo=repo)
+    if (h.get("corpus") or {}).get("items_sha256") != items_digest(items, baseline):
+        problems.append(f"header: the items hash differs from the item set '{item_set}' in the repository")
+    texts = {i.id: i.text for i in items + baseline}
     lock = h.get("lock") or {}
     if not lock.get("hash") or not isinstance(lock.get("time_ns"), int):
         problems.append("header: the lock is missing")
     runs = [r for r in recs if r.get("type") == "run"]
     for r in runs:
+        if r.get("request") != texts.get(r.get("item")):
+            problems.append(f"run {r.get('item')}/{r.get('run')}: the request is not the text of that item in the set")
         if not isinstance(r.get("t_ns"), int) or r["t_ns"] <= lock.get("time_ns", 0):
             problems.append(f"run {r.get('item')}/{r.get('run')}: time is not later than the lock time")
         if "served_host" not in r or "served_model" not in r:
