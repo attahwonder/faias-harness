@@ -208,7 +208,8 @@ class ReviewFixTests(_Base):
             import mcp.types as mtypes          # optional: check the shapes against the MCP SDK when it is installed
         except ImportError:
             mtypes = None
-        if mtypes is not None:
+        # only an SDK that knows the 2026-07-28 types can check them; an older SDK is skipped, not failed
+        if mtypes is not None and hasattr(mtypes, "DiscoverResult"):
             mtypes.ListToolsResult.model_validate(res)
             mtypes.DiscoverResult.model_validate(self.modern(e, "server/discover").json()["result"])
             call = self.modern(e, "tools/call", {"name": "get_account_summary", "arguments": {"account_ref": "TEST-0001"}})
