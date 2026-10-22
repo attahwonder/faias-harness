@@ -2,7 +2,8 @@
 
 The harness reaches every system under test through this one interface. No target has a private path.
 A target implements the method groups for the capabilities it exposes. Every other method raises
-NotImplementedError. Version 0.4 defines the interface. No target implements it fully.
+NotImplementedError. Version 0.5 defines the interface. No target implements it fully. The channel adapters
+(adapters/registry.py) implement `conversation` only.
 """
 from typing import Any, Protocol
 

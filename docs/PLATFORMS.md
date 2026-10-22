@@ -12,7 +12,7 @@ Harness version 0.2.0. This file records what the public documentation of six ag
 
 ## What this is not
 
-- No adapter exists for any of these platforms. The harness supports no platform (`faias_harness/adapters/README.md`).
+- Version 0.5 adds channel adapters that reach some of these platforms' agents (`directline` for Copilot Studio, `openai-responses` for the OpenAI Responses API and Azure AI Foundry agents, `a2a` where a platform offers A2A). Each is tested against a local stand-in only, not against a platform. The harness supports no platform (`faias_harness/adapters/README.md`). This survey is not a test of any adapter.
 - A quote that is found shows that the page contains those words. It does not show that the capability works in the way the harness needs. The quote can describe a related feature. A plan, a region or a preview status can limit a feature.
 - Documentation changes. A page can move or change after 16 October 2026. Read the page again before you rely on a row.
 - A capability that is not verified here is not evidence that the platform lacks it. It means only that no quote from the passes was found on a page.

@@ -1,0 +1,21 @@
+# Settings for an external run: TP-SEC-001 against a deployed staging agent, through the adapter that the profile
+# names. See docs/ARCHITECTURE.md, section 13. This file holds no key; the profile names the key variable.
+# This copy is in explore mode. An evidence-mode copy must declare the model and the target version and set
+# reviewer_values.M4, or the preflight refuses it.
+kind: external
+mode: explore                  # explore | evidence
+item_set: spike                # spike (20 items) to prove the channel first; TP-SEC-001 (131 items and 25 baseline requests)
+runs_per_item: 3               # k: at least 3 (the FAIAS minimum), at most 20
+cap_usd: 5.0                   # the run stops before a call that would pass floor(cap_usd / cost_per_call_usd)
+cost_per_call_usd: 0.01        # the operator's estimate of what one call costs on the platform (the harness cannot see it)
+max_calls: null                # an optional lower limit on the calls
+reply_timeout_s: 90            # how long to wait for a reply
+min_interval_ms: 500           # the least time between two calls (respect the platform's rate limits)
+max_consecutive_errors: 5      # the run stops after this many channel errors in a row
+declared:                      # stated by the operator and recorded as declared, not observed; needed in evidence mode
+  model_id: null               # for example the model that the agent's platform settings name
+  target_version: null         # for example the published version or solution version of the staging agent
+reviewer_values:               # M4 has no established threshold in FAIAS; the reviewer sets it before the first item
+  M4:
+    value: null
+    reason: null

@@ -19,11 +19,19 @@ calls (a tool-call probe and a reasoning-text probe; the judge-family check is n
 has no model judge), shows the result, and starts the run only after the owner types `yes`. With --probes it makes
 the two probe calls and starts nothing.
 
+With --settings <settings.yaml> of `kind: external` (version 0.5), it checks an external run instead: TP-SEC-001
+against a deployed staging agent, through the channel adapter that the profile names (docs/ARCHITECTURE.md,
+section 13). It prints the adapter, the endpoint host, what the channel lets the harness observe, the declared
+model and version, the calls against the call budget, and whether the key variable is present (never its value).
+--probes makes one channel probe (one benign message). --start makes the probe, refuses if it gets no usable
+reply, and starts the run only after the owner types `yes`.
+
 Exit codes: 0 table printed, or a run finished; 2 start refused or profile or settings invalid; 3 start
 conditions met, but a profile alone starts no run; 4 the owner did not type `yes`; 5 the run stopped at the cap
 or on an error.
 """
 import argparse
+import os
 import sys
 import time
 from pathlib import Path
@@ -85,20 +93,39 @@ def declared_firm_values(profile, keys):
     return sum(1 for k in keys if values.get(k) is not None)
 
 
+def attestation_problems(profile):
+    att = profile.attestation_file
+    if att is None:
+        return ["the profile names no isolation attestation file (attestation_file)"]
+    if not att.is_file():
+        return [f"the isolation attestation file does not exist: {att}"]
+    if not att.read_text(encoding="utf-8", errors="replace").strip():
+        return [f"the isolation attestation file is empty: {att}"]
+    return []
+
+
+def external_start_problems(profile, settings):
+    """The reasons why an external run may not start (empty list if it may)."""
+    from .adapters import registry
+    problems = attestation_problems(profile) + registry.problems(profile)
+    if registry.is_external(profile.adapter):
+        env = registry.key_env(profile)
+        if env and not os.environ.get(env):
+            problems.append(f"the environment variable {env} is not set")
+    if settings.call_budget < 2:
+        problems.append("the call budget allows fewer than two calls (the channel probe and one item)")
+    return problems
+
+
 def start_problems(profile, settings=None):
     """The reasons why a run may not start. An empty list means every start condition is met.
 
     With `settings` (the engine settings file), provider, model_id and cap_usd come from it, and the prices, the
     key variable and the signing key are checked too. Without it, they come from the profile (version 0.2 rules).
     """
-    problems = []
-    att = profile.attestation_file
-    if att is None:
-        problems.append("the profile names no isolation attestation file (attestation_file)")
-    elif not att.is_file():
-        problems.append(f"the isolation attestation file does not exist: {att}")
-    elif not att.read_text(encoding="utf-8", errors="replace").strip():
-        problems.append(f"the isolation attestation file is empty: {att}")
+    if settings is not None and settings.kind == "external":
+        return external_start_problems(profile, settings)
+    problems = attestation_problems(profile)
     if settings is None:
         st = profile.settings
         for k in ("provider", "model_id"):
@@ -186,6 +213,128 @@ def settings_report(settings, estimate_usd):
     print("Judge-family check: not applicable (the engine has no model judge)")
 
 
+def external_settings_report(profile, settings, est):
+    """Print the settings block of an external run. It never prints the value of a key."""
+    from .adapters import registry
+    from .adapters.base import host_entry
+    print(f"Engine run: TP-SEC-001 against an external target, item set {settings.item_set}")
+    if registry.is_external(profile.adapter):
+        entry = registry.ADAPTERS[profile.adapter]
+        print(f"Target: adapter {profile.adapter}: {entry.channel}; endpoint host {host_entry(profile.endpoint) if profile.endpoint else 'not set'}")
+        print(f"The harness observes: {entry.observes}")
+    print(f"Mode: {settings.mode}")
+    print(f"Settings hash: {settings.digest()}")
+    print(f"Declared model: {settings.declared_model_id or 'not declared'}; declared target version: "
+          f"{settings.declared_target_version or 'not declared'} (declared by the operator, not observed)")
+    print(f"Runs per item: {settings.runs_per_item} (FAIAS minimum 3)")
+    m4 = "not set" if settings.m4_value is None else settings.m4_value
+    print(f"M4 bar: {m4}; reason: {settings.m4_reason or 'not set'}")
+    print(f"Calls in the run: {est['calls']} (plus 1 channel probe; retries are extra)")
+    mc = f", max_calls {settings.max_calls}" if settings.max_calls is not None else ""
+    print(f"Budget: cap USD {settings.cap_usd}; cost per call USD {settings.cost_per_call_usd} (the operator's "
+          f"estimate){mc}; call budget {settings.call_budget}")
+    note = "  WARNING: the calls are above the call budget; the run will stop at the cap" \
+        if est["calls"] + 1 > settings.call_budget else ""
+    print(f"Estimated cost for the whole run: USD {est['cost_usd']:.4f}{note}")
+    print(f"Pacing: at least {settings.min_interval_ms} ms between calls; reply timeout {settings.reply_timeout_s} s; "
+          f"stop after {settings.max_consecutive_errors} channel errors in a row")
+    env = registry.key_env(profile) if registry.is_external(profile.adapter) else None
+    if env:
+        print(f"Key variable: {env} is {'present' if os.environ.get(env) else 'NOT present'}")
+    else:
+        print("Key variable: none needed by this adapter configuration")
+    print("Judge-family check: not applicable (the engine has no model judge)")
+    print("Not observed through the channel: a routing lock or a pinned model; the model, host, tokens and cost "
+          "unless the response names them")
+
+
+def print_external_probe(probe):
+    print("Channel probe (one call):")
+    if probe.get("ok"):
+        print(f"  reply received from {probe.get('channel_host')} in {probe.get('latency_ms')} ms"
+              + (f"; model named: {probe['served_model']}" if probe.get("served_model") else ""))
+        print(f"  reply start: {probe.get('reply_start')!r}")
+    else:
+        print(f"  no usable reply (error: {probe.get('error') or 'empty reply'}"
+              + (f", HTTP {probe['status']}" if probe.get("status") else "") + ")"
+              + (f": {probe['detail']}" if probe.get("detail") else ""))
+
+
+def _default_external_executor(**kw):
+    from .engine import external
+    return external.execute(**kw)
+
+
+def run_external(a, profile, settings, *, input_fn, executor, inspect_check):
+    """The preflight of an external run: report, probe, ask for `yes`, run. Returns the exit code."""
+    from .adapters import registry
+    from .adapters.base import CallBudget
+    from .engine import external
+    reasons = registry.problems(profile)
+    est = external.estimate(settings)
+    print()
+    external_settings_report(profile, settings, est)
+    if reasons:
+        print()
+        print("PROFILE CANNOT DRIVE AN EXTERNAL RUN. No run starts:")
+        for p in reasons:
+            print(f"  - {p}")
+        return 2
+    if not a.start and not a.probes:
+        print("Channel probe: not run (use --probes, or --start)")
+        return 0
+    print()
+    problems = external_start_problems(profile, settings)
+    if a.start:
+        from .engine import runlog
+        problems += runlog.key_problems(a.sign_key) if a.sign_key else ["no signing key given (--sign-key)"]
+        missing = inspect_check()
+        if missing:
+            problems.append(missing)
+        if a.positive_control:
+            problems.append("--positive-control does not apply to an external run: the harness cannot weaken a "
+                            "deployed agent; run a second staging agent with no rules, with its own profile")
+    else:
+        problems = [p for p in problems if "attestation" not in p and "signing" not in p]
+    if problems:
+        print("START REFUSED. No run starts. Fix these points first:" if a.start else "PROBES REFUSED. Fix these points first:")
+        for p in problems:
+            print(f"  - {p}")
+        return 2
+    budget = CallBudget(settings.cap_usd, settings.cost_per_call_usd, settings.max_calls)
+    egress = external.make_egress(profile)
+    try:
+        probe = external.channel_probe(external.make_target(profile, settings, egress, budget))
+    finally:
+        egress.close()
+    print_external_probe(probe)
+    if not a.start:
+        return 0
+    if not probe.get("ok"):
+        print()
+        print("START REFUSED: the channel probe got no usable reply. Fix the channel first.")
+        return 2
+    print()
+    print("Start conditions are met.")
+    print(f"Item set {settings.item_set}. This run sends {est['calls']} calls ({settings.runs_per_item} runs per item) "
+          f"through the {profile.adapter} channel to {profile.endpoint}. Call budget {settings.call_budget} "
+          f"({budget.calls} used by the probe); estimated cost USD {est['cost_usd']:.4f}; cap USD {settings.cap_usd}. "
+          f"The result is labelled '{external.sec001.LABELS[settings.item_set]}'.")
+    answer = input_fn("Type yes to start the run (anything else cancels): ").strip()
+    if answer != "yes":
+        print("Run not started: `yes` was not typed.")
+        return 4
+    confirmation = {"typed": "yes", "time": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())}
+    run_dir = Path(a.run_dir) if a.run_dir else REPO / "runs" / time.strftime("%Y%m%dT%H%M%SZ", time.gmtime())
+    result = executor(settings=settings, profile=profile, run_dir=run_dir, sign_key=a.sign_key,
+                      confirmation=confirmation, probes={"channel": probe}, prior_calls=budget.calls)
+    s = result.summary
+    print(f"Run {result.status}. Calls {s.get('calls')} of a budget of {s.get('call_budget')}; estimated cost USD "
+          f"{s.get('cost_usd_estimate')}. Label: {s.get('label')}.")
+    print(f"Log: {result.log_path}\nSignature: {result.sig_path}")
+    return 0 if result.status == "complete" else 5
+
+
 def print_probes(probes):
     tc, rt = probes.get("tool_call", {}), probes.get("reasoning_text", {})
     print("Probes (two model calls):")
@@ -215,7 +364,7 @@ def _inspect_missing():
 
 
 def main(argv=None, *, input_fn=input, gateway_factory=_default_gateway, executor=_default_executor,
-         inspect_check=_inspect_missing):
+         inspect_check=_inspect_missing, external_executor=_default_external_executor):
     ap = argparse.ArgumentParser(prog="faias_harness.preflight", description=__doc__.split("\n\n")[0])
     ap.add_argument("--profile", required=True, help="path to a target profile YAML")
     ap.add_argument("--settings", help="path to the settings YAML of an engine run")
@@ -248,6 +397,9 @@ def main(argv=None, *, input_fn=input, gateway_factory=_default_gateway, executo
                 print(f"  - {p}")
             return 2
     report(profile, load_needs())
+    if settings is not None and settings.kind == "external":
+        return run_external(a, profile, settings, input_fn=input_fn, executor=external_executor,
+                            inspect_check=inspect_check)
     est = None
     if settings is not None:
         print()

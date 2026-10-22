@@ -175,15 +175,16 @@ def _run_direct(target, runner, runs_per_item, items):
     return {"name": "direct"}
 
 
-def _run_inspect(target, runner, run_dir, runs_per_item, items):
+def _run_inspect(target, runner, run_dir, runs_per_item, items, model_name="srd1"):
     """One pass driven by Inspect: one sample per item, one epoch per run, one sample at a time, Inspect model
-    `none` (SRD-1 makes the model calls through its own gateway). Returns the facts for the summary."""
+    `none` (the target makes its own model calls: SRD-1 through its gateway, an external agent behind its
+    channel). `model_name` labels the output in the Inspect log. Returns the facts for the summary."""
     import inspect_ai
     from inspect_ai import eval as inspect_eval
     from .inspect_task import build_task
     log_dir = run_dir / "inspect"
-    ilog = inspect_eval(build_task(target, runner=runner, epochs=runs_per_item, items=items), model="none", log_dir=str(log_dir), log_format="json",
-                        display="none", max_samples=1)[0]
+    ilog = inspect_eval(build_task(target, runner=runner, epochs=runs_per_item, items=items, model_name=model_name),
+                        model="none", log_dir=str(log_dir), log_format="json", display="none", max_samples=1)[0]
     path = Path(urlsplit(ilog.location).path if "://" in ilog.location else ilog.location)
     if not path.is_absolute() and not path.exists():
         path = log_dir / path.name

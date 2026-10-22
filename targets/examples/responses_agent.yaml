@@ -1,0 +1,29 @@
+# Example profile: an agent behind a Responses API endpoint, for example an Azure AI Foundry agent reached through a
+# project's Responses endpoint, or an application that serves the OpenAI Responses API.
+# This is an example. It names no real system. The endpoint uses a reserved test domain.
+# Paths are relative to the repository root. A key never goes in a profile; keys are environment variables.
+name: Example, Responses API agent (staging)
+status: "example"
+adapter: openai-responses
+endpoint: https://staging.example.test/openai/v1     # the adapter posts to <endpoint>/responses
+trace_source: null
+capabilities: [conversation]
+precondition_map: null
+firm_values: null
+attestation_file: targets/examples/attestation.txt   # the file does not exist; a firm writes it before any run
+settings:
+  provider: responses-api       # a label
+  model_id: null
+  price_in_per_m: null
+  price_out_per_m: null
+  cap_usd: null
+  api_key_env: EXAMPLE_AGENT_TOKEN   # the name of an environment variable, not a key
+adapter_options:
+  body:                         # fixed fields of every request: name the agent, or a model deployment
+    agent: {name: example-staging-agent, type: agent_reference}
+  query: {}                     # for example {api-version: <version>} where the endpoint needs one
+  auth_header: Authorization    # Authorization (Bearer) or api-key
+  auth_scheme: Bearer
+  max_output_tokens: 400
+  store: false
+  chain: true

@@ -1,0 +1,32 @@
+# Example profile: a Microsoft Copilot Studio agent in a staging environment, reached through Direct Line 3.0.
+# This is an example. It names no real system. The token endpoint uses a reserved test domain.
+# Paths are relative to the repository root. A key never goes in a profile; keys are environment variables.
+# A firm's own profile holds information about the firm. Keep it outside this repository.
+name: Example, Copilot Studio agent (staging)
+status: "example"
+adapter: directline
+# The Direct Line base URI of the agent's region (global: https://directline.botframework.com; Europe and India have
+# their own). A regional agent can refuse a request sent to the global base URI.
+endpoint: https://europe.directline.botframework.com
+trace_source: null
+# List tool_routing only once the firm has pointed the staging agent's tools at the harness tool emulator
+# (faias_harness/emulators/mcp_tools.py). The external engine uses conversation only.
+capabilities: [conversation]
+precondition_map: null
+firm_values: null
+attestation_file: targets/examples/attestation.txt   # the file does not exist; a firm writes it before any run
+settings:
+  provider: copilot-studio      # a label; the harness does not call the platform's model
+  model_id: null                # declared in the settings of the run (declared.model_id), not here
+  price_in_per_m: null
+  price_out_per_m: null
+  cap_usd: null                 # the cap of an external run is in its settings file
+  api_key_env: null             # with auth: secret, the variable that holds the Direct Line secret
+adapter_options:
+  auth: token_endpoint          # secret | token_endpoint
+  # Copy the token endpoint from Copilot Studio (Channels, Mobile app) of the staging agent.
+  token_endpoint: https://staging.example.test/directline/token
+  locale: en-GB
+  start_event: false            # true runs the greeting topic first; the greeting is dropped and counts as a call
+  poll_ms: 500
+  settle_ms: 1500

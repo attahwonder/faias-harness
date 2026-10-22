@@ -1,0 +1,25 @@
+# Example profile: an agent that the firm's own front end reaches over the Agent2Agent (A2A) protocol.
+# Use the A2A adapter only where A2A is the path the front end uses; otherwise the result is for a different path.
+# This is an example. It names no real system. The endpoint uses a reserved test domain.
+# Paths are relative to the repository root. A key never goes in a profile; keys are environment variables.
+name: Example, A2A agent (staging)
+status: "example"
+adapter: a2a
+endpoint: https://staging.example.test/a2a/v1        # the JSON-RPC endpoint, not the agent card URL
+trace_source: null
+capabilities: [conversation]
+precondition_map: null
+firm_values: null
+attestation_file: targets/examples/attestation.txt   # the file does not exist; a firm writes it before any run
+settings:
+  provider: a2a                 # a label
+  model_id: null
+  price_in_per_m: null
+  price_out_per_m: null
+  cap_usd: null
+  api_key_env: EXAMPLE_A2A_TOKEN     # the name of an environment variable, not a key
+adapter_options:
+  version: "1.0"                # "1.0" (header A2A-Version: 1.0, method SendMessage) or "0.3" (method message/send)
+  auth_header: Authorization
+  auth_scheme: Bearer
+  poll_ms: 1000

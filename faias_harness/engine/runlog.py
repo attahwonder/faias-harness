@@ -18,6 +18,11 @@ The command refuses a folder inside the repository and refuses to overwrite a ke
 
 `verify` checks the signature over the exact bytes of the log, then checks the form of the log. Without
 `--pubkey` it uses the public key stored in the signature file, and says that the key is not pinned.
+
+Schema 3 (version 0.5) is the log of an external run (engine/external.py). Its header has a `target` block (the
+adapter, the channel, the endpoint host, what the channel shows, and the declared model and version with their
+basis), a `model` block that states the model is not pinned, and a `budget` block (cap, the operator's cost per call,
+call budget) in place of the routing locks and prices. `verify` checks these fields.
 """
 import argparse
 import base64
@@ -39,13 +44,30 @@ from . import sec001
 REPO = Path(__file__).resolve().parents[2]
 SCHEMA = "faias-harness-run-log/2"   # 2 adds the item set, the clean-baseline arm and the list `not_in_run`
 SCHEMA_V1 = "faias-harness-run-log/1"  # logs of the engine spike in version 0.3; still checked
+SCHEMA_EXTERNAL = "faias-harness-run-log/3"   # 3 (version 0.5): a run against an external target through an adapter
 EGRESS_LIMIT = ("client-level control: requests made through the shared client are checked against the allow-list. "
                 "It is not a network sandbox.")
 VARIANTS = {
     "standard": "SRD-1 minimal with its system prompt",
     "positive_control": "SRD-1 minimal with the weakened system prompt (no rules); the harness is expected to "
                         "find successes in every class",
+    "external": "a deployed staging agent, reached through its own channel by an adapter; the harness changes "
+                "nothing in the agent",
 }
+NOT_IN_EXTERNAL = [
+    "the model, the host that served it, the token use and the cost, unless the channel names them (the harness "
+    "is a client of the channel; the declared model and version are what the operator states, not what the "
+    "harness observed)",
+    "a routing lock or a pinned model (the harness does not make the agent's model calls)",
+    "the platform's content filter, where the channel does not name a block (a filtered reply that the platform "
+    "replaced with a fallback message counts as a reply)",
+    "procedure steps 2 and 6 to 9 (code inspection, consequence assessments, action-gate review, release records, teardown)",
+    "measures M5 to M7 (findings, not scored by the engine)",
+    "the capability config_read (no prompt or configuration is read through the interface; only M1 to M4 are scored)",
+    "human labels or a model judge (the scorer is not calibrated; items that only a judge can mark are not in the set)",
+    "a positive control (the harness cannot weaken a deployed agent; a second staging agent with no rules, run with "
+    "its own profile, is the operator's positive control)",
+]
 SCORER_STATUS = {
     "calibrated": False,
     "note": "The scorer has not been checked against replies labelled by people. Its error rates are not known. Results from this run are not evidence about the target.",
@@ -125,6 +147,50 @@ def build_header(settings, *, allow_hosts, system_prompt_sha256, confirmation, p
     }
 
 
+def build_external_header(settings, *, target, allow_hosts, confirmation, probes=None, repo=REPO, engine="inspect"):
+    """The header of an external run (schema 3), without the lock. `target` is the dict that describes the target:
+    adapter, channel, endpoint host, what the adapter observes, the profile name and the profile hash."""
+    rec = sec001.load_record(repo=repo)
+    items, baseline = sec001.load_items(settings.item_set, repo=repo)
+    return {
+        "type": "header", "schema": SCHEMA_EXTERNAL, "label": sec001.LABELS[settings.item_set],
+        "engine_version": __version__,
+        "procedure": {"tp": rec["tp"], "title": rec["title"], "irq": rec["irq"], "star": rec["star"],
+                      "star_note": "copied from the Confidence line of the procedure; the harness never computes it",
+                      "faias_version": sec001.FAIAS_VERSION, "source": rec["source"]},
+        "mode": settings.mode,
+        "target": {**target, "kind": "external",
+                   "declared": {"model_id": settings.declared_model_id,
+                                "target_version": settings.declared_target_version,
+                                "basis": "declared by the operator in the settings; not observed by the harness"}},
+        "model": {"declared_id": settings.declared_model_id, "pinned": False,
+                  "note": "the harness does not make the agent's model calls, so it cannot pin or observe the model; "
+                          "a run record names a model only where the channel's response names one"},
+        "budget": {"cap_usd": settings.cap_usd, "cost_per_call_usd": settings.cost_per_call_usd,
+                   "cost_basis": "the operator's estimate of the cost of one call; the harness cannot see the "
+                                 "platform's billing",
+                   "max_calls": settings.max_calls, "call_budget": settings.call_budget},
+        "pacing": {"min_interval_ms": settings.min_interval_ms, "reply_timeout_s": settings.reply_timeout_s,
+                   "max_consecutive_errors": settings.max_consecutive_errors},
+        "settings_hash": settings.digest(),
+        "thresholds": sec001.thresholds_for_header(settings, repo=repo),
+        "corpus": {"item_set": settings.item_set, "items": len(items), "baseline": len(baseline),
+                   "classes": list(sec001.CLASSES), "runs_per_item": settings.runs_per_item,
+                   "runs_per_item_basis": "FAIAS minimum 3 (PLAYBOOK_SEC_001.md line 27)" if settings.runs_per_item == 3 else
+                   "set by the reviewer above the FAIAS minimum of 3 (PLAYBOOK_SEC_001.md line 27) and disclosed here",
+                   "per_class": {c: sum(1 for i in items if i.cls == c) for c in sec001.CLASSES},
+                   "manifest": sec001.manifest(items, baseline), "items_sha256": items_digest(items, baseline),
+                   "scoring": "deterministic; no model judge; the clean-baseline requests are recorded, not scored"},
+        "variant": {"name": "external", "purpose": VARIANTS["external"]},
+        "run_engine": _engine_facts(engine),
+        "scorer": SCORER_STATUS,
+        "egress": {"allow": sorted(allow_hosts), "limit": EGRESS_LIMIT},
+        "not_in_run": NOT_IN_EXTERNAL,
+        "probes": probes, "owner_confirmation": confirmation,
+        "host_per_call": "recorded in each run record (served_host): the channel host that answered",
+    }
+
+
 def _engine_facts(engine):
     if engine != "inspect":
         return {"name": engine}
@@ -132,14 +198,20 @@ def _engine_facts(engine):
     return {"name": "inspect_ai", "version": inspect_ai.__version__}
 
 
+LOCK_KEYS = ("procedure", "thresholds", "settings_hash", "routing", "model", "variant", "system_prompt_sha256")
+LOCK_KEYS_EXTERNAL = ("procedure", "thresholds", "settings_hash", "target", "model", "budget", "variant")
+
+
 def lock_header(header, clock_ns=None):
     """Add the lock: a time, and a hash over the fixed parts. Call this just before the log is opened."""
     ns = time.time_ns() if clock_ns is None else clock_ns
-    fixed = {k: header[k] for k in ("procedure", "thresholds", "settings_hash", "routing", "model", "variant",
-                                     "system_prompt_sha256")}
+    external = header.get("schema") == SCHEMA_EXTERNAL
+    fixed = {k: header[k] for k in (LOCK_KEYS_EXTERNAL if external else LOCK_KEYS)}
     fixed["items_sha256"] = header["corpus"]["items_sha256"]
-    header["lock"] = {"time": iso(ns), "time_ns": ns, "hash": sha256_hex(canonical(fixed)),
-                      "covers": "procedure, thresholds with bases, settings hash, routing locks, model ID, system prompt hash, item set"}
+    covers = ("procedure, thresholds with bases, settings hash, target with its declared model and version, "
+              "budget, item set") if external else \
+        "procedure, thresholds with bases, settings hash, routing locks, model ID, system prompt hash, item set"
+    header["lock"] = {"time": iso(ns), "time_ns": ns, "hash": sha256_hex(canonical(fixed)), "covers": covers}
     return header
 
 
@@ -177,10 +249,11 @@ def check_log(path, repo=REPO):
         return ["the first line is not the header"]
     h = recs[0]
     rec = sec001.load_record(repo=repo)
-    if h.get("schema") not in (SCHEMA, SCHEMA_V1):
+    if h.get("schema") not in (SCHEMA, SCHEMA_V1, SCHEMA_EXTERNAL):
         problems.append("unknown schema")
-    # A version 1 log is a spike log: it names no item set. A version 2 log must name its set.
-    item_set = (h.get("corpus") or {}).get("item_set") if h.get("schema") == SCHEMA else "spike"
+    external = h.get("schema") == SCHEMA_EXTERNAL
+    # A version 1 log is a spike log: it names no item set. A version 2 or 3 log must name its set.
+    item_set = (h.get("corpus") or {}).get("item_set") if h.get("schema") in (SCHEMA, SCHEMA_EXTERNAL) else "spike"
     if item_set is None:
         return problems + ["header: the item set is missing"]
     p = h.get("procedure") or {}
@@ -188,7 +261,21 @@ def check_log(path, repo=REPO):
         problems.append("header: procedure ID differs from the record")
     if p.get("star") != rec["star"] or p.get("star") != "★" + "4":
         problems.append("header: star label is not the label of the record (★4)")
-    if not (h.get("model") or {}).get("pinned_id"):
+    if external:
+        t = h.get("target") or {}
+        if t.get("kind") != "external" or not t.get("adapter") or not t.get("endpoint_host"):
+            problems.append("header: the target (kind, adapter, endpoint host) is missing")
+        if "basis" not in (t.get("declared") or {}):
+            problems.append("header: the declared model and version have no basis")
+        if (h.get("model") or {}).get("pinned") is not False:
+            problems.append("header: an external run must state that the model is not pinned")
+        b = h.get("budget") or {}
+        if not isinstance(b.get("call_budget"), int) or not b.get("cost_basis"):
+            problems.append("header: the budget (call budget and cost basis) is missing")
+        if h.get("mode") == "evidence" and not ((t.get("declared") or {}).get("model_id")
+                                               and (t.get("declared") or {}).get("target_version")):
+            problems.append("header: an evidence-mode external run must declare the model and the target version")
+    elif not (h.get("model") or {}).get("pinned_id"):
         problems.append("header: model ID is missing")
     if not h.get("settings_hash"):
         problems.append("header: settings hash is missing")
@@ -207,6 +294,8 @@ def check_log(path, repo=REPO):
         problems.append("header: the run engine is missing or unknown")
     if (h.get("variant") or {}).get("name") not in VARIANTS:
         problems.append("header: the variant is missing or unknown")
+    elif external != ((h.get("variant") or {}).get("name") == "external"):
+        problems.append("header: the variant does not match the schema")
     if item_set not in sec001.LABELS:
         return problems + ["header: the item set is unknown"]
     if h.get("label") != sec001.LABELS[item_set]:
