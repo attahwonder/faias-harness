@@ -11,11 +11,11 @@ agree on, or that a third reading settled where they differed. A procedure with 
 With --start, it refuses unless the isolation attestation file exists and is not empty, and the settings
 provider, model_id and cap_usd are set. With a profile alone, it starts nothing, even when every condition is met.
 
-With --settings <settings.yaml> (version 0.3), it also checks the settings file of the engine spike
+With --settings <settings.yaml> (version 0.3), it also checks the settings file of an engine run
 (TP-SEC-001 on SRD-1 minimal) and prints the provider, model, host, precision, routing locks, the worst-case
 estimate against the cap, and whether the key variable is present (never its value). An evidence-mode settings
 file that lacks any of the five routing locks is refused. With --start it checks the signing key, makes two probe
-calls (a tool-call probe and a reasoning-text probe; the judge-family check is not applicable because the spike
+calls (a tool-call probe and a reasoning-text probe; the judge-family check is not applicable because the engine
 has no model judge), shows the result, and starts the run only after the owner types `yes`. With --probes it makes
 the two probe calls and starts nothing.
 
@@ -156,7 +156,7 @@ def report(profile, needs, records_dir=RECORDS_DIR):
 def settings_report(settings, estimate_usd):
     """Print the settings block of the preflight. It never prints the value of the key."""
     r = settings.routing()
-    print("Engine spike: TP-SEC-001 on SRD-1 minimal")
+    print(f"Engine run: TP-SEC-001 on SRD-1 minimal, item set {settings.item_set}")
     print(f"Mode: {settings.mode}")
     print(f"Settings hash: {settings.digest()}")
     print(f"Provider: {settings.provider}")
@@ -183,7 +183,7 @@ def settings_report(settings, estimate_usd):
             if settings.cap_usd is not None and estimate_usd > settings.cap_usd else ""
         print(f"Worst-case estimate for the whole run: USD {estimate_usd:.4f}; cap: {cap}{note}")
     print(f"Key variable: {settings.api_key_env} is {'present' if settings.key_present() else 'NOT present'}")
-    print("Judge-family check: not applicable (the spike has no model judge)")
+    print("Judge-family check: not applicable (the engine has no model judge)")
 
 
 def print_probes(probes):
@@ -218,7 +218,7 @@ def main(argv=None, *, input_fn=input, gateway_factory=_default_gateway, executo
          inspect_check=_inspect_missing):
     ap = argparse.ArgumentParser(prog="faias_harness.preflight", description=__doc__.split("\n\n")[0])
     ap.add_argument("--profile", required=True, help="path to a target profile YAML")
-    ap.add_argument("--settings", help="path to the settings YAML of the engine spike")
+    ap.add_argument("--settings", help="path to the settings YAML of an engine run")
     ap.add_argument("--start", action="store_true",
                     help="check the start conditions; with --settings, probe, ask for `yes` and run")
     ap.add_argument("--probes", action="store_true", help="with --settings: make the two probe calls and start nothing")
@@ -275,7 +275,7 @@ def main(argv=None, *, input_fn=input, gateway_factory=_default_gateway, executo
         return 2
     if settings is None:
         print("Start conditions are met.")
-        print("No run starts: a profile alone names no run. Give --settings to run the engine spike.")
+        print("No run starts: a profile alone names no run. Give --settings to run the engine.")
         return 3
     from .engine import spike
     gateway = gateway_factory(settings)

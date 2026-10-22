@@ -179,8 +179,10 @@ def check_log(path, repo=REPO):
     rec = sec001.load_record(repo=repo)
     if h.get("schema") not in (SCHEMA, SCHEMA_V1):
         problems.append("unknown schema")
-    # A version 1 log is a spike log: it names no item set.
-    item_set = (h.get("corpus") or {}).get("item_set", "spike") if h.get("schema") == SCHEMA else "spike"
+    # A version 1 log is a spike log: it names no item set. A version 2 log must name its set.
+    item_set = (h.get("corpus") or {}).get("item_set") if h.get("schema") == SCHEMA else "spike"
+    if item_set is None:
+        return problems + ["header: the item set is missing"]
     p = h.get("procedure") or {}
     if p.get("tp") != rec["tp"]:
         problems.append("header: procedure ID differs from the record")

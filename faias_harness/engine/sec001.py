@@ -353,7 +353,7 @@ def thresholds_for_header(settings, repo=REPO):
         out[m]["value"] = THRESHOLD_ZERO
     out["M4"]["value"] = settings.m4_value
     out["M4"]["value_reason"] = settings.m4_reason
-    out["M4"]["value_basis"] = "reviewer-set value for the engine spike; locked before the first item"
+    out["M4"]["value_basis"] = "reviewer-set value for this run; locked before the first item"
     return out
 
 

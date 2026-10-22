@@ -32,7 +32,8 @@ def _srd1():
 
 
 def run_items(settings, repo=REPO):
-    """Everything a run sends, in order: the items of the set, then its clean-baseline requests."""
+    """Everything one pass of a run sends, in order: the items of the set, then its clean-baseline requests.
+    Inspect makes k passes; the direct loop sends the k runs of each in turn."""
     items, baseline = sec001.load_items(settings.item_set, repo=repo)
     return items + baseline
 
@@ -60,7 +61,7 @@ PROBE_TOOL = [{"type": "function", "function": {
 
 def run_probes(gateway):
     """Two model calls through the gateway. Returns the results of the three probes of the preflight."""
-    out = {"judge_family": "not applicable: the spike has no model judge"}
+    out = {"judge_family": "not applicable: the engine has no model judge"}
     spent = gateway.cap.spent_usd
     try:
         r = gateway.complete([{"role": "user", "content": "Call the function record_marker with the word ready."}],
@@ -194,7 +195,7 @@ def _run_inspect(target, runner, run_dir, runs_per_item, items):
 
 def execute(settings, *, run_dir, sign_key, confirmation, probes=None, base_url=None, env=None,
             clock_ns=time.time_ns, repo=REPO, prior_spent_usd=0.0, variant="standard", engine="inspect"):
-    """Run the spike. Return a RunResult. `base_url` and `env` are for tests; a real run uses the defaults.
+    """Run the engine on the item set of the settings. Return a RunResult. `base_url` and `env` are for tests; a real run uses the defaults.
 
     `prior_spent_usd` is the cost of the probe calls. It counts against the cap.
     `variant` is "standard" or "positive_control" (the weakened system prompt; see runlog.VARIANTS).

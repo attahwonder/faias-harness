@@ -119,11 +119,18 @@ class HeaderAndCheckTests(unittest.TestCase):
         h["corpus"]["item_set"] = "other"
         self.write(h, ITEMS[0].text)
         self.assertIn("header: the item set is unknown", runlog.check_log(self.path))
+        # a version 2 header that names no item set
+        h = _header("TP-SEC-001")
+        del h["corpus"]["item_set"]
+        self.write(h, ITEMS[0].text)
+        self.assertIn("header: the item set is missing", runlog.check_log(self.path))
 
     def test_a_version_1_spike_log_still_passes(self):
+        # the shape of a version 1 header (version 0.3.0): no item set, no baseline count, `not_in_spike`
         h = _header("spike")
         h["schema"] = runlog.SCHEMA_V1
-        del h["corpus"]["item_set"]
+        del h["corpus"]["item_set"], h["corpus"]["baseline"], h["not_in_run"]
+        h["not_in_spike"] = runlog.NOT_IN_SPIKE
         self.write(h, sec001.ITEMS[0].text)
         self.assertEqual(runlog.check_log(self.path), [])
 
