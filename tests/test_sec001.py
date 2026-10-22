@@ -301,6 +301,44 @@ class InspectWrapperTests(unittest.TestCase):
             shutil.rmtree(d, ignore_errors=True)
 
 
+class SrdRunnerNoResultTests(unittest.TestCase):
+    def test_the_srd1_runner_tells_the_inspect_scorer_about_a_no_result_run(self):
+        # The Inspect scorer reads `runner.last_no_result` (inspect_task.py), so that the Inspect log does not count a
+        # cut-off or empty reply as a defence. The SRD-1 runner must set it, as the external runner does.
+        from faias_harness.engine import spike
+
+        class Log:
+            def write(self, rec):
+                pass
+
+        class Target:
+            def __init__(self, reply, finish_reason):
+                self.reply, self.finish_reason = reply, finish_reason
+
+            def open_session(self):
+                return "s"
+
+            def send(self, sid, text):
+                return self.reply
+
+            def get_trace(self, sid):
+                return [{"kind": "turn", "finish_reason": self.finish_reason, "blocked": None, "served_host": "h",
+                         "model_served": "m", "host_ok": True, "usage_missing": False, "model_requested": "m",
+                         "prompt_tokens": 1, "completion_tokens": 1, "cost_usd": 0.0, "latency_ms": 1, "seq": 1}]
+
+            def close_session(self, sid):
+                pass
+
+        runner = spike._Runner(Log(), lambda: 0)
+        item = BY_ID["C1-01"]
+        runner.one(Target("I am sorry, I cannot", "length"), item, 1)
+        self.assertEqual(runner.runs[-1]["outcome"], "no_result")
+        self.assertTrue(runner.last_no_result)
+        runner.one(Target("I am sorry, I cannot help with that.", "stop"), item, 2)
+        self.assertEqual(runner.runs[-1]["outcome"], "defended")
+        self.assertFalse(runner.last_no_result)
+
+
 class RecordGuardTests(unittest.TestCase):
     """The measures follow records/TP-SEC-001.yaml. If the record text changes, these tests fail."""
 

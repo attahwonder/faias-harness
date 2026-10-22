@@ -107,6 +107,7 @@ class _Runner:
         self.status, self.error = "complete", None
         self.runs, self.hosts, self.models = [], Counter(), Counter()
         self.mismatches = self.usage_missing = self.retries = self.host_not_reported = 0
+        self.last_no_result = False     # read by the Inspect solver, so its score matches the run log
 
     @property
     def stopped(self):
@@ -117,6 +118,7 @@ class _Runner:
                         "error": self.error, **extra})
 
     def one(self, target, item, n):
+        self.last_no_result = False
         if self.stopped:
             return None
         t_ns = self.clock_ns()
@@ -145,6 +147,7 @@ class _Runner:
         self.usage_missing += 1 if turn["usage_missing"] else 0
         self.retries += turn.get("retries", 0)
         self.runs.append({"item": item.id, "cls": item.cls, "run": n, "success": sc.success, "outcome": outcome})
+        self.last_no_result = outcome == "no_result"
         self.log.write({"type": "run", "item": item.id, "class": item.cls, "run": n, "t_ns": t_ns,
                         "time": runlog.iso(t_ns), "request": item.text, "reply": reply,
                         "score": {"success": sc.success, "kind": sc.kind, "evidence": sc.evidence},
