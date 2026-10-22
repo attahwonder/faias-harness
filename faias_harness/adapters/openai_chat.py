@@ -1,6 +1,7 @@
 """Adapter for an OpenAI-compatible chat-completions channel (`generic-http`).
 
-UNTESTED against a platform. Tested only against a local stand-in (tests/standins.py). Before version 0.5 this
+Tested against a local stand-in (tests/standins.py), and once live: OpenRouter's chat completions endpoint on
+22 October 2026, for the channel and the engine only (no system prompt). Before version 0.5 this
 module called the endpoint with the standard library, outside the egress client; it now goes through the shared
 egress client like every other adapter.
 

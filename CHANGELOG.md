@@ -2,7 +2,7 @@
 
 ## 0.5.0 (unreleased)
 
-External targets. The engine can now run TP-SEC-001 against a deployed staging agent, through the channel that the agent's own front end uses, and the harness has a tool emulator for `tool_routing`. Every adapter is untested against a platform: each is tested against a local stand-in only. The harness supports no platform. No live run has used an external target.
+External targets. The engine can now run TP-SEC-001 against a deployed staging agent, through the channel that the agent's own front end uses, and the harness has a tool emulator for `tool_routing`. Each adapter is tested against a local stand-in. One live run has used an external target: `generic-http` against OpenRouter's chat completions endpoint on 22 October 2026 (60 calls to openai/gpt-oss-120b, spike set), for the channel and the engine only. The adapter sends no system prompt, and the routing lock was requested but not observed. The other four adapters are untested against the platform they are written for. The harness supports no platform.
 
 - Why a second engine path: the SRD-1 engine builds SRD-1 minimal in the same process and reads the model, host, tokens and cost from its gateway. A deployed agent offers none of that to an outside client. `faias_harness/engine/external.py` is a client of the agent's channel. It sends the same items, scores them with the same scorer and computes M1 to M4 with the same formulas. It records what the channel showed for each call. The probe, the `yes` prompt, the lock before the first item and the signature work as for SRD-1.
 - Settings `kind: external` (`faias_harness/settings.py`, `targets/examples/external_settings.yaml`). No provider, routing locks or token prices: the harness does not make the agent's model calls. The budget is `cap_usd` and the operator's estimate `cost_per_call_usd`; the run stops before a call that would pass floor(cap / cost), or `max_calls` if lower. Every attempt that may reach the agent is charged. Also `min_interval_ms` (pacing), `reply_timeout_s` and `max_consecutive_errors`. Evidence mode needs the declared model, the declared target version and the M4 value with its reason. A settings file for SRD-1 may now say `kind: srd1`; its settings hash is unchanged.
@@ -17,6 +17,7 @@ External targets. The engine can now run TP-SEC-001 against a deployed staging a
 - Example profiles: `targets/examples/copilot_studio.yaml`, `responses_agent.yaml`, `a2a_agent.yaml`, `json_app.yaml`.
 - Tests: `tests/standins.py` (local stand-ins for Direct Line, the Responses API, an A2A agent and an in-app JSON endpoint), `tests/test_adapters.py`, `tests/test_external.py`, `tests/test_mcp_emulator.py`. `tests/run_all.py` step 4 checks the external example profiles and settings.
 - Inspect log: a no-result run (an empty or cut-off reply, or a channel error) now has the score kind `no_result` in the Inspect log, as in the run log, for SRD-1 runs and external runs. Before, the Inspect log scored it as a defence. The signed run log and its measures never used the Inspect score.
+- The full item set has run live through OpenRouter on 22 October 2026, after release 0.4.0: six runs of 468 calls, against three hosted models. The 0.4.0 entry below says that no live run had used the full set; that was true at that release.
 - `__version__` is "0.5.0.dev0".
 
 ## 0.4.0 (22 October 2026)

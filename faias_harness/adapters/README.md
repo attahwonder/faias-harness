@@ -2,7 +2,7 @@
 
 An adapter connects the target interface (`faias_harness/target.py`) to a real system. An adapter implements the method groups of the capabilities that the system exposes.
 
-**No adapter is supported in v0.5.** Every channel adapter below is untested against a platform. Each is tested only against a local stand-in (`tests/standins.py`, `tests/test_adapters.py`, `tests/test_external.py`). `srd1-http` is tested only against SRD-1 minimal and a local stand-in. `docs/PLATFORMS.md` surveys the public documentation of six agent platforms. It is not a test and not support.
+**No adapter is supported in v0.5.** Every channel adapter below except `generic-http` is untested against a platform. Each is tested against a local stand-in (`tests/standins.py`, `tests/test_adapters.py`, `tests/test_external.py`). `srd1-http` is tested only against SRD-1 minimal and a local stand-in. `docs/PLATFORMS.md` surveys the public documentation of six agent platforms. It is not a test and not support.
 
 | Adapter | File | Channel | Capabilities | State |
 |---|---|---|---|---|
@@ -10,7 +10,7 @@ An adapter connects the target interface (`faias_harness/target.py`) to a real s
 | `openai-responses` | `openai_responses.py` | Responses API (OpenAI; Azure AI Foundry agents through a project's Responses endpoint) | `conversation` | Added in 0.5. Untested against a platform. Tested against a local stand-in. |
 | `a2a` | `a2a.py` | Agent2Agent (A2A) JSON-RPC, protocol version 1.0 or 0.3 | `conversation` | Added in 0.5. Untested against a platform. Tested against a local stand-in agent of each version. |
 | `json-http` | `json_http.py` | A firm's own chat endpoint, JSON over HTTP, from a request template and a reply path | `conversation` | Added in 0.5. Untested against a platform. Tested against a local stand-in. |
-| `generic-http` | `openai_chat.py` | OpenAI-compatible chat completions | `conversation` | Written in 0.1. In 0.5 it moved onto the egress client and gained a test against a local stand-in. Untested against a platform. |
+| `generic-http` | `openai_chat.py` | OpenAI-compatible chat completions | `conversation` | Written in 0.1. In 0.5 it moved onto the egress client and gained a test against a local stand-in. One live run: OpenRouter's chat completions endpoint, 22 October 2026, 60 calls to openai/gpt-oss-120b. It tested the channel and the engine only: no system prompt was sent, and the routing lock was requested but not observed. |
 | `srd1-http` | `srd1_http.py` | SRD-1 minimal chat channel | `conversation`, `traces` | Added in 0.3.0. Tested against SRD-1 minimal on 127.0.0.1, with a local stand-in for the model host, and used in the live runs of 20 and 21 October 2026. It talks to no other system. |
 | Amazon Lex V2, Dialogflow CX, contact-centre messaging, Agentforce Agent API | none | none | not decided | Not built. |
 | Amazon Bedrock InvokeAgent | none | none | not decided | Not built. It needs AWS request signing. Where AgentCore exposes an A2A endpoint, `a2a` may reach it; that is not tested. |
