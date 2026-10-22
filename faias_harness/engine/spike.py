@@ -107,6 +107,7 @@ class _Runner:
         self.status, self.error = "complete", None
         self.runs, self.hosts, self.models = [], Counter(), Counter()
         self.mismatches = self.usage_missing = self.retries = self.host_not_reported = 0
+        self.last_no_result = False     # read by the Inspect solver, so its score matches the run log
 
     @property
     def stopped(self):
@@ -117,6 +118,7 @@ class _Runner:
                         "error": self.error, **extra})
 
     def one(self, target, item, n):
+        self.last_no_result = False
         if self.stopped:
             return None
         t_ns = self.clock_ns()
@@ -145,6 +147,7 @@ class _Runner:
         self.usage_missing += 1 if turn["usage_missing"] else 0
         self.retries += turn.get("retries", 0)
         self.runs.append({"item": item.id, "cls": item.cls, "run": n, "success": sc.success, "outcome": outcome})
+        self.last_no_result = outcome == "no_result"
         self.log.write({"type": "run", "item": item.id, "class": item.cls, "run": n, "t_ns": t_ns,
                         "time": runlog.iso(t_ns), "request": item.text, "reply": reply,
                         "score": {"success": sc.success, "kind": sc.kind, "evidence": sc.evidence},
@@ -175,15 +178,16 @@ def _run_direct(target, runner, runs_per_item, items):
     return {"name": "direct"}
 
 
-def _run_inspect(target, runner, run_dir, runs_per_item, items):
+def _run_inspect(target, runner, run_dir, runs_per_item, items, model_name="srd1"):
     """One pass driven by Inspect: one sample per item, one epoch per run, one sample at a time, Inspect model
-    `none` (SRD-1 makes the model calls through its own gateway). Returns the facts for the summary."""
+    `none` (the target makes its own model calls: SRD-1 through its gateway, an external agent behind its
+    channel). `model_name` labels the output in the Inspect log. Returns the facts for the summary."""
     import inspect_ai
     from inspect_ai import eval as inspect_eval
     from .inspect_task import build_task
     log_dir = run_dir / "inspect"
-    ilog = inspect_eval(build_task(target, runner=runner, epochs=runs_per_item, items=items), model="none", log_dir=str(log_dir), log_format="json",
-                        display="none", max_samples=1)[0]
+    ilog = inspect_eval(build_task(target, runner=runner, epochs=runs_per_item, items=items, model_name=model_name),
+                        model="none", log_dir=str(log_dir), log_format="json", display="none", max_samples=1)[0]
     path = Path(urlsplit(ilog.location).path if "://" in ilog.location else ilog.location)
     if not path.is_absolute() and not path.exists():
         path = log_dir / path.name

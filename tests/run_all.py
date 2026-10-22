@@ -9,7 +9,9 @@ Steps:
   4. preflight: the SRD-1 profile gives 45 full; the example profiles give stable, correct counts;
      --start refuses without an attestation file and without settings; a profile alone starts nothing;
      with a settings file: the shipped explore file is accepted, an evidence file that lacks any of the five
-     routing locks is refused, and --start refuses without the key variable
+     routing locks is refused, and --start refuses without the key variable; with the external settings file
+     (version 0.5): each external example profile is accepted, an evidence file without the declared model and
+     version is refused, and --start refuses without the attestation and the key variable
   5. the firm-values file of SRD-1 lists exactly the keys of the records
   6. the sweep for barred terms and key-like strings finds 0 hits
   7. the unit tests of the engine (settings, SRD-1 minimal, gateway, scorer, run log, signature, end to end
@@ -114,6 +116,39 @@ def settings_checks(tmp, att):
     print("   settings: explore file accepted; 5 locks missing in evidence mode refused; --start refuses without the key variable")
 
 
+EXTERNAL_EXAMPLES = (("copilot_studio", "directline"), ("responses_agent", "openai-responses"), ("a2a_agent", "a2a"),
+                     ("json_app", "json-http"))
+
+
+def external_checks(tmp):
+    """The preflight with the external settings file, run as a command. No channel call, no key."""
+    shipped = "targets/examples/external_settings.yaml"
+    for name, adapter in EXTERNAL_EXAMPLES:
+        profile = f"targets/examples/{name}.yaml"
+        rc, out = preflight(profile)
+        m = RESULT.search(out)
+        expect(rc == 0 and m and tuple(map(int, m.groups())) == expected_counts({"conversation"}),
+               f"{name}: counts {m and m.group(0)} differ from {expected_counts({'conversation'})}")
+        rc, out = preflight(profile, "--settings", shipped)
+        expect(rc == 0 and "against an external target" in out and f"adapter {adapter}" in out
+               and "Channel probe: not run" in out, f"{name}: the external settings were not accepted: exit {rc}, {out[-300:]}")
+    raw = yaml.safe_load((REPO / shipped).read_text(encoding="utf-8"))
+    ev = tmp / "external_evidence.yaml"
+    ev.write_text(yaml.safe_dump({**raw, "mode": "evidence"}), encoding="utf-8")
+    rc, out = preflight("targets/examples/responses_agent.yaml", "--settings", ev)
+    expect(rc == 2 and "SETTINGS INVALID" in out and "declared.model_id" in out and "declared.target_version" in out,
+           f"external evidence settings without the declared model and version were not refused: exit {rc}")
+    env = {k: v for k, v in ENV.items() if k != "EXAMPLE_AGENT_TOKEN"}
+    p = subprocess.run(PY + ["-m", "faias_harness.preflight", "--profile", "targets/examples/responses_agent.yaml",
+                             "--settings", shipped, "--start"],
+                       cwd=REPO, env=env, capture_output=True, text=True, encoding="utf-8", input="")
+    expect(p.returncode == 2 and "START REFUSED" in p.stdout and "attestation" in p.stdout
+           and "EXAMPLE_AGENT_TOKEN is not set" in p.stdout,
+           f"external --start without the attestation and the key variable: exit {p.returncode}, {p.stdout[-300:]}")
+    print(f"   external: {len(EXTERNAL_EXAMPLES)} example profiles accepted; evidence without the declared model and "
+          "version refused; --start refuses without the attestation and the key variable")
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--faias", required=True, help="path to the FAIAS v1.3.3 tree")
@@ -181,6 +216,7 @@ def main():
         expect(rc == 2 and "unknown capability" in out and "never goes in a profile" in out, "an invalid profile was not refused")
         print("   --start: refuses without an attestation, with an empty one, without cap_usd, without model_id; exit 3 when all met")
         settings_checks(tmp, att)
+        external_checks(tmp)
 
     print("5. firm values")
     fv = yaml.safe_load((REPO / "targets" / "srd1" / "firm_values.yaml").read_text(encoding="utf-8"))["values"]

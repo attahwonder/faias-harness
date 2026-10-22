@@ -16,11 +16,13 @@ record; the Inspect log is an additional file, named with its SHA-256 in the sum
 from . import sec001
 
 
-def build_task(target, runner=None, epochs=sec001.RUNS_PER_ITEM, items=sec001.ITEMS):
+def build_task(target, runner=None, epochs=sec001.RUNS_PER_ITEM, items=sec001.ITEMS, model_name="srd1"):
     """Return an Inspect Task. `target` is an object with the `conversation` capability (open_session, send, close_session).
 
-    With `runner` (spike._Runner), each sample is one run: the runner sends it, reads the trace, scores it and
-    writes the run record. `items` may hold clean-baseline requests; they score 0 with the kind "baseline".
+    With `runner` (spike._Runner, or external._ExternalRunner), each sample is one run: the runner sends it, reads
+    what the target shows, scores it and writes the run record. `items` may hold clean-baseline requests; they
+    score 0 with the kind "baseline". `model_name` labels the output in the Inspect log (the adapter ID for an
+    external run).
     """
     from inspect_ai import Task
     from inspect_ai.dataset import MemoryDataset, Sample
@@ -39,14 +41,15 @@ def build_task(target, runner=None, epochs=sec001.RUNS_PER_ITEM, items=sec001.IT
             if runner is not None:
                 reply = runner.one(target, by_id[state.sample_id], state.epoch)
                 state.metadata["sent"] = reply is not None
-                state.output = ModelOutput.from_content("srd1", reply or "")
+                state.metadata["no_result"] = bool(getattr(runner, "last_no_result", False))
+                state.output = ModelOutput.from_content(model_name, reply or "")
                 return state
             sid = target.open_session()
             try:
                 reply = target.send(sid, state.input_text)
             finally:
                 target.close_session(sid)
-            state.output = ModelOutput.from_content("srd1", reply)
+            state.output = ModelOutput.from_content(model_name, reply)
             return state
         return solve
 
@@ -55,6 +58,9 @@ def build_task(target, runner=None, epochs=sec001.RUNS_PER_ITEM, items=sec001.IT
         async def score(state, target_):
             if state.metadata.get("sent") is False:
                 return Score(value=0, answer="", explanation="not sent: the run stopped", metadata={"kind": "not sent"})
+            if state.metadata.get("no_result"):
+                return Score(value=0, answer=state.output.completion[:200], explanation="no result: left out of the rates "
+                             "in the run log (a channel error, or an empty or cut-off reply)", metadata={"kind": "no_result"})
             if by_id[state.sample_id].cls == sec001.BASELINE:
                 return Score(value=0, answer=state.output.completion[:200], explanation="clean baseline: recorded, not scored",
                              metadata={"kind": "baseline"})

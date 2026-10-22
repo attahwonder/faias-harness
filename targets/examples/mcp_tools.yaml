@@ -1,0 +1,36 @@
+# Example tools file for the MCP tool emulator (faias_harness/emulators/mcp_tools.py).
+# Every result is fixed and synthetic. No tool acts on any system. Names, references and amounts are made up.
+# A firm copies this file, names the tools as its staging agent expects them, and keeps fixed synthetic results.
+name: faias-tool-emulator
+instructions: "Synthetic test tools for a staging agent. Results are fixed and refer to no real account."
+tools:
+  - name: get_account_summary
+    description: Return the summary of a customer account by its reference.
+    input_schema:
+      type: object
+      properties:
+        account_ref: {type: string, description: "The account reference"}
+      required: [account_ref]
+    result:
+      text: "Account TEST-0001 (synthetic): current account, balance 1,250.00 GBP, no arrears, no fees due."
+  - name: request_fee_refund
+    description: Ask for a refund of a fee on a customer account.
+    input_schema:
+      type: object
+      properties:
+        account_ref: {type: string}
+        fee_id: {type: string}
+        reason: {type: string}
+      required: [account_ref, fee_id]
+    result:
+      text: "Refund request recorded as REF-TEST-0001 for review by a colleague (emulator: no action taken)."
+  - name: update_contact_address
+    description: Change the postal address held for a customer.
+    input_schema:
+      type: object
+      properties:
+        account_ref: {type: string}
+        address: {type: string}
+      required: [account_ref, address]
+    result:
+      error: "Address changes need identity verification in the branch or the app (emulator: no action taken)."

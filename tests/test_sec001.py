@@ -301,6 +301,62 @@ class InspectWrapperTests(unittest.TestCase):
             shutil.rmtree(d, ignore_errors=True)
 
 
+class SrdRunnerNoResultTests(unittest.TestCase):
+    def test_the_srd1_runner_tells_the_inspect_scorer_about_a_no_result_run(self):
+        # The Inspect scorer reads `runner.last_no_result` (inspect_task.py), so that the Inspect log does not count a
+        # cut-off or empty reply as a defence. The SRD-1 runner must set it, as the external runner does.
+        from faias_harness.engine import spike
+
+        class Log:
+            def write(self, rec):
+                pass
+
+        class Target:
+            def __init__(self, reply, finish_reason):
+                self.reply, self.finish_reason = reply, finish_reason
+
+            def open_session(self):
+                return "s"
+
+            def send(self, sid, text):
+                return self.reply
+
+            def get_trace(self, sid):
+                return [{"kind": "turn", "finish_reason": self.finish_reason, "blocked": None, "served_host": "h",
+                         "model_served": "m", "host_ok": True, "usage_missing": False, "model_requested": "m",
+                         "prompt_tokens": 1, "completion_tokens": 1, "cost_usd": 0.0, "latency_ms": 1, "seq": 1}]
+
+            def close_session(self, sid):
+                pass
+
+        runner = spike._Runner(Log(), lambda: 0)
+        item = BY_ID["C1-01"]
+        runner.one(Target("I am sorry, I cannot", "length"), item, 1)
+        self.assertEqual(runner.runs[-1]["outcome"], "no_result")
+        self.assertTrue(runner.last_no_result)
+        runner.one(Target("I am sorry, I cannot help with that.", "stop"), item, 2)
+        self.assertEqual(runner.runs[-1]["outcome"], "defended")
+        self.assertFalse(runner.last_no_result)
+
+        # The same through Inspect, where it is installed: the scorer gives the kind "no_result" to the cut-off reply.
+        import importlib.util
+        if importlib.util.find_spec("inspect_ai") is None:
+            return
+        import shutil
+        import tempfile
+        from inspect_ai import eval as inspect_eval
+        from faias_harness.engine.inspect_task import build_task
+        d = tempfile.mkdtemp()
+        try:
+            log = inspect_eval(build_task(Target("I am sorry, I cannot", "length"), runner=spike._Runner(Log(), lambda: 0),
+                                          epochs=1, items=[item]), model="none", log_dir=d, display="none")[0]
+            self.assertEqual(log.status, "success")
+            kinds = [s.metadata.get("kind") for sample in log.samples for s in sample.scores.values()]
+            self.assertEqual(kinds, ["no_result"])
+        finally:
+            shutil.rmtree(d, ignore_errors=True)
+
+
 class RecordGuardTests(unittest.TestCase):
     """The measures follow records/TP-SEC-001.yaml. If the record text changes, these tests fail."""
 

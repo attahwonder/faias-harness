@@ -3,6 +3,8 @@
 A profile never holds a key. A key is an environment variable. The profile may name that variable
 in settings.api_key_env.
 Paths in a profile (firm_values, attestation_file) are relative to the repository root, unless absolute.
+The optional `adapter_options` (version 0.5) holds the settings of a channel adapter; the adapter checks them
+(adapters/registry.py). A key-like field name anywhere in it is refused.
 """
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -16,10 +18,11 @@ REPO = Path(__file__).resolve().parents[1]
 
 TOP_KEYS = ["name", "adapter", "endpoint", "trace_source", "capabilities", "precondition_map",
             "firm_values", "attestation_file", "settings"]
-OPTIONAL_TOP_KEYS = ["status"]
+OPTIONAL_TOP_KEYS = ["status", "adapter_options"]
 SETTINGS_KEYS = ["provider", "model_id", "price_in_per_m", "price_out_per_m", "cap_usd"]
 OPTIONAL_SETTINGS_KEYS = ["api_key_env"]
 FORBIDDEN_SETTINGS = {"api_key", "key", "secret", "token", "password"}
+FORBIDDEN_OPTION_KEYS = FORBIDDEN_SETTINGS | {"client_secret", "access_token", "bearer", "authorization", "api-key"}
 CATEGORIES = ("environment", "access", "artefacts", "personnel")
 STATUSES = ("met", "partly", "not met")
 
@@ -43,6 +46,7 @@ class Profile:
     attestation_file: Optional[Path]
     settings: dict
     status: Optional[str] = None
+    adapter_options: Optional[dict] = None
     extra: dict = field(default_factory=dict)
 
 
@@ -55,6 +59,21 @@ def _path(value):
 
 def _is_number(v):
     return isinstance(v, (int, float)) and not isinstance(v, bool)
+
+
+def _key_like_paths(node, trail=""):
+    """The dotted paths of key-like field names anywhere in a mapping. Values are never read into a message."""
+    out = []
+    if isinstance(node, dict):
+        for k, v in node.items():
+            path = f"{trail}.{k}" if trail else str(k)
+            if str(k).lower() in FORBIDDEN_OPTION_KEYS:
+                out.append(path)
+            out += _key_like_paths(v, path)
+    elif isinstance(node, list):
+        for v in node:
+            out += _key_like_paths(v, trail)
+    return out
 
 
 def validate(raw):
@@ -104,6 +123,13 @@ def validate(raw):
                         problems.append(f"{where}: status must be one of {', '.join(STATUSES)}")
                     elif not isinstance(item.get("ids", []), list):
                         problems.append(f"{where}: ids must be a list")
+    ao = raw.get("adapter_options")
+    if ao is not None:
+        if not isinstance(ao, dict):
+            problems.append("'adapter_options' must be a mapping or null")
+        else:
+            for path in _key_like_paths(ao):
+                problems.append(f"adapter_options.{path}: a key never goes in a profile; name an environment variable in settings.api_key_env")
     st = raw.get("settings")
     if "settings" in raw:
         if not isinstance(st, dict):
@@ -140,5 +166,5 @@ def load_profile(path):
         trace_source=raw["trace_source"], capabilities=tuple(raw["capabilities"]),
         precondition_map=raw["precondition_map"], firm_values=_path(raw["firm_values"]),
         attestation_file=_path(raw["attestation_file"]), settings=dict(raw["settings"]),
-        status=raw.get("status"),
+        status=raw.get("status"), adapter_options=raw.get("adapter_options"),
     )
