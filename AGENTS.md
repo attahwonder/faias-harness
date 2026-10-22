@@ -15,6 +15,8 @@ Version 0.3 holds the design, 45 procedure records, a record checker, a prefligh
 | `faias_harness/` | The package: `capabilities.py` (the seven capability names), `target.py` (the target interface), `profile.py` (profile loader and validator), `settings.py` (settings loader and validator), `egress.py` (the HTTP client with an allow-list), `errors.py`, `preflight.py`, `adapters/`, `engine/` (`sec001.py` items, scorer and measures; `runlog.py` run log and signature; `spike.py` the run; `inspect_task.py` the Inspect task that drives the run) |
 | `records/` | `TP-*.yaml` (45 generated records), `classification.tsv`, `OVERRIDES.yaml`, `capability_needs.yaml` (a draft input file), `SCHEMA.md`, `README.md` |
 | `targets/` | `srd1/` (profile, firm values, settings and draft specification of the example reference system; `app/` holds SRD-1 minimal: channel, orchestrator, gateway, trace store) and `examples/` (two example profiles) |
+| `items/` | `TP-SEC-001.json`, the item set for TP-SEC-001 (the engine does not load it yet), and `README.md` (what came from where) |
+| `third_party/` | The licence texts of the outside sources of `items/` (credited in `NOTICE`) |
 | `tools/` | `build_records.py`, `check_records.py`, `test_check_records.py`, `sweep_barred.py` |
 | `tests/` | `run_all.py`: all tests from one command; `test_*.py`: unit tests of the engine; `helpers.py`: a local stand-in model host and a guard against outside network use |
 | `docs/` | `ARCHITECTURE.md` (the design) and `PLATFORMS.md` (a survey of vendor documentation) |

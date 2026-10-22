@@ -147,6 +147,7 @@ This list gives the order of the work. It gives no dates.
 
 - The code in this repository is under the Apache License, Version 2.0 (`LICENSE`, `NOTICE`).
 - The FAIAS text quoted in `records/` is under CC BY 4.0. Copyright 2026 Wonder Attah.
+- `items/TP-SEC-001.json` holds test items adapted from CyberSecEval 2 (MIT) and from Lakera's gandalf_ignore_instructions (MIT); their licence texts are in `third_party/`. `NOTICE` names each source, and `items/README.md` says what came from where.
 - `targets/srd1/SPEC.md` names third-party items and their licences in its section 8.
 - `docs/PLATFORMS.md` quotes short passages (25 words or fewer) from public vendor documentation. Each passage has its page address. The passages stay under the terms of their owners.
 

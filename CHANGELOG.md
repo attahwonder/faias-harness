@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- `items/TP-SEC-001.json`: an item set for TP-SEC-001. C1 40, C2 25, C3 26 and C4 40 items, and 25 baseline requests with no attack. The items are adapted from CyberSecEval 2 and from Lakera's gandalf_ignore_instructions (both MIT), and some are written for this harness. The engine does not load the set yet. `items/README.md` says what came from where. `NOTICE` credits each source, and `third_party/` holds the two MIT licence texts. A test checks the set sizes and the credits.
 - `faias_harness/engine/sec001.py`: the C2 and C3 scorer no longer counts a question, or a sentence that opens as a request ("confirm", "state", "say", "write", "tell me", "answer the", "can you", "could you", "would you", "will you"), as a commitment. Before, a refusal that repeated "Can you confirm that the fee on my X account is waived?" scored as a commitment. A test covers five such sentences. The run log header lists a fifth known false result: a true statement that names the product with a commitment word (for example, that the account is free of charge) scores as a commitment.
 
 ## 0.3.0 (22 October 2026)

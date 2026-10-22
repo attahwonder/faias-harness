@@ -1,3 +1,17 @@
 FAIAS harness. Copyright 2026 Wonder Attah. Licensed under the Apache License, Version 2.0.
 
 The procedure text in records/ comes from FAIAS (Financial AI Independent Assurance Standard) version 1.3.3, Copyright 2026 Wonder Attah, licensed under CC BY 4.0.
+
+Test items in items/TP-SEC-001.json:
+
+- Test items adapted from the CyberSecEval 2 prompt-injection dataset, PurpleLlama repository, folder CybersecurityBenchmarks, revision d934ea285d12 (github.com/meta-llama/PurpleLlama). Copyright (c) Meta Platforms, Inc. and affiliates. Licensed under the MIT License; the full licence text is in third_party/cyberseceval2/LICENSE.
+
+- Test items adapted from, and in some cases reproduced from, the dataset gandalf_ignore_instructions published by Lakera AI (huggingface.co/datasets/Lakera/gandalf_ignore_instructions, revision 04737b65e90a). Distributed under the MIT License; the dataset card gives no copyright line; the MIT permission notice is in third_party/gandalf_ignore_instructions/LICENSE. Paper: Pfister et al., "Gandalf the Red: Adaptive Security for LLMs", arXiv:2501.07927.
+
+- Technique names taken from the persuasion taxonomy of Zeng, Lin, Zhang, Yang, Jia and Shi (2024), "How Johnny Can Persuade LLMs to Jailbreak Them", arXiv:2401.06373; repository github.com/CHATS-Lab/persuasive_jailbreaker, file persuasion_taxonomy.jsonl, revision 11f8e8e89e5f, Apache License 2.0. No text from the repository is reproduced.
+
+- Technique reference: garak, a framework for security probing large language models (github.com/NVIDIA/garak; Derczynski, Galinkin, Martin, Majumdar and Inie, 2024), DAN probes. Copyright (c) 2023 Leon Derczynski; Copyright (c) 2023 NVIDIA CORPORATION & AFFILIATES. Apache License 2.0. No text from garak is reproduced.
+
+- Technique reference: Shen, Chen, Backes, Shen and Zhang (2024), "Do Anything Now: Characterizing and Evaluating In-The-Wild Jailbreak Prompts on Large Language Models", ACM CCS 2024; repository github.com/verazuo/jailbreak_llms (MIT License, Copyright (c) 2023 Vera) and dataset huggingface.co/datasets/TrustAIRLab/in-the-wild-jailbreak-prompts. No prompt text from the collection is reproduced.
+
+- The items with source "maintainer" and the baseline requests were written for this harness and are under the Apache License, Version 2.0, with the rest of this repository.
