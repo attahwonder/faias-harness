@@ -2,7 +2,7 @@
 
 An adapter connects the target interface (`faias_harness/target.py`) to a real system. An adapter implements the method groups of the capabilities that the system exposes.
 
-**No adapter is supported in v0.3.** `generic-http` is untested. `srd1-http` is tested only against SRD-1 minimal and a local stand-in. `docs/PLATFORMS.md` surveys the public documentation of six agent platforms. It is not a test and not support.
+**No adapter is supported in v0.4.** `generic-http` is untested. `srd1-http` is tested only against SRD-1 minimal and a local stand-in. `docs/PLATFORMS.md` surveys the public documentation of six agent platforms. It is not a test and not support.
 
 | Adapter | File | Capabilities | State |
 |---|---|---|---|

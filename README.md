@@ -1,22 +1,22 @@
 # FAIAS harness
 
-An open-source test harness for FAIAS, the Financial AI Independent Assurance Standard. The harness is planned to run the FAIAS test procedures against an AI system in a test environment. A firm describes its own system in a target profile. The harness reaches that system through one target interface. This repository holds version 0.3: the design, the procedure records, a record checker, a preflight and an engine spike for one procedure (see "Engine spike" below).
+An open-source test harness for FAIAS, the Financial AI Independent Assurance Standard. The harness is planned to run the FAIAS test procedures against an AI system in a test environment. A firm describes its own system in a target profile. The harness reaches that system through one target interface. This repository holds version 0.4: the design, the procedure records, a record checker, a preflight and a run engine for one procedure, with its full item set (see "Engine spike" below).
 
-## Status: version 0.3
+## Status: version 0.4
 
 **What works now**
 
 - **Records.** One generic record for each of 45 FAIAS test procedures, built from the published standard. Each copied item carries its file and line (`records/`).
 - **Record checker.** It compares every record with the FAIAS source lines (`tools/check_records.py`). It also checks the form of the capability needs and the FAIAS lines that they cite. A test seeds eight faults and confirms that the checker catches them.
 - **Preflight.** It compares a target profile with the draft capability needs of each procedure and prints which procedures can run in full, in part, or not at all (`faias_harness/preflight.py`). It makes no network call.
-- **Engine spike.** It runs one procedure, TP-SEC-001, on 20 items against SRD-1 minimal and writes a signed run log (`faias_harness/engine/`). Its result is labelled "engine spike, not a finding".
+- **Engine.** It runs one procedure, TP-SEC-001, against SRD-1 minimal and writes a signed run log (`faias_harness/engine/`). By default it runs the full item set (`items/TP-SEC-001.json`: 131 items and 25 clean-baseline requests), labelled "uncalibrated scorer, not a finding". The 20 spike items remain as an option, labelled "engine spike, not a finding".
 - **Platform survey.** `docs/PLATFORMS.md` lists what the public documentation of six agent platforms says about the seven capabilities. On 16 October 2026, a script found the quote of 84 of 87 survey rows on the vendor page. The survey is documentation only. It is not an adapter and not a test.
 
 **What does not work**
 
-- Version 0.3 runs one procedure only, as an engine spike on 20 items. Its tests use a local stand-in for the model host. It has run live through OpenRouter on 20 and 21 October 2026: six runs of 180 calls, against three hosted models. Those run logs are not in the repository.
+- Version 0.4 runs one procedure only. Its tests use a local stand-in for the model host. No live run has used the full item set yet. The spike set has run live through OpenRouter on 20 and 21 October 2026: six runs of 180 calls, against three hosted models. Those run logs are not in the repository.
 - The harness supports no platform. The adapter for OpenAI-compatible endpoints is written and untested. The adapter for SRD-1 minimal is tested against a local stand-in only.
-- SRD-1, the example reference system in `targets/srd1/`, is built only in a minimal form (four components, for the engine spike). Its profile and its full specification are drafts.
+- SRD-1, the example reference system in `targets/srd1/`, is built only in a minimal form (four components, for the engine). Its profile and its full specification are drafts.
 - The capability needs are a draft. Two independent model passes read the Preconditions of each procedure. For 26 procedures they agree, and nobody has checked these entries at each line. For the 19 where they differed, a third reading, also a model, settled 17 at the lines and left 2 open. No person has checked the file.
 
 ## Safety rules
@@ -79,11 +79,11 @@ py -3.14 -X utf8 tools/check_records.py --faias <path to the FAIAS v1.3.3 folder
 
 ## Engine spike
 
-Version 0.3 holds a first run engine. It runs one procedure, TP-SEC-001 (direct prompt injection and jailbreak resistance, ★4), on SRD-1 minimal. A run on the spike set is labelled "engine spike, not a finding", and a run on the full item set "uncalibrated scorer, not a finding". It says nothing about the security of SRD-1.
+Version 0.3 added a first run engine, and version 0.4 adds its full item set. It runs one procedure, TP-SEC-001 (direct prompt injection and jailbreak resistance, ★4), on SRD-1 minimal. A run on the spike set is labelled "engine spike, not a finding", and a run on the full item set "uncalibrated scorer, not a finding". It says nothing about the security of SRD-1.
 
 **What it does.** The harness sends the items of the chosen set (by default 131 items and 25 clean-baseline requests; `item_set: spike` sends the 20 spike items, 5 for each of the four technique classes) through the chat channel of SRD-1 minimal, with k runs for each item (`runs_per_item` in the settings: at least 3, the FAIAS minimum; the log states k). SRD-1 calls its model through OpenRouter, with five routing locks on every request. A deterministic scorer marks each reply. The harness computes the measures M1 to M4 with the formulas of the record. It writes one run log. The log holds the procedure, the ★ label, the pinned model ID, the host that served each call, the thresholds with their bases, the reviewer-set value of M4 with its reason, a lock time before the first item, and a hash of the settings. The log is signed with an Ed25519 key that belongs to the operator. The run stops before a call that could pass the spend cap.
 
-**Item set (not yet in a release).** The engine now runs the item set in `items/TP-SEC-001.json` by default: 131 items (C1 40, C2 25, C3 26, C4 40) and a clean-baseline arm of 25 requests, k runs each (468 calls at k = 3). The baseline requests are recorded with an outcome (answered, blocked or no result) and are not scored. Whether a reply refuses is for a human label. A run on this set is labelled "uncalibrated scorer, not a finding". The setting `item_set: spike` runs the 20 spike items. No live run has used the full set yet.
+**Item set (0.4.0).** The engine runs the item set in `items/TP-SEC-001.json` by default: 131 items (C1 40, C2 25, C3 26, C4 40) and a clean-baseline arm of 25 requests, k runs each (468 calls at k = 3). The baseline requests are recorded with an outcome (answered, blocked or no result) and are not scored. Whether a reply refuses is for a human label. A run on this set is labelled "uncalibrated scorer, not a finding". The setting `item_set: spike` runs the 20 spike items. No live run has used the full set yet.
 
 **What it does not do.**
 
@@ -137,7 +137,7 @@ FAIAS is not a certification or approval scheme. Running this harness does not c
 
 This list gives the order of the work. It gives no dates.
 
-1. A run engine that drives one target through one procedure from end to end. It writes a log with the procedure, the ★ label, the pinned model ID, and the threshold with its basis. The run stops at the spend cap. (The engine spike in version 0.3 does this for one procedure on 20 items. Its result is labelled "engine spike, not a finding".)
+1. A run engine that drives one target through one procedure from end to end. It writes a log with the procedure, the ★ label, the pinned model ID, and the threshold with its basis. The run stops at the spend cap. (Version 0.4 does this for one procedure, TP-SEC-001, on 131 items and a clean-baseline arm of 25 requests. Its result is labelled "uncalibrated scorer, not a finding".)
 2. A threshold lock that writes a hash and a time before the first sample.
 3. A slice of three procedures from different domains, each with every evidence output its record lists.
 4. A self-test of the harness environment (TP-AGT-014): every traffic and publication attempt is blocked and logged.

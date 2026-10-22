@@ -11,7 +11,7 @@ agree on, or that a third reading settled where they differed. A procedure with 
 With --start, it refuses unless the isolation attestation file exists and is not empty, and the settings
 provider, model_id and cap_usd are set. With a profile alone, it starts nothing, even when every condition is met.
 
-With --settings <settings.yaml> (version 0.3), it also checks the settings file of an engine run
+With --settings <settings.yaml> (version 0.3 and later), it also checks the settings file of an engine run
 (TP-SEC-001 on SRD-1 minimal) and prints the provider, model, host, precision, routing locks, the worst-case
 estimate against the cap, and whether the key variable is present (never its value). An evidence-mode settings
 file that lacks any of the five routing locks is refused. With --start it checks the signing key, makes two probe
