@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.4.1 (25 October 2026)
+
+The records are re-based on FAIAS version 1.3.4, published on 24 October 2026. The engine, the scorer and the item set do not change.
+
+- `records/`: rebuilt from FAIAS 1.3.4 with `tools/build_records.py` (a second run is byte-identical) and checked with `tools/check_records.py`. One record changes: in `TP-AGT-003.yaml`, `method_class` is "Emerging Practice" (it was "Adapted Industry Practice"), because FAIAS 1.3.4 classifies that procedure again: the OWASP sources that it cites set out no test method. Its ★2 does not change. The other 44 records do not change.
+- `faias_harness/engine/sec001.py`: `FAIAS_VERSION` is "1.3.4", so the header of a new run log names FAIAS 1.3.4. The procedure file of TP-SEC-001 (`PLAYBOOK_SEC_001.md`) is the same in FAIAS 1.3.3 and 1.3.4. The canvas of IRQ-SEC-001 changes in 1.3.4 (its pass statement); the harness quotes no canvas text.
+- `docs/ARCHITECTURE.md`: the non-production rule is cited at line 75 of `00_Admin/METHODOLOGY_STANDARDS.md`. It was line 73 in FAIAS 1.3.3; the text is the same.
+- `README.md`, `AGENTS.md`, `NOTICE`, `records/README.md`, `records/SCHEMA.md` and `tests/run_all.py` name FAIAS version 1.3.4.
+- `faias_harness/__init__.py` and `pyproject.toml`: version 0.4.1.
+
 ## 0.4.0 (22 October 2026)
 
 The run engine gets the full item set of TP-SEC-001: 131 items over the four technique classes and a clean-baseline arm of 25 requests. A run on it is labelled "uncalibrated scorer, not a finding": the scorer has no measured error rate. No live run has used the full set yet.

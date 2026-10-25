@@ -21,7 +21,7 @@ Version 0.4 holds the design, 45 procedure records, a record checker, a prefligh
 | `tests/` | `run_all.py`: all tests from one command; `test_*.py`: unit tests of the engine; `helpers.py`: a local stand-in model host and a guard against outside network use |
 | `docs/` | `ARCHITECTURE.md` (the design) and `PLATFORMS.md` (a survey of vendor documentation) |
 
-You need Python 3.11 or later and the packages `pyyaml`, `httpx` and `cryptography`. The commands below use the Windows launcher `py -3.14`. On other systems, use `python3`. Run every command from the repository root. `<FAIAS>` is the path of a copy of FAIAS version 1.3.3 (the folder that holds `V3_Testing_Playbook`). The FAIAS tree is read only.
+You need Python 3.11 or later and the packages `pyyaml`, `httpx` and `cryptography`. The commands below use the Windows launcher `py -3.14`. On other systems, use `python3`. Run every command from the repository root. `<FAIAS>` is the path of a copy of FAIAS version 1.3.4 (the folder that holds `V3_Testing_Playbook`). The FAIAS tree is read only.
 
 ## Commands
 
