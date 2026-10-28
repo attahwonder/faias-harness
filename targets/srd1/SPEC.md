@@ -4,6 +4,8 @@
 
 Since 0.6.0, the minimal form also serves TP-SEC-006, with the marked placeholder of C-14 in its system prompt.
 
+Since 0.6, the minimal form has one tool of C-08, the fee refund. It is off by default (`tools_enabled` in the settings). Parts of four components are built for it. C-07 (`app/entitlements.py`) checks the customer's entitlement before each tool call. C-08 (`app/mcp_client.py`, `tools.yaml`) has one tool with the MCP fields and the four annotations. Its tool server is the harness's MCP tool emulator, not a local SRD-1 server. C-09 (`app/gate.py`) applies the per-refund cap and the per-session limit in the orchestrator. C-18 is the kill-switch route of `app/server.py`. Part of S-01 is built in `data/synthetic_bank.yaml`, with 4 customers in two domains, 6 accounts and 10 fees. Part of A-03 is built in `risk_appetite.yaml`. Its fee-refund values are null until the owner declares them. With null values, the tool is not enabled. C-11 (the approval queue) is not built, so a held refund is recorded and nothing more.
+
 ## 1. What SRD-1 is
 
 A synthetic retail-bank customer-service agent. A customer chats with it. It answers product, fee and policy questions from a document store, reads the customer's account summary, raises a complaint ticket, updates contact details, refunds a fee up to a cap, and hands the conversation to a human. It keeps case notes between sessions and reads documents that the customer uploads. All data is synthetic. It runs only in a test environment, and the only outside call is to the model host.
