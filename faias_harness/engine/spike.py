@@ -17,7 +17,7 @@ from urllib.parse import urlsplit
 from ..adapters.srd1_http import Srd1ChatTarget
 from ..egress import EgressClient, EgressLog
 from ..errors import CapReached
-from . import runlog, sec001
+from . import runlog, sec001, toolrun
 
 REPO = Path(__file__).resolve().parents[2]
 LOCAL_MARGIN_S = 30.0
@@ -41,16 +41,23 @@ def run_items(settings, repo=REPO):
 def estimate(settings):
     """The worst-case cost of the whole run, in USD, or None if the prices are not set.
 
-    It counts every call at the estimated input size and the full output limit (`max_tokens`).
+    It counts every call at the estimated input size and the full output limit (`max_tokens`). With tools on, each
+    call also carries the tool definition, and each item counts at 1 + MAX_TOOL_ROUNDS calls, the most that one
+    turn can make.
     """
     if settings.price_in_per_m is None or settings.price_out_per_m is None:
         return None
     _, gw, orch, _ = _srd1()
     system = orch.load_system_prompt()
     sent = run_items(settings)
-    in_tokens = sum(gw.estimate_tokens([{"role": "system", "content": system}, {"role": "user", "content": i.text}])
-                    for i in sent) * settings.runs_per_item
-    calls = len(sent) * settings.runs_per_item
+    tools, per_item = None, 1
+    if getattr(settings, "tools_enabled", False):
+        from targets.srd1.app.mcp_client import function_definitions
+        tools = function_definitions(toolrun.mcp_tools.load_tools(toolrun.SRD1_TOOLS)["tools"])
+        per_item = 1 + orch.MAX_TOOL_ROUNDS
+    in_tokens = sum(gw.estimate_tokens([{"role": "system", "content": system}, {"role": "user", "content": i.text}],
+                                       tools) for i in sent) * settings.runs_per_item * per_item
+    calls = len(sent) * settings.runs_per_item * per_item
     return (in_tokens * settings.price_in_per_m + calls * settings.max_tokens * settings.price_out_per_m) / 1_000_000
 
 
@@ -198,12 +205,14 @@ def _run_inspect(target, runner, run_dir, runs_per_item, items, model_name="srd1
 
 
 def execute(settings, *, run_dir, sign_key, confirmation, probes=None, base_url=None, env=None,
-            clock_ns=time.time_ns, repo=REPO, prior_spent_usd=0.0, variant="standard", engine="inspect"):
+            clock_ns=time.time_ns, repo=REPO, prior_spent_usd=0.0, variant="standard", engine="inspect", gate=None):
     """Run the engine on the item set of the settings. Return a RunResult. `base_url` and `env` are for tests; a real run uses the defaults.
 
     `prior_spent_usd` is the cost of the probe calls. It counts against the cap.
     `variant` is "standard" or "positive_control" (the weakened system prompt; see runlog.VARIANTS).
     `engine` is "inspect" (the default: Inspect drives the pass) or "direct" (a plain loop, for tests without Inspect).
+    With `tools_enabled` (since 0.6) the run serves SRD-1's tool through the emulator (toolrun.ToolRun). `gate` is
+    for tests: a RefundGate with the test's own values, in place of the risk-appetite file.
     """
     build, gw, orch_mod, trace_mod = _srd1()
     if variant not in runlog.VARIANTS:
@@ -216,23 +225,36 @@ def execute(settings, *, run_dir, sign_key, confirmation, probes=None, base_url=
     base_url = base_url or gw.OPENROUTER_BASE
     run_dir = Path(run_dir)
     run_dir.mkdir(parents=True, exist_ok=True)
+    tools_on = bool(getattr(settings, "tools_enabled", False))
+    if tools_on:
+        gate = gate or build.RefundGate.from_file()     # null values: "refund cap not declared", before any file
     elog = EgressLog(run_dir / "egress.jsonl")
     egress = EgressClient([_host_entry(base_url)], log=elog)
-    srd1 = build.build_srd1(settings, egress, run_dir / "srd1_trace.jsonl", base_url=base_url, env=env,
-                            system_prompt=system_prompt)
+    tool_run = toolrun.ToolRun(settings, run_dir, egress).start() if tools_on else None
+    try:
+        srd1 = build.build_srd1(settings, egress, run_dir / "srd1_trace.jsonl", base_url=base_url, env=env,
+                                system_prompt=system_prompt, tools_url=tool_run.url if tool_run else None,
+                                tool_env=tool_run.env if tool_run else None, gate=gate)
+    except BaseException:
+        if tool_run:
+            tool_run.stop()
+        raise
     egress.add_allow(f"127.0.0.1:{srd1.server.port}")
     srd1.gateway.cap.spent_usd = prior_spent_usd
     log_path = run_dir / "run_log.jsonl"
     header = runlog.build_header(settings, allow_hosts=egress.allow_text, confirmation=confirmation,
                                  system_prompt_sha256=srd1.orchestrator.prompt_sha256, probes=probes, repo=repo,
-                                 variant=variant, engine=engine)
+                                 variant=variant, engine=engine,
+                                 tools=tool_run.header(srd1.orchestrator.definitions_sha256) if tool_run else None)
     runlog.lock_header(header, clock_ns())
     log = runlog.RunLog(log_path)
     try:
         log.write(header)                   # the lock is on disk before the first item is sent
         runlog.wait_past_lock(header, clock_ns)
         # the call to SRD-1 waits longer than the gateway's retries can take, so a retry never ends the run
-        target = Srd1ChatTarget(srd1.server.url, egress, timeout=gw.max_call_seconds(egress.timeout) + LOCAL_MARGIN_S)
+        target = Srd1ChatTarget(srd1.server.url, egress, timeout=gw.max_call_seconds(egress.timeout) + LOCAL_MARGIN_S,
+                                tools_url=tool_run.url if tool_run else None,
+                                ledger_path=tool_run.emulator.ledger.path if tool_run else None)
         runner = _Runner(log, clock_ns, halt_on_mismatch=settings.mode == "evidence")
         srd1.server.start()
         try:
@@ -241,6 +263,12 @@ def execute(settings, *, run_dir, sign_key, confirmation, probes=None, base_url=
                             else _run_direct(target, runner, k, items))
         finally:
             srd1.server.stop()
+            if tool_run:
+                try:
+                    srd1.mcp.close()
+                except Exception:       # noqa: BLE001 - the ledger, not the close, is the record
+                    pass
+                tool_run.stop()
         status, error, runs = runner.status, runner.error, runner.runs
         hosts, models, mismatches, usage_missing = runner.hosts, runner.models, runner.mismatches, runner.usage_missing
         chain_ok, chain_problems = trace_mod.verify_chain(srd1.trace.path, expected_head=srd1.trace.head)
@@ -264,8 +292,12 @@ def execute(settings, *, run_dir, sign_key, confirmation, probes=None, base_url=
             "run_engine": engine_facts,
             "finished": runlog.iso(),
         }
+        if tool_run:
+            summary["tool_ledger"] = tool_run.summary()
         log.write(summary)
     finally:
         log.close()
+        if tool_run:
+            tool_run.stop()
     sig = runlog.sign_log(log_path, sign_key)
     return RunResult(status, run_dir, log_path, sig, summary)

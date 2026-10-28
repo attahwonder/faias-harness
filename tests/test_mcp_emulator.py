@@ -228,3 +228,112 @@ class ReviewFixTests(_Base):
         self.assertEqual((r.status_code, r.headers.get("Connection")), (401, "close"))
         r2 = self.post(e, {"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {}}, {"X-Api-Key": FAKE_KEY_VALUE})
         self.assertEqual(r2.status_code, 200)
+
+
+STORE_TOOLS_FILE = REPO / "targets" / "examples" / "mcp_tools_store.yaml"
+STORE_FILE = REPO / "targets" / "srd1" / "data" / "synthetic_bank.yaml"
+
+
+class HandlerTests(_Base):
+    """The handler form (0.6): a result that a built-in handler computes from a synthetic store."""
+
+    def store_emu(self, name="store.jsonl", **kw):
+        e = mt.ToolEmulator(mt.load_tools(STORE_TOOLS_FILE), self.dir / name, **kw).start()
+        self.addCleanup(e.stop)
+        return e
+
+    def call(self, e, args, mid=1):
+        return self.modern(e, "tools/call", {"name": "fee_refund", "arguments": args}, mid=mid).json()["result"]
+
+    def test_the_handler_form_validates_and_an_unknown_handler_is_refused(self):
+        tools = mt.load_tools(STORE_TOOLS_FILE)
+        self.assertEqual(Path(tools["store"]).resolve(), STORE_FILE.resolve())
+        self.assertEqual(tools["tools"][0]["result"], {"handler": "fee_refund"})
+        bad = json.loads(json.dumps({"tools": tools["tools"]}))
+        bad["tools"][0]["result"] = {"handler": "transfer_funds"}
+        self.assertTrue(any("unknown handler" in p for p in mt.validate_tools(bad)))
+        bad["tools"][0]["result"] = {"handler": "fee_refund"}
+        bad["tools"][0]["annotations"] = {"destructiveHint": "yes"}
+        self.assertTrue(any("annotations" in p for p in mt.validate_tools(bad)))
+        with self.assertRaises(ValueError):          # a handler tool with no store does not start
+            mt.ToolEmulator({**tools, "store": None}, self.dir / "none.jsonl")
+        self.assertEqual(mt.validate_tools(json.loads(json.dumps({"tools": TOOLS["tools"]}))), [])   # shipped file
+
+    def test_a_known_fee_is_recorded_and_an_unknown_fee_is_an_error(self):
+        e = self.store_emu()
+        ok = self.call(e, {"account_ref": "SYN-A-0001", "fee_id": "SYN-F-0001", "amount_gbp": 12.0, "reason": "r"})
+        self.assertFalse(ok["isError"])
+        self.assertEqual(ok["structuredContent"]["status"], "recorded")
+        self.assertEqual(ok["structuredContent"]["refund_ref"], "REF-SYN-0001")
+        self.assertEqual(json.loads(ok["content"][0]["text"]), ok["structuredContent"])
+        bad = self.call(e, {"account_ref": "SYN-A-0001", "fee_id": "SYN-F-0099", "amount_gbp": 12.0}, mid=2)
+        self.assertTrue(bad["isError"])
+        self.assertEqual(bad["structuredContent"], {"status": "rejected", "reason": "no such fee"})
+        other = self.call(e, {"account_ref": "SYN-A-0001", "fee_id": "SYN-F-0001", "amount_gbp": 99.0}, mid=3)
+        self.assertEqual(other["structuredContent"]["reason"], "the amount differs from the fee")
+        odd = self.call(e, {"account_ref": ["SYN-A-0001"], "fee_id": "SYN-F-0001", "amount_gbp": 12.0}, mid=4)
+        self.assertEqual(odd["structuredContent"]["reason"], "no such account")
+        entries = mt.read_ledger(e.ledger.path)
+        self.assertEqual([(x["status"], x["refund_ref"], x["is_error"]) for x in entries],
+                         [("recorded", "REF-SYN-0001", False), ("rejected", None, True), ("rejected", None, True),
+                          ("rejected", None, True)])
+        self.assertTrue(mt.verify_ledger(e.ledger.path)[0])
+
+    def test_two_calls_for_one_fee_give_two_refunds_and_the_store_is_not_written(self):
+        before = STORE_FILE.read_bytes()
+        e = self.store_emu()
+        self.assertEqual(e.store_sha256, __import__("hashlib").sha256(before).hexdigest())
+        args = {"account_ref": "SYN-A-0004", "fee_id": "SYN-F-0006", "amount_gbp": 45}
+        refs = [self.call(e, args, mid=i)["structuredContent"]["refund_ref"] for i in range(1, 3)]
+        self.assertEqual(refs, ["REF-SYN-0001", "REF-SYN-0002"])
+        for i in range(8):
+            self.call(e, args, mid=10 + i)
+        self.assertEqual(len(mt.read_ledger(e.ledger.path)), 10)
+        self.assertEqual(STORE_FILE.read_bytes(), before)
+
+    def test_tools_list_carries_the_title_annotations_and_output_schema(self):
+        e = self.store_emu()
+        t = self.modern(e, "tools/list").json()["result"]["tools"][0]
+        self.assertEqual(t["annotations"], {"readOnlyHint": False, "destructiveHint": True, "idempotentHint": False,
+                                            "openWorldHint": False})
+        self.assertEqual(t["title"], "Fee refund")
+        self.assertEqual(t["outputSchema"]["properties"]["status"]["enum"], ["recorded", "rejected"])
+        legacy = self.emu(name="fixed.jsonl")._tool_list()[0]
+        self.assertEqual(set(legacy), {"name", "description", "inputSchema"})     # fixed tools: as before
+
+    def test_the_store_option_replaces_the_store_of_the_tools_file(self):
+        alt = self.dir / "alt_store.yaml"
+        alt.write_text("accounts:\n  - {account_ref: SYN-A-0101, customer_ref: SYN-C-0101, fees: "
+                       "[{fee_id: SYN-F-0101, amount_gbp: 5}]}\n", encoding="utf-8")
+        e = self.store_emu(store=alt)
+        self.assertEqual(self.call(e, {"account_ref": "SYN-A-0101", "fee_id": "SYN-F-0101", "amount_gbp": 5})
+                         ["structuredContent"]["status"], "recorded")
+        with self.assertRaises(ValueError):
+            mt.ToolEmulator(mt.load_tools(STORE_TOOLS_FILE), self.dir / "missing.jsonl", store=self.dir / "nope.yaml")
+
+
+class SyntheticBankTests(unittest.TestCase):
+    """T10: SRD-1's synthetic customers, accounts and fees."""
+
+    def test_counts_domains_and_references(self):
+        import yaml
+        data = yaml.safe_load(STORE_FILE.read_text(encoding="utf-8"))
+        self.assertGreaterEqual(len(data["customers"]), 4)
+        self.assertEqual({c["domain"] for c in data["customers"]}, {"retail", "wealth"})
+        self.assertGreaterEqual(len(data["accounts"]), 6)
+        fees = [f for a in data["accounts"] for f in a["fees"]]
+        self.assertGreaterEqual(len(fees), 10)
+        refs = [c["customer_ref"] for c in data["customers"]] + [a["account_ref"] for a in data["accounts"]] + \
+            [a["customer_ref"] for a in data["accounts"]] + [f["fee_id"] for f in fees] + [data["default_customer_ref"]]
+        self.assertTrue(all(r.startswith("SYN-") for r in refs), refs)
+        self.assertEqual(len({f["fee_id"] for f in fees}), len(fees))
+        known = {c["customer_ref"] for c in data["customers"]}
+        self.assertTrue(all(a["customer_ref"] in known for a in data["accounts"]))
+
+    def test_no_reserved_host_and_no_placeholder_marking(self):
+        from faias_harness.engine import sec006
+        for path in (STORE_FILE, STORE_TOOLS_FILE):
+            text = path.read_text(encoding="utf-8")
+            with self.subTest(path=path.name):
+                self.assertEqual(sec006.find_placeholders([text]), [])
+                self.assertNotIn(".invalid", text.lower())

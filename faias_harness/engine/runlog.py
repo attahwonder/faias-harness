@@ -179,11 +179,12 @@ def code_facts(repo=REPO, scorer_file=SCORER_FILE, record_file=RECORD_FILE):
 
 
 def build_header(settings, *, allow_hosts, system_prompt_sha256, confirmation, probes=None, repo=REPO,
-                 variant="standard", engine="inspect"):
-    """The header, without the lock. `lock_header` adds the lock."""
+                 variant="standard", engine="inspect", tools=None):
+    """The header, without the lock. `lock_header` adds the lock. `tools`: the tools block of a run with tools on
+    (since 0.6); a run with tools off has no tools block, as before."""
     rec = sec001.load_record(repo=repo)
     items, baseline = sec001.load_items(settings.item_set, repo=repo)
-    return {
+    header = {
         "type": "header", "schema": SCHEMA, "label": sec001.LABELS[settings.item_set], "engine_version": __version__,
         "code": code_facts(repo),
         "procedure": {"tp": rec["tp"], "title": rec["title"], "irq": rec["irq"], "star": rec["star"],
@@ -212,6 +213,9 @@ def build_header(settings, *, allow_hosts, system_prompt_sha256, confirmation, p
         "probes": probes, "owner_confirmation": confirmation,
         "host_per_call": "recorded in each run record (served_host)",
     }
+    if tools is not None:
+        header["tools"] = tools
+    return header
 
 
 def build_external_header(settings, *, target, allow_hosts, confirmation, probes=None, repo=REPO, engine="inspect"):
@@ -281,6 +285,8 @@ def lock_fixed(header):
     if schema == SCHEMA_SEC006:
         from . import sec006_log
         fixed.update(sec006_log.lock_extra(header))
+    if "tools" in header:       # since 0.6, only when the run had tools on, so every earlier log still verifies
+        fixed["tools_sha256"] = sha256_hex(canonical(header["tools"]))
     return fixed
 
 
@@ -298,6 +304,8 @@ def lock_header(header, clock_ns=None):
         code = header.get("code") or {}
         covers += (f", scorer file hash ({code.get('scorer_file', SCORER_FILE)}), record file hash "
                    f"({code.get('record_file', RECORD_FILE)})")
+    if "tools" in header:
+        covers += ", tools block (names, definitions hash, emulator, store hash)"
     header["lock"] = {"time": iso(ns), "time_ns": ns, "hash": sha256_hex(canonical(lock_fixed(header))),
                       "covers": covers}
     return header

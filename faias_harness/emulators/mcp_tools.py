@@ -5,8 +5,19 @@ UNTESTED against a platform. Tested only with a local client (tests/test_mcp_emu
 Purpose. The capability `tool_routing` asks the harness to point a system's tools at harness emulators and to read
 the tool ledgers (docs/ARCHITECTURE.md, section 3). Many agent platforms let a firm add an MCP server to an agent
 as a tool. A firm that wires this emulator into its staging agent, in place of the real tool, lets the harness see
-every call that the agent makes to that tool (design rule 5: every tool call is seen). Each tool returns a fixed,
-synthetic result from the tools file. No tool acts on any system.
+every call that the agent makes to that tool (design rule 5: every tool call is seen). Each tool returns a synthetic
+result: a fixed result from the tools file, or (since 0.6) a result that a built-in handler computes from a synthetic
+store by a fixed rule (handlers.py). No tool acts on any system.
+
+Tool fields (since 0.6): a tool may also give `title`, `annotations` and `output_schema`. tools/list sends them as the
+MCP fields `title`, `annotations` (`readOnlyHint`, `destructiveHint`, `idempotentHint`, `openWorldHint`) and
+`outputSchema`. The result of a handler tool carries the object in `structuredContent` and as JSON text in `content`.
+Source of the field names: the MCP specification, the tools page of version 2025-11-25
+(https://modelcontextprotocol.io/specification/2025-11-25/server/tools) and the schema of version 2026-07-28, as read
+on 16 October 2026 for the SRD-1 specification (targets/srd1/SPEC.md, section 8). The 0.6 build made no network call
+and did not read them again. That record lists title, annotations, the four hints and outputSchema; it does not list
+`structuredContent`, which is named from memory and is not confirmed at the source. The annotations are hints only: a
+client must not rely on them, so SRD-1 enforces its controls in its orchestrator.
 
 What it does:
 - It serves one MCP endpoint (POST) on the local machine only (127.0.0.1). A platform in the cloud reaches it only
@@ -30,7 +41,7 @@ What it does not do: resources, prompts, sampling, elicitation, subscriptions or
 HTTP+SSE transport; OAuth. It does not configure any platform: the firm adds the emulator's URL to its staging agent.
 
   py -3.14 -X utf8 -m faias_harness.emulators.mcp_tools serve --tools <tools.yaml> --ledger <ledger.jsonl> [--port 8765]
-       [--api-key-env NAME] [--api-key-header X-Api-Key] [--allow-origin <origin> ...]
+       [--api-key-env NAME] [--api-key-header X-Api-Key] [--allow-origin <origin> ...] [--store <store.yaml>]
   py -3.14 -X utf8 -m faias_harness.emulators.mcp_tools verify --ledger <ledger.jsonl>
 """
 import argparse
@@ -51,6 +62,7 @@ from pathlib import Path
 import yaml
 
 from .. import __version__
+from . import handlers as handlers_mod
 
 MODERN = ("2026-07-28",)
 LEGACY = ("2025-11-25", "2025-06-18", "2025-03-26")
@@ -65,6 +77,8 @@ MAX_BODY = 1_000_000
 HEADER_MISMATCH, UNSUPPORTED_VERSION = -32020, -32022
 PARSE_ERROR, INVALID_REQUEST, METHOD_NOT_FOUND, INVALID_PARAMS = -32700, -32600, -32601, -32602
 CACHE = {"ttlMs": 0, "cacheScope": "private"}   # the tool list may change between runs: no caching
+ANNOTATIONS = ("readOnlyHint", "destructiveHint", "idempotentHint", "openWorldHint")
+TOOL_FIELDS = {"name", "description", "input_schema", "result", "title", "annotations", "output_schema"}
 
 
 # ---------- tools file ----------
@@ -79,12 +93,14 @@ def validate_tools(raw):
     if not isinstance(raw, dict) or not isinstance(raw.get("tools"), list) or not raw["tools"]:
         return ["the tools file must be a mapping with a non-empty list 'tools'"]
     problems, names = [], set()
+    if "store" in raw and not (isinstance(raw["store"], str) and raw["store"].strip()):
+        problems.append("store must be the path of a store file")
     for n, t in enumerate(raw["tools"], 1):
         where = f"tool {n}"
         if not isinstance(t, dict):
             problems.append(f"{where}: must be a mapping")
             continue
-        unknown = set(t) - {"name", "description", "input_schema", "result"}
+        unknown = set(t) - TOOL_FIELDS
         if unknown:
             problems.append(f"{where}: unknown field(s) {', '.join(sorted(unknown))}")
         name = t.get("name")
@@ -101,12 +117,24 @@ def validate_tools(raw):
             problems.append(f"{where}: input_schema must be a JSON Schema object with type: object")
         r = t.get("result")
         if not (isinstance(r, dict) and len(r) == 1 and isinstance(next(iter(r.values()), None), str)
-                and next(iter(r)) in ("text", "error")):
-            problems.append(f"{where}: result must be {{text: <string>}} or {{error: <string>}}")
+                and next(iter(r)) in ("text", "error", "handler")):
+            problems.append(f"{where}: result must be {{text: <string>}}, {{error: <string>}} or {{handler: <name>}}")
+        elif "handler" in r and r["handler"] not in handlers_mod.HANDLERS:
+            problems.append(f"{where}: unknown handler (known: {', '.join(sorted(handlers_mod.HANDLERS))})")
+        if "title" in t and not (isinstance(t["title"], str) and t["title"].strip()):
+            problems.append(f"{where}: title must be a non-empty string")
+        a = t.get("annotations")
+        if "annotations" in t and not (isinstance(a, dict) and set(a) <= set(ANNOTATIONS)
+                                       and all(isinstance(v, bool) for v in a.values())):
+            problems.append(f"{where}: annotations may hold {', '.join(ANNOTATIONS)}, each true or false")
+        o = t.get("output_schema")
+        if "output_schema" in t and not (isinstance(o, dict) and o.get("type") == "object"):
+            problems.append(f"{where}: output_schema must be a JSON Schema object with type: object")
     return problems
 
 
 def load_tools(path):
+    """The tools file, checked. A relative `store` path is read from the folder of the tools file."""
     try:
         raw = yaml.safe_load(Path(path).read_text(encoding="utf-8"))
     except (OSError, yaml.YAMLError) as e:
@@ -114,8 +142,11 @@ def load_tools(path):
     problems = validate_tools(raw)
     if problems:
         raise ToolsError(problems)
+    store = raw.get("store")
+    if store is not None and not Path(store).is_absolute():
+        store = Path(path).resolve().parent / store
     return {"name": str(raw.get("name") or "faias-tool-emulator"), "instructions": raw.get("instructions"),
-            "tools": raw["tools"]}
+            "tools": raw["tools"], "store": store}
 
 
 # ---------- ledger ----------
@@ -204,7 +235,8 @@ class ToolEmulator:
     """The MCP tool emulator. Use as a context manager, or call start() and stop()."""
 
     def __init__(self, tools, ledger_path, *, host="127.0.0.1", port=0, path="/mcp", api_key_env=None,
-                 api_key_header="X-Api-Key", allowed_origins=(), env=None):
+                 api_key_header="X-Api-Key", allowed_origins=(), env=None, store=None):
+        """`store`: the store file of the handler tools; it replaces the `store` of the tools file."""
         if host not in LOOPBACK:
             raise ValueError("the emulator listens on the local machine only; reach it from a platform through a tunnel")
         env = os.environ if env is None else env
@@ -216,6 +248,16 @@ class ToolEmulator:
         self.api_key_header = api_key_header
         self.tools = tools
         self.by_name = {t["name"]: t for t in tools["tools"]}
+        self.handlers, self.store_path, self.store_sha256 = {}, None, None
+        needs = [t for t in tools["tools"] if "handler" in t["result"]]
+        store = store if store is not None else tools.get("store")
+        if needs:
+            if store is None:
+                raise ValueError("a tool with a handler needs a store (store: in the tools file, or --store)")
+            data, self.store_sha256 = handlers_mod.load_store(store)     # read once; never written
+            self.store_path = Path(store)
+            for t in needs:
+                self.handlers[t["name"]] = handlers_mod.HANDLERS[t["result"]["handler"]](data)
         self.ledger = Ledger(ledger_path)
         self.allowed_origins = {o.rstrip("/").lower() for o in allowed_origins}
         self.path = path
@@ -334,8 +376,19 @@ class ToolEmulator:
         return {"name": self.tools["name"], "version": __version__}
 
     def _tool_list(self):
-        return [{"name": t["name"], "description": t["description"], "inputSchema": t["input_schema"]}
-                for t in self.tools["tools"]]
+        out = []
+        for t in self.tools["tools"]:
+            d = {"name": t["name"], "description": t["description"], "inputSchema": t["input_schema"]}
+            if t.get("title"):
+                d["title"] = t["title"]
+            if t.get("annotations") is not None:
+                d["annotations"] = dict(t["annotations"])
+            schema = t.get("output_schema") or (self.handlers[t["name"]].OUTPUT_SCHEMA if t["name"] in self.handlers
+                                                else None)
+            if schema:
+                d["outputSchema"] = schema
+            out.append(d)
+        return out
 
     def _call(self, params, era, version, session):
         name = params.get("name") if isinstance(params, dict) else None
@@ -348,6 +401,13 @@ class ToolEmulator:
                                 "arguments": args if isinstance(args, dict) else None, "is_error": True,
                                 "refused": refused})
             return None, {"code": INVALID_PARAMS, "message": refused}
+        if name in self.handlers:       # a computed synthetic result; its status and reference go in the ledger too
+            obj, is_error = self.handlers[name].call(args)
+            self.ledger.append({"era": era, "protocol_version": version, "session": session, "tool": name,
+                                "arguments": args, "is_error": is_error, "refused": None,
+                                "status": obj.get("status"), "refund_ref": obj.get("refund_ref")})
+            return {"content": [{"type": "text", "text": _canonical(obj)}], "structuredContent": obj,
+                    "isError": is_error}, None
         r = self.by_name[name]["result"]
         is_error = "error" in r
         self.ledger.append({"era": era, "protocol_version": version, "session": session, "tool": name,
@@ -453,6 +513,7 @@ def main(argv=None):
     s.add_argument("--api-key-env", help="the environment variable that holds the key the client must send")
     s.add_argument("--api-key-header", default="X-Api-Key")
     s.add_argument("--allow-origin", action="append", default=[])
+    s.add_argument("--store", help="the store file of the handler tools (replaces store: of the tools file)")
     v = sub.add_parser("verify", help="verify the hash chain of a ledger")
     v.add_argument("--ledger", required=True)
     a = ap.parse_args(argv)
@@ -463,11 +524,13 @@ def main(argv=None):
     try:
         tools = load_tools(a.tools)
         emu = ToolEmulator(tools, a.ledger, port=a.port, path=a.path, api_key_env=a.api_key_env,
-                           api_key_header=a.api_key_header, allowed_origins=a.allow_origin)
+                           api_key_header=a.api_key_header, allowed_origins=a.allow_origin, store=a.store)
     except (ToolsError, ValueError, FileExistsError) as e:
         print(f"refused: {e}")
         return 2
     print(f"MCP tool emulator: {len(tools['tools'])} tools at {emu.url}; ledger {a.ledger}")
+    if emu.store_path is not None:
+        print(f"store {emu.store_path} (sha256 {emu.store_sha256}); read once, never written")
     if a.api_key_env is None:
         print("WARNING: no API key is set. Anyone who can reach this port can call the tools. "
               "Set --api-key-env before you expose the port through a tunnel.")

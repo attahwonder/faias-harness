@@ -147,8 +147,24 @@ def start_problems(profile, settings=None):
         cap = settings.cap_usd
         if not settings.key_present():
             problems.append(f"the environment variable {settings.api_key_env} is not set")
+        problems += tools_problems(settings)
     if not isinstance(cap, (int, float)) or isinstance(cap, bool) or cap <= 0:
         problems.append("settings.cap_usd is not set to a number above 0")
+    return problems
+
+
+def tools_problems(settings):
+    """With tools on (since 0.6): the refund gate needs its declared values, and TP-SEC-006 with tools on is not
+    built yet. With tools off: none."""
+    if not getattr(settings, "tools_enabled", False):
+        return []
+    from .engine import spike
+    spike._srd1()
+    from targets.srd1.app import gate
+    problems = [f"{p} (targets/srd1/risk_appetite.yaml): SRD-1 does not enable its tool"
+                for p in gate.declared_problems()]
+    if settings.procedure == SEC006:
+        problems.append("TP-SEC-006 with tools on is not built yet: its engine does not start the tool emulator")
     return problems
 
 
@@ -222,6 +238,11 @@ def settings_report(settings, estimate_usd):
             if settings.cap_usd is not None and estimate_usd > settings.cap_usd else ""
         print(f"Worst-case estimate for the whole run: USD {estimate_usd:.4f}; cap: {cap}{note}")
     print(f"Key variable: {settings.api_key_env} is {'present' if settings.key_present() else 'NOT present'}")
+    if getattr(settings, "tools_enabled", False):
+        print(f"Tools: on (fee_refund through the MCP tool emulator; its key is generated in the run and carried in "
+              f"{settings.tool_key_env})")
+        for p in tools_problems(settings):
+            print(f"  - {p}")
     print("Judge-family check: not applicable (the engine has no model judge)")
 
 

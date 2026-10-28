@@ -2,18 +2,23 @@
 
 It binds to 127.0.0.1 only. Routes:
 
-  POST   /sessions                      -> 201 {"session_id": "s1"}
+  POST   /sessions                      body {} or {"customer_ref": "SYN-C-..."} -> 201 {"session_id": "s1"}
   POST   /sessions/<id>/messages        body {"message": "..."} -> 200 {"reply": "...", "turn": n}
   GET    /sessions/<id>/trace           -> 200 {"entries": [...]}   (the C-15 lines of the session)
   DELETE /sessions/<id>                 -> 200 {"closed": true}
   GET    /config/prompt                 -> 200 {"prompt": "...", "prompt_sha256": "...", "prompt_source": "...",
-                                                "tools_configured": [...], "tool_definitions": [],
+                                                "tools_configured": [...], "tool_definitions": [...],
                                                 "runtime_templates": []}   (config_read)
+  GET    /config/tools, /config/gate, /config/entitlements   (config_read, since 0.6)
+  POST   /control/kill_switch           body {"on": true|false} -> 200 {"on": ...}   (C-18, since 0.6)
   GET    /health                        -> 200 {"status": "ok"}
 
-Errors: 400 bad request, 404 unknown session, 413 message too long, 429 too many turns in a session,
-503 {"error": "cap_reached"}, 502 {"error": "model_call_failed"}. An error body never holds a key or a detail
-of the upstream response.
+A session with no `customer_ref` acts for the default synthetic customer. The kill-switch route does not wait for
+a turn in progress: the orchestrator reads the switch before its next model call and its next MCP call.
+
+Errors: 400 bad request or unknown customer, 404 unknown session, 413 message too long, 429 too many turns in a
+session, 503 {"error": "cap_reached"}, 503 {"error": "killed"} (the kill switch is on),
+502 {"error": "model_call_failed"}. An error body never holds a key or a detail of the upstream response.
 This version does not render Markdown to HTML (a feature of C-01 in the specification).
 """
 import json
@@ -23,11 +28,12 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 from faias_harness.errors import CapReached
 
-from .orchestrator import MessageTooLong, TooManyTurns, UnknownSession
+from .orchestrator import Killed, MessageTooLong, TooManyTurns, UnknownCustomer, UnknownSession
 
 ROUTE_MESSAGES = re.compile(r"/sessions/([A-Za-z0-9_]+)/messages")
 ROUTE_TRACE = re.compile(r"/sessions/([A-Za-z0-9_]+)/trace")
 ROUTE_SESSION = re.compile(r"/sessions/([A-Za-z0-9_]+)")
+ROUTE_CONFIG = re.compile(r"/config/(tools|gate|entitlements)")
 
 
 def make_handler(orchestrator, trace):
@@ -63,6 +69,10 @@ def make_handler(orchestrator, trace):
             if self.path == "/config/prompt":
                 with lock:
                     return self._send(200, orchestrator.config())
+            m = ROUTE_CONFIG.fullmatch(self.path)
+            if m:
+                with lock:
+                    return self._send(200, orchestrator.config_kind(m.group(1)))
             m = ROUTE_TRACE.fullmatch(self.path)
             if m:
                 return self._send(200, {"entries": trace.entries(m.group(1))})
@@ -70,19 +80,35 @@ def make_handler(orchestrator, trace):
 
         def do_POST(self):
             if self.path == "/sessions":
-                self._body()
-                with lock:
-                    sid = orchestrator.open_session()
+                body = self._body() or {}
+                customer = body.get("customer_ref")
+                if customer is not None and not isinstance(customer, str):
+                    return self._send(400, {"error": "bad_request"})
+                try:
+                    with lock:
+                        sid = orchestrator.open_session(customer)
+                except UnknownCustomer:
+                    return self._send(400, {"error": "unknown_customer"})
                 return self._send(201, {"session_id": sid})
+            if self.path == "/control/kill_switch":     # no lock: it must work while a turn is in progress
+                body = self._body()
+                if body is None or not isinstance(body.get("on"), bool):
+                    return self._send(400, {"error": "bad_request"})
+                orchestrator.set_kill_switch(body["on"])
+                return self._send(200, {"on": body["on"]})
             m = ROUTE_MESSAGES.fullmatch(self.path)
             if not m:
                 return self._send(404, {"error": "not_found"})
             body = self._body()
             if body is None or not isinstance(body.get("message"), str):
                 return self._send(400, {"error": "bad_request"})
+            if orchestrator.killed:
+                return self._send(503, {"error": "killed"})
             try:
                 with lock:
                     reply, entry = orchestrator.handle(m.group(1), body["message"])
+            except Killed:
+                return self._send(503, {"error": "killed"})
             except UnknownSession:
                 return self._send(404, {"error": "unknown_session"})
             except MessageTooLong:

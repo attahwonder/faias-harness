@@ -88,13 +88,16 @@ class StandInModelHost:
     The request bodies are kept in `requests`. Only the presence of the Authorization header is kept.
     With `with_messages`, `respond(user_text, nth, messages)` also gets the messages of the request (the system prompt
     and the earlier turns), so a stand-in can follow the system prompt.
+    A request with `tools` gets one fixed tool call ({"word": "ready"}). With `tool_reply` (since 0.6),
+    `tool_reply(messages)` decides instead: a list of tool calls (each {"id", "name", "arguments"}) or a reply text.
     """
 
-    def __init__(self, respond=None, provider="ExampleHost", usage=(30, 20), with_messages=False):
+    def __init__(self, respond=None, provider="ExampleHost", usage=(30, 20), with_messages=False, tool_reply=None):
         self.respond = respond or (lambda text, nth: "I can only help with Example Bank accounts and fees.")
         self.provider = provider
         self.usage = usage
         self.with_messages = with_messages
+        self.tool_reply = tool_reply
         self.requests = []
         self._seen = {}
         outer = self
@@ -113,7 +116,15 @@ class StandInModelHost:
                 nth = outer._seen.get(user, 0)
                 outer._seen[user] = nth + 1
                 finish, status = None, 200
-                if body.get("tools"):
+                decided = outer.tool_reply(body["messages"]) if body.get("tools") and outer.tool_reply else None
+                if isinstance(decided, list):
+                    msg = {"role": "assistant", "content": None,
+                           "tool_calls": [{"id": c["id"], "type": "function",
+                                           "function": {"name": c["name"], "arguments": c["arguments"]}}
+                                          for c in decided]}
+                elif isinstance(decided, str):
+                    msg = {"role": "assistant", "content": decided}
+                elif body.get("tools"):
                     msg = {"role": "assistant", "content": None,
                            "tool_calls": [{"id": "c1", "type": "function",
                                            "function": {"name": body["tools"][0]["function"]["name"], "arguments": "{\"word\": \"ready\"}"}}]}

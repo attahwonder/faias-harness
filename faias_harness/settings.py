@@ -23,6 +23,11 @@ The setting `procedure` (version 0.6) chooses the procedure of an SRD-1 run: TP-
 TP-SEC-006 (docs/ARCHITECTURE.md, section 16). Only TP-SEC-006 takes `store_replies` (full or hash_only),
 `m4_baseline_log` and `reviewer_values.M3`. In evidence mode it needs the baseline log and the M3 and M4 values
 with their reasons. A TP-SEC-001 file keeps its settings hash.
+
+The settings `tools_enabled` and `tool_key_env` (version 0.6) turn on SRD-1's one tool, fee_refund. They are off
+by default. With tools on, the engine serves the tool through the harness's MCP tool emulator and generates a key
+for it in the run; `tool_key_env` names the environment variable that carries that key to SRD-1. They enter the
+settings hash only when `tools_enabled` is true, so every file without them keeps its settings hash.
 """
 import hashlib
 import json
@@ -36,7 +41,7 @@ import yaml
 TOP_REQUIRED = ["provider", "model_id", "mode", "routing", "price_in_per_m", "price_out_per_m", "cap_usd",
                 "api_key_env"]
 TOP_OPTIONAL = ["max_tokens", "reviewer_values", "temperature", "seed", "runs_per_item", "item_set", "kind",
-                "procedure", "store_replies", "m4_baseline_log"]
+                "procedure", "store_replies", "m4_baseline_log", "tools_enabled", "tool_key_env"]
 RUNS_MIN, RUNS_MAX, RUNS_DEFAULT = 3, 20, 3     # three is the FAIAS minimum (PLAYBOOK_SEC_001.md line 27)
 # The item set of a run: the full set in items/TP-SEC-001.json (the default), or the 20 items of the engine spike.
 ITEM_SETS, ITEM_SET_DEFAULT = ("TP-SEC-001", "spike"), "TP-SEC-001"
@@ -83,6 +88,8 @@ class Settings:
     m4_baseline_log: object = None
     m3_value: object = None
     m3_reason: object = None
+    tools_enabled: bool = False
+    tool_key_env: object = None
     kind = "srd1"           # a class attribute: not in the canonical content, so the settings hash is unchanged
 
     def routing(self):
@@ -115,6 +122,8 @@ class Settings:
         if self.procedure == SEC006:
             out.update(procedure=self.procedure, store_replies=self.store_replies, m4_baseline_log=self.m4_baseline_log)
             out["reviewer_values"]["M3"] = {"value": self.m3_value, "reason": self.m3_reason}
+        if self.tools_enabled:
+            out.update(tools_enabled=True, tool_key_env=self.tool_key_env)
         return out
 
     def digest(self):
@@ -185,6 +194,15 @@ def validate(raw):
         for k in ("store_replies", "m4_baseline_log"):
             if k in raw:
                 problems.append(f"{k} applies to the procedure TP-SEC-006 only")
+    te, tk = raw.get("tools_enabled", False), raw.get("tool_key_env")
+    if not isinstance(te, bool):
+        problems.append("tools_enabled must be true or false")
+    if tk is not None and not (isinstance(tk, str) and ENV_NAME.fullmatch(tk)):
+        problems.append("tool_key_env must be the NAME of an environment variable (letters, digits, underscore)")
+    elif te is True and tk is None:
+        problems.append("tools_enabled: tool_key_env is not set (the variable that carries the tool server's key)")
+    elif te is True and tk == raw.get("api_key_env"):
+        problems.append("tool_key_env must differ from api_key_env: the tool server never gets the model key")
     t = raw.get("temperature")
     if t is not None and not (_num(t) and 0 <= t <= 2):
         problems.append("temperature must be a number from 0 to 2 or null")
@@ -293,6 +311,7 @@ def from_raw(raw):
         item_set=raw.get("item_set", SEC006 if proc == SEC006 else ITEM_SET_DEFAULT),
         procedure=proc, store_replies=raw.get("store_replies", "full"), m4_baseline_log=raw.get("m4_baseline_log"),
         m3_value=m3.get("value"), m3_reason=m3.get("reason"),
+        tools_enabled=raw.get("tools_enabled", False), tool_key_env=raw.get("tool_key_env"),
     )
 
 

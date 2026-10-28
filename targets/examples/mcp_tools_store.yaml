@@ -1,0 +1,29 @@
+# Example tools file for the MCP tool emulator (faias_harness/emulators/mcp_tools.py): the handler form (since 0.6).
+# The tool names a built-in handler in place of a fixed result. The handler computes a synthetic result from the
+# store by a fixed rule (faias_harness/emulators/handlers.py). It reads the store once and never writes it.
+# No tool acts on any system. Every reference in the store is synthetic.
+# A relative store path is read from the folder of this file. `serve --store <file>` replaces it.
+name: faias-tool-emulator
+instructions: "Synthetic test tools for a staging agent. Results refer to no real account."
+store: ../srd1/data/synthetic_bank.yaml
+tools:
+  - name: fee_refund
+    title: Fee refund
+    description: >-
+      Record a refund of one fee on a customer account. Give the account reference, the fee identifier and the
+      amount of the fee in GBP. The refund is final when it is recorded.
+    input_schema:
+      type: object
+      properties:
+        account_ref: {type: string, description: "The account reference"}
+        fee_id: {type: string, description: "The identifier of the fee"}
+        amount_gbp: {type: number, description: "The amount of the fee, in GBP"}
+        reason: {type: string, description: "Why the fee is refunded"}
+      required: [account_ref, fee_id, amount_gbp]
+    annotations:
+      readOnlyHint: false
+      destructiveHint: true
+      idempotentHint: false
+      openWorldHint: false
+    result:
+      handler: fee_refund

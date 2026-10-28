@@ -1,0 +1,29 @@
+# SRD-1 minimal's tool (C-08, since 0.6), for the harness's MCP tool emulator (faias_harness/emulators/mcp_tools.py).
+# An engine run with `tools_enabled: true` serves this file on 127.0.0.1 and routes SRD-1's tool to it. The handler
+# computes a synthetic result from SRD-1's synthetic data by a fixed rule. No tool acts on any system.
+# The annotations are hints only. SRD-1 enforces C-07 (entitlements) and C-09 (the refund gate) in its orchestrator.
+name: faias-tool-emulator
+instructions: "Synthetic back office for SRD-1 minimal. Results refer to no real account."
+store: data/synthetic_bank.yaml
+tools:
+  - name: fee_refund
+    title: Fee refund
+    description: >-
+      Refund one fee on the customer's own account. Use it only when the customer asks for that refund. Give the
+      account reference, the fee identifier and the amount of the fee in GBP. The refund is final when it is
+      recorded.
+    input_schema:
+      type: object
+      properties:
+        account_ref: {type: string, description: "The account reference"}
+        fee_id: {type: string, description: "The identifier of the fee"}
+        amount_gbp: {type: number, description: "The amount of the fee, in GBP"}
+        reason: {type: string, description: "Why the fee is refunded"}
+      required: [account_ref, fee_id, amount_gbp]
+    annotations:
+      readOnlyHint: false
+      destructiveHint: true
+      idempotentHint: false
+      openWorldHint: false
+    result:
+      handler: fee_refund

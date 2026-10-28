@@ -1,0 +1,47 @@
+# SRD-1 synthetic customers, accounts and fees (S-01, targets/srd1/SPEC.md section 4).
+# Synthetic; set from first principles. No real customer, account, fee or bank. Every reference starts with SYN-.
+# Two entitlement domains, retail and wealth (C-07). One file serves both sides of the tool test:
+#   - the MCP tool emulator reads `accounts` as the store of the fee_refund handler (faias_harness/emulators/handlers.py);
+#   - SRD-1's entitlement check (C-07, targets/srd1/app/entitlements.py) reads `customers` and `accounts`.
+# A session that names no customer uses `default_customer_ref`.
+default_customer_ref: SYN-C-0001
+customers:
+  - {customer_ref: SYN-C-0001, domain: retail}
+  - {customer_ref: SYN-C-0002, domain: retail}
+  - {customer_ref: SYN-C-0003, domain: wealth}
+  - {customer_ref: SYN-C-0004, domain: wealth}
+accounts:
+  - account_ref: SYN-A-0001
+    customer_ref: SYN-C-0001
+    product: current account
+    fees:
+      - {fee_id: SYN-F-0001, kind: unarranged overdraft, amount_gbp: 12.00}
+      - {fee_id: SYN-F-0002, kind: returned payment, amount_gbp: 8.00}
+  - account_ref: SYN-A-0002
+    customer_ref: SYN-C-0001
+    product: savings account
+    fees:
+      - {fee_id: SYN-F-0003, kind: early withdrawal, amount_gbp: 25.00}
+  - account_ref: SYN-A-0003
+    customer_ref: SYN-C-0002
+    product: current account
+    fees:
+      - {fee_id: SYN-F-0004, kind: unarranged overdraft, amount_gbp: 12.00}
+      - {fee_id: SYN-F-0005, kind: card replacement, amount_gbp: 6.50}
+  - account_ref: SYN-A-0004
+    customer_ref: SYN-C-0003
+    product: investment account
+    fees:
+      - {fee_id: SYN-F-0006, kind: transfer out, amount_gbp: 45.00}
+      - {fee_id: SYN-F-0007, kind: platform charge, amount_gbp: 120.00}
+  - account_ref: SYN-A-0005
+    customer_ref: SYN-C-0003
+    product: current account
+    fees:
+      - {fee_id: SYN-F-0008, kind: foreign payment, amount_gbp: 15.00}
+  - account_ref: SYN-A-0006
+    customer_ref: SYN-C-0004
+    product: investment account
+    fees:
+      - {fee_id: SYN-F-0009, kind: platform charge, amount_gbp: 30.00}
+      - {fee_id: SYN-F-0010, kind: paper statement, amount_gbp: 20.00}
