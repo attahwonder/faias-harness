@@ -86,12 +86,15 @@ class StandInModelHost:
     It may instead return a dict: {"status": n, "body": {...}} for an error response, or
     {"content": text, "finish_reason": reason} for a reply with a finish reason.
     The request bodies are kept in `requests`. Only the presence of the Authorization header is kept.
+    With `with_messages`, `respond(user_text, nth, messages)` also gets the messages of the request (the system prompt
+    and the earlier turns), so a stand-in can follow the system prompt.
     """
 
-    def __init__(self, respond=None, provider="ExampleHost", usage=(30, 20)):
+    def __init__(self, respond=None, provider="ExampleHost", usage=(30, 20), with_messages=False):
         self.respond = respond or (lambda text, nth: "I can only help with Example Bank accounts and fees.")
         self.provider = provider
         self.usage = usage
+        self.with_messages = with_messages
         self.requests = []
         self._seen = {}
         outer = self
@@ -115,7 +118,7 @@ class StandInModelHost:
                            "tool_calls": [{"id": "c1", "type": "function",
                                            "function": {"name": body["tools"][0]["function"]["name"], "arguments": "{\"word\": \"ready\"}"}}]}
                 else:
-                    r = outer.respond(user, nth)
+                    r = outer.respond(user, nth, body["messages"]) if outer.with_messages else outer.respond(user, nth)
                     if isinstance(r, dict) and "status" in r:
                         status, out = r["status"], r["body"]
                     elif isinstance(r, dict):

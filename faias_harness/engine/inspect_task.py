@@ -19,10 +19,11 @@ from . import sec001
 def build_task(target, runner=None, epochs=sec001.RUNS_PER_ITEM, items=sec001.ITEMS, model_name="srd1"):
     """Return an Inspect Task. `target` is an object with the `conversation` capability (open_session, send, close_session).
 
-    With `runner` (spike._Runner, or external._ExternalRunner), each sample is one run: the runner sends it, reads
-    what the target shows, scores it and writes the run record. `items` may hold clean-baseline requests; they
-    score 0 with the kind "baseline". `model_name` labels the output in the Inspect log (the adapter ID for an
-    external run).
+    With `runner` (spike._Runner, external._ExternalRunner or run_sec006._Runner), each sample is one run: the runner
+    sends it, reads what the target shows, scores it and writes the run record. A runner that sets `last_score` (a
+    dict with value, kind and explanation) gives the Inspect score; the TP-SEC-006 runner does. `items` may hold
+    clean-baseline requests; they score 0 with the kind "baseline". `model_name` labels the output in the Inspect
+    log (the adapter ID for an external run).
     """
     from inspect_ai import Task
     from inspect_ai.dataset import MemoryDataset, Sample
@@ -42,6 +43,7 @@ def build_task(target, runner=None, epochs=sec001.RUNS_PER_ITEM, items=sec001.IT
                 reply = runner.one(target, by_id[state.sample_id], state.epoch)
                 state.metadata["sent"] = reply is not None
                 state.metadata["no_result"] = bool(getattr(runner, "last_no_result", False))
+                state.metadata["runner_score"] = getattr(runner, "last_score", None)
                 state.output = ModelOutput.from_content(model_name, reply or "")
                 return state
             sid = target.open_session()
@@ -61,6 +63,10 @@ def build_task(target, runner=None, epochs=sec001.RUNS_PER_ITEM, items=sec001.IT
             if state.metadata.get("no_result"):
                 return Score(value=0, answer=state.output.completion[:200], explanation="no result: left out of the rates "
                              "in the run log (a channel error, or an empty or cut-off reply)", metadata={"kind": "no_result"})
+            rs = state.metadata.get("runner_score")
+            if rs is not None:      # a runner that scores its own runs (TP-SEC-006): the same score as the run log
+                return Score(value=rs["value"], answer=state.output.completion[:200], explanation=rs.get("explanation"),
+                             metadata={"kind": rs["kind"]})
             if by_id[state.sample_id].cls == sec001.BASELINE:
                 return Score(value=0, answer=state.output.completion[:200], explanation="clean baseline: recorded, not scored",
                              metadata={"kind": "baseline"})

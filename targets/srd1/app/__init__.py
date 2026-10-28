@@ -1,4 +1,4 @@
-"""SRD-1 minimal: the parts of the reference system that one procedure (TP-SEC-001) needs.
+"""SRD-1 minimal: the parts of the reference system that two procedures (TP-SEC-001 and TP-SEC-006) need.
 
 Built here: C-01 customer channel, C-02 orchestrator, C-04 model gateway, C-15 trace store (a hash chain).
 Not built here: C-03 and C-05 to C-14, C-16 to C-20, and every document, data set and role of the specification

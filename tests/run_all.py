@@ -8,15 +8,15 @@ Steps:
   3. the seeded-fault test passes (8 faults caught: 4 in records, 4 in the capability needs)
   4. preflight: the SRD-1 profile gives 45 full; the example profiles give stable, correct counts;
      --start refuses without an attestation file and without settings; a profile alone starts nothing;
-     with a settings file: the shipped explore file is accepted, an evidence file that lacks any of the five
+     with a settings file: the shipped explore files (TP-SEC-001 and TP-SEC-006) are accepted, an evidence file that lacks any of the five
      routing locks is refused, and --start refuses without the key variable; with the external settings file
      (version 0.5): each external example profile is accepted, an evidence file without the declared model and
      version is refused, and --start refuses without the attestation and the key variable
   5. the firm-values file of SRD-1 lists exactly the keys of the records
   6. the sweep for barred terms and key-like strings finds 0 hits
-  7. the unit tests of the engine (settings, SRD-1 minimal, gateway, scorer, run log, signature, end to end
-     against a local stand-in model host; no outside network). The "[test note]" lines of the tests follow the
-     count: for example, how many signed live logs the live-log tests read (FAIAS_HARNESS_RUNS)
+  7. the unit tests of the engine (settings, SRD-1 minimal, gateway, scorers of TP-SEC-001 and TP-SEC-006, run log,
+     signature, end to end against a local stand-in model host; no outside network). The "[test note]" lines of
+     the tests follow the count: for example, how many signed live logs the live-log tests read (FAIAS_HARNESS_RUNS)
 """
 import argparse
 import hashlib
@@ -114,7 +114,11 @@ def settings_checks(tmp, att):
                        cwd=REPO, env=env, capture_output=True, text=True, encoding="utf-8", input="")
     expect(p.returncode == 2 and "OPENROUTER_API_KEY is not set" in p.stdout and "START REFUSED" in p.stdout,
            f"--start without the key variable: exit {p.returncode}, {p.stdout[-300:]}")
-    print("   settings: explore file accepted; 5 locks missing in evidence mode refused; --start refuses without the key variable")
+    rc, out = preflight(base, "--settings", "targets/srd1/settings_sec006.yaml")
+    expect(rc == 0 and "Engine run: TP-SEC-006 on SRD-1 minimal" in out and "M3 bar" in out,
+           f"the shipped TP-SEC-006 settings were not accepted: exit {rc}, {out[-300:]}")
+    print("   settings: explore files accepted (TP-SEC-001, TP-SEC-006); 5 locks missing in evidence mode refused; "
+          "--start refuses without the key variable")
 
 
 EXTERNAL_EXAMPLES = (("copilot_studio", "directline"), ("responses_agent", "openai-responses"), ("a2a_agent", "a2a"),

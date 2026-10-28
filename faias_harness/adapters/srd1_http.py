@@ -1,8 +1,10 @@
-"""Adapter for the SRD-1 minimal chat channel. It offers `conversation` and `traces`.
+"""Adapter for the SRD-1 minimal chat channel. It offers `conversation`, `traces` and, since 0.6, `config_read`.
 
 Tested against SRD-1 minimal on 127.0.0.1, with a local stand-in for the model host (tests/), and used in the
-live runs of 20, 21 and 22 October 2026. It talks to no other system.
+live runs of 20, 21 and 22 October 2026 (before `config_read` existed). It talks to no other system.
 Every request goes through the shared egress client, so the allow-list applies to it.
+`config_read` reads one kind of configuration, "prompt": the system prompt of the active variant, its SHA-256 and
+the tools (GET /config/prompt). It is tested against SRD-1 minimal only.
 """
 from ..errors import CapReached
 from ..target import Target
@@ -13,7 +15,8 @@ class Srd1ChatError(Exception):
 
 
 class Srd1ChatTarget(Target):
-    capabilities = frozenset({"conversation", "traces"})
+    capabilities = frozenset({"conversation", "traces", "config_read"})
+    CONFIG_KINDS = ("prompt",)
 
     def __init__(self, base_url, egress, timeout=None):
         """`timeout` (seconds) for each call to SRD-1; it must be longer than the gateway's retries can take."""
@@ -46,3 +49,9 @@ class Srd1ChatTarget(Target):
     # traces
     def get_trace(self, session_id):
         return self._call("GET", f"/sessions/{session_id}/trace")["entries"]
+
+    # config_read
+    def read_config(self, kind):
+        if kind not in self.CONFIG_KINDS:
+            raise NotImplementedError(f"SRD-1 minimal offers no configuration of the kind '{kind}'")
+        return self._call("GET", f"/config/{kind}")

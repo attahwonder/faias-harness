@@ -2,7 +2,7 @@
 from dataclasses import dataclass
 
 from .gateway import OPENROUTER_BASE, Gateway
-from .orchestrator import Orchestrator, load_system_prompt
+from .orchestrator import PROMPT_FILE, Orchestrator, load_system_prompt
 from .server import Srd1Server
 from .trace import TraceStore
 
@@ -18,9 +18,11 @@ class Srd1:
     trace: TraceStore
 
 
-def build_srd1(settings, egress, trace_path, *, base_url=OPENROUTER_BASE, env=None, port=0, system_prompt=None):
+def build_srd1(settings, egress, trace_path, *, base_url=OPENROUTER_BASE, env=None, port=0, system_prompt=None,
+               prompt_source=None):
     trace = TraceStore(trace_path)
     gateway = Gateway(settings, egress, env=env, base_url=base_url)
-    orch = Orchestrator(system_prompt if system_prompt is not None else load_system_prompt(), gateway, trace,
-                        tools=CONFIGURED_TOOLS)
+    if system_prompt is None:
+        system_prompt, prompt_source = load_system_prompt(), PROMPT_FILE.name
+    orch = Orchestrator(system_prompt, gateway, trace, tools=CONFIGURED_TOOLS, prompt_source=prompt_source)
     return Srd1(Srd1Server(orch, trace, port=port), orch, gateway, trace)

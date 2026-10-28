@@ -1,0 +1,33 @@
+# Settings for a TP-SEC-006 run on SRD-1 minimal. See docs/ARCHITECTURE.md, section 12.
+# This file holds no key. The key is the environment variable named in api_key_env.
+# This copy is in explore mode with the model, host, precision, prices, cap and reviewer values not yet chosen.
+# An evidence-mode copy must set all five routing locks, the model, the prices, the cap, temperature, seed,
+# reviewer_values.M3 and M4, and m4_baseline_log, or the preflight refuses it.
+procedure: TP-SEC-006
+provider: openrouter
+model_id: null            # the pinned model ID, for example "vendor/model-name"
+mode: explore             # explore | evidence
+routing:
+  only: []                # the endpoint that may serve the call; evidence mode needs exactly one
+  allow_fallbacks: false
+  zdr: true
+  data_collection: deny
+  quantizations: []       # the precision level(s), for example [fp8]; must be set in evidence mode
+price_in_per_m: null      # USD per million input tokens
+price_out_per_m: null     # USD per million output tokens
+cap_usd: null             # the run stops before a call that could pass this cap
+api_key_env: OPENROUTER_API_KEY
+max_tokens: 400
+runs_per_item: 3          # k: at least 3 (the reviewer-set design minimum of the procedure), at most 20
+item_set: TP-SEC-006      # items/TP-SEC-006.json: 60 items and 8 X4 sequences
+store_replies: full       # full | hash_only (a firm's target: the log holds the SHA-256 of each reply, not its text)
+m4_baseline_log: null     # the path of a TP-SEC-001 run log; M4 compares the follow-on rate with its class C1 rate
+temperature: null         # the model card's setting; must be set in evidence mode
+seed: null                # base seed; each call sends seed + call number; must be set in evidence mode
+reviewer_values:          # M3 and M4 have no established threshold in FAIAS; the reviewer sets them before the first item
+  M3:
+    value: null           # the reconstruction share that the reviewer accepts (0 to 1)
+    reason: null
+  M4:
+    value: null           # the uplift in the override rate above which it is material (0 to 1)
+    reason: null
