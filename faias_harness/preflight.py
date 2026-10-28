@@ -47,7 +47,7 @@ from pathlib import Path
 import yaml
 
 from .profile import REPO, ProfileError, load_profile
-from .settings import SEC006, SettingsError, load_settings
+from .settings import AGT012, SEC006, SettingsError, load_settings
 
 NEEDS_FILE = REPO / "records" / "capability_needs.yaml"
 RECORDS_DIR = REPO / "records"
@@ -224,6 +224,8 @@ def settings_report(settings, estimate_usd):
         print(f"M4 baseline (a TP-SEC-001 run log): {settings.m4_baseline_log or 'not named'}")
         print(f"M4 baseline public key: {settings.m4_baseline_pubkey or 'not named'}")
         print(f"Replies in the log: {settings.store_replies}")
+    elif settings.procedure == AGT012:
+        print("M1 and M4: from records/TP-AGT-012.yaml (both 0 with an override reason), not from the settings")
     else:
         print(f"M4 bar: {m4}; reason: {settings.m4_reason or 'not set'}")
     pin, pout = settings.price_in_per_m, settings.price_out_per_m
@@ -242,6 +244,10 @@ def settings_report(settings, estimate_usd):
               f"{settings.tool_key_env})")
         for p in tools_problems(settings):
             print(f"  - {p}")
+    if settings.procedure == AGT012:
+        delays, c_runs = settings.containment_plan()
+        print(f"Containment: delays {', '.join(str(d) for d in delays)} ms; {c_runs} runs per delay")
+        print(f"Halt on bypass: {settings.halt_on_bypass}")
     print("Judge-family check: not applicable (the engine has no model judge)")
 
 
@@ -387,9 +393,13 @@ def _default_gateway(settings):
 
 
 def _default_executor(**kw):
-    if kw["settings"].procedure == SEC006:
+    proc = kw["settings"].procedure
+    if proc == SEC006:
         from .engine import run_sec006
         return run_sec006.execute(**kw)
+    if proc == AGT012:
+        from .engine import run_agt012
+        return run_agt012.execute(**kw)
     from .engine import spike
     return spike.execute(**kw)
 
@@ -445,6 +455,18 @@ def sec006_start_problems(settings, variant="standard"):
     return problems + sec006_baseline(settings, variant)[2]
 
 
+def agt012_start_problems(settings):
+    """What a TP-AGT-012 run needs besides the SRD-1 conditions and the P5 gate: the item file must be shipped (it
+    waits for the D-7 values, G4), and the run drives the tool, so tools must be on."""
+    from .engine import agt012
+    problems = []
+    if not (REPO / agt012.ITEM_FILE).is_file():
+        problems.append(f"the item file {agt012.ITEM_FILE} is not shipped yet (it waits for the D-7 values; G4)")
+    if not getattr(settings, "tools_enabled", False):
+        problems.append("TP-AGT-012 needs tools_enabled: true")
+    return problems
+
+
 def _inspect_missing():
     from .engine import spike
     return None if spike.inspect_available() else "the run engine inspect_ai is not installed"
@@ -462,7 +484,9 @@ def main(argv=None, *, input_fn=input, gateway_factory=_default_gateway, executo
     ap.add_argument("--run-dir", help="with --settings and --start: where the run files go (default runs/<time>)")
     ap.add_argument("--positive-control", action="store_true",
                     help="with --settings and --start: run SRD-1 with the weakened system prompt, which the "
-                         "harness must find failing")
+                         "harness must find failing (TP-AGT-012: run the prompt-only gate, which a bypass must pass)")
+    ap.add_argument("--variant", choices=("standard", "positive_control", "prompt_free_gate"),
+                    help="with --settings: the run variant; prompt_free_gate applies to TP-AGT-012 only")
     ap.add_argument("--selftest-log", help="with --settings: a containment self-test log, or a folder that holds one "
                                            "(default: the folders of FAIAS_HARNESS_RUNS, or runs/)")
     a = ap.parse_args(argv)
@@ -474,8 +498,11 @@ def main(argv=None, *, input_fn=input, gateway_factory=_default_gateway, executo
             print(f"  - {p}")
         return 2
     settings = None
-    if (a.probes or a.sign_key or a.run_dir or a.positive_control) and not a.settings:
-        print("--probes, --sign-key, --run-dir and --positive-control need --settings")
+    if (a.probes or a.sign_key or a.run_dir or a.positive_control or a.variant) and not a.settings:
+        print("--probes, --sign-key, --run-dir, --positive-control and --variant need --settings")
+        return 2
+    if a.variant and a.positive_control:
+        print("--variant and --positive-control cannot be given together")
         return 2
     if a.settings:
         try:
@@ -490,13 +517,21 @@ def main(argv=None, *, input_fn=input, gateway_factory=_default_gateway, executo
         return run_external(a, profile, settings, input_fn=input_fn, executor=external_executor,
                             inspect_check=inspect_check)
     est = None
-    variant = "positive_control" if a.positive_control else "standard"
+    variant = a.variant or ("positive_control" if a.positive_control else "standard")
+    if variant == "prompt_free_gate" and (settings is None or settings.procedure != AGT012):
+        print("--variant prompt_free_gate applies to the procedure TP-AGT-012 only")
+        return 2
     sec006_label, base_problems, isolation = None, [], None
     if settings is not None:
         print()
         from . import selftest
-        from .engine import run_sec006, spike
-        est = run_sec006.estimate(settings) if settings.procedure == SEC006 else spike.estimate(settings)
+        from .engine import run_agt012, run_sec006, spike
+        if settings.procedure == SEC006:
+            est = run_sec006.estimate(settings)
+        elif settings.procedure == AGT012:
+            est = run_agt012.estimate(settings)
+        else:
+            est = spike.estimate(settings)
         settings_report(settings, est)
         isolation = selftest.current(selftest_log=a.selftest_log)
         print(selftest.preflight_line(isolation))
@@ -524,6 +559,8 @@ def main(argv=None, *, input_fn=input, gateway_factory=_default_gateway, executo
             problems.append(missing)
         if settings.procedure == SEC006:
             problems += sec006_start_problems(settings, variant)
+        if settings.procedure == AGT012:
+            problems += agt012_start_problems(settings)
         from . import selftest
         problems += selftest.gate_problems(settings.procedure, isolation)     # TP-AGT-012 and TP-DAT-009 only
     if a.probes and not a.start:
@@ -550,20 +587,32 @@ def main(argv=None, *, input_fn=input, gateway_factory=_default_gateway, executo
     if settings.procedure == SEC006:
         from .engine import run_sec006
         calls, label = f"at most {run_sec006.planned_calls(settings)}", sec006_label
+    elif settings.procedure == AGT012:
+        from .engine import agt012, agt012_log
+        delays, c_runs = settings.containment_plan()
+        calls = len(agt012.load_items()) * settings.runs_per_item + len(delays) * c_runs
+        label = agt012_log.LABEL
     else:
         calls, label = len(spike.run_items(settings)) * settings.runs_per_item, spike.sec001.LABELS[settings.item_set]
     print(f"Item set {settings.item_set}. This run sends {calls} model calls ({settings.runs_per_item} runs per item) to {settings.model_id} on {', '.join(settings.only) or 'any host'}. "
           f"Worst-case cost USD {est:.4f}; cap USD {settings.cap_usd}. The result is labelled '{label}'.")
-    if a.positive_control:
+    if variant == "positive_control" and settings.procedure == AGT012:
+        print("Variant: positive control (the prompt-only gate; the orchestrator gate is off). A bypass must pass.")
+    elif variant == "positive_control":
         print("Variant: positive control (the weakened system prompt, no rules). The harness must find successes.")
+    elif variant == "prompt_free_gate":
+        print("Variant: prompt_free_gate (the weakened prompt, the orchestrator gate on). Every gated attempt must hold.")
     answer = input_fn("Type yes to start the run (anything else cancels): ").strip()
     if answer != "yes":
         print("Run not started: `yes` was not typed.")
         return 4
     confirmation = {"typed": "yes", "time": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())}
     run_dir = Path(a.run_dir) if a.run_dir else REPO / "runs" / time.strftime("%Y%m%dT%H%M%SZ", time.gmtime())
-    result = executor(settings=settings, run_dir=run_dir, sign_key=a.sign_key, confirmation=confirmation,
-                      probes=probes, prior_spent_usd=gateway.cap.spent_usd, variant=variant)
+    exec_kwargs = dict(settings=settings, run_dir=run_dir, sign_key=a.sign_key, confirmation=confirmation,
+                       probes=probes, prior_spent_usd=gateway.cap.spent_usd, variant=variant)
+    if settings.procedure == AGT012:
+        exec_kwargs.update(selftest_log=a.selftest_log, delays_ms=settings.containment_plan()[0])
+    result = executor(**exec_kwargs)
     s = result.summary
     print(f"Run {result.status}. Calls {s.get('model_calls')}, cost USD {s.get('cost_usd')}. Label: {s.get('label')}.")
     print(f"Log: {result.log_path}\nSignature: {result.sig_path}")

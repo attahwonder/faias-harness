@@ -43,13 +43,17 @@ TOP_REQUIRED = ["provider", "model_id", "mode", "routing", "price_in_per_m", "pr
                 "api_key_env"]
 TOP_OPTIONAL = ["max_tokens", "reviewer_values", "temperature", "seed", "runs_per_item", "item_set", "kind",
                 "procedure", "store_replies", "m4_baseline_log", "m4_baseline_pubkey", "tools_enabled",
-                "tool_key_env"]
+                "tool_key_env", "containment", "halt_on_bypass"]
 RUNS_MIN, RUNS_MAX, RUNS_DEFAULT = 3, 20, 3     # three is the FAIAS minimum (PLAYBOOK_SEC_001.md line 27)
 # The item set of a run: the full set in items/TP-SEC-001.json (the default), or the 20 items of the engine spike.
 ITEM_SETS, ITEM_SET_DEFAULT = ("TP-SEC-001", "spike"), "TP-SEC-001"
 # The procedure of an SRD-1 run (version 0.6). TP-SEC-006 runs its own item set, and only it takes store_replies,
 # m4_baseline_log, m4_baseline_pubkey and a reviewer value for M3.
-PROCEDURES, PROCEDURE_DEFAULT, SEC006 = ("TP-SEC-001", "TP-SEC-006"), "TP-SEC-001", "TP-SEC-006"
+PROCEDURES, PROCEDURE_DEFAULT, SEC006, AGT012 = ("TP-SEC-001", "TP-SEC-006", "TP-AGT-012"), "TP-SEC-001", \
+    "TP-SEC-006", "TP-AGT-012"
+# The item set of a TP-AGT-012 run is its own set; the containment exercise's default delays (ms) and run count.
+AGT012_ITEM_SET = "TP-AGT-012"
+AGT012_DELAYS_DEFAULT = (0, 50, 200, 800, 2000)
 STORE_REPLIES = ("full", "hash_only")
 ROUTING_KEYS = ["only", "allow_fallbacks", "zdr", "data_collection", "quantizations"]
 FORBIDDEN = {"api_key", "key", "secret", "token", "password"}
@@ -93,6 +97,9 @@ class Settings:
     m3_reason: object = None
     tools_enabled: bool = False
     tool_key_env: object = None
+    containment_delays_ms: tuple = ()      # TP-AGT-012 only; the delays of the containment exercise
+    containment_runs: object = None        # TP-AGT-012 only; runs per delay bracket (default: runs_per_item)
+    halt_on_bypass: bool = False           # TP-AGT-012 only; stop the run after the first bypass (default false)
     kind = "srd1"           # a class attribute: not in the canonical content, so the settings hash is unchanged
 
     def routing(self):
@@ -128,7 +135,17 @@ class Settings:
             out["reviewer_values"]["M3"] = {"value": self.m3_value, "reason": self.m3_reason}
         if self.tools_enabled:
             out.update(tools_enabled=True, tool_key_env=self.tool_key_env)
+        if self.procedure == AGT012:
+            out.update(procedure=self.procedure,
+                       containment={"delays_ms": list(self.containment_delays_ms), "runs": self.containment_runs},
+                       halt_on_bypass=self.halt_on_bypass)
         return out
+
+    def containment_plan(self):
+        """The containment delays (a tuple) and run count of a TP-AGT-012 run, with the defaults applied."""
+        delays = tuple(self.containment_delays_ms) or AGT012_DELAYS_DEFAULT
+        runs = self.containment_runs if self.containment_runs is not None else self.runs_per_item
+        return delays, runs
 
     def digest(self):
         blob = json.dumps(self.canonical(), sort_keys=True, ensure_ascii=False, separators=(",", ":"))
@@ -141,6 +158,24 @@ class Settings:
 
 def _num(v):
     return isinstance(v, (int, float)) and not isinstance(v, bool)
+
+
+def _validate_containment(raw):
+    """Problems in the `containment` block of a TP-AGT-012 file (empty if absent or valid)."""
+    if "containment" not in raw or raw["containment"] is None:
+        return []
+    c = raw["containment"]
+    if not isinstance(c, dict) or set(c) - {"delays_ms", "runs"}:
+        return ["containment may hold delays_ms and runs only"]
+    out = []
+    d = c.get("delays_ms")
+    if d is not None and not (isinstance(d, list) and d and all(isinstance(x, int) and not isinstance(x, bool)
+                                                                and 0 <= x <= 60000 for x in d)):
+        out.append("containment.delays_ms must be a non-empty list of whole numbers from 0 to 60000 (milliseconds)")
+    r = c.get("runs")
+    if r is not None and not (isinstance(r, int) and not isinstance(r, bool) and RUNS_MIN <= r <= RUNS_MAX):
+        out.append(f"containment.runs must be a whole number from {RUNS_MIN} to {RUNS_MAX}, or null")
+    return out
 
 
 def validate(raw):
@@ -184,6 +219,7 @@ def validate(raw):
     if proc not in PROCEDURES:
         problems.append(f"procedure must be one of {', '.join(PROCEDURES)}")
     sec006 = proc == SEC006
+    agt012 = proc == AGT012
     if sec006:
         if "item_set" in raw and raw["item_set"] != SEC006:
             problems.append("item_set must be TP-SEC-006 for the procedure TP-SEC-006")
@@ -195,12 +231,29 @@ def validate(raw):
         pk = raw.get("m4_baseline_pubkey")
         if pk is not None and not (isinstance(pk, str) and pk.strip()):
             problems.append("m4_baseline_pubkey must be the path of a public key file, or null")
+    elif agt012:
+        if "item_set" in raw and raw["item_set"] != AGT012_ITEM_SET:
+            problems.append(f"item_set must be {AGT012_ITEM_SET} for the procedure TP-AGT-012")
+        if raw.get("tools_enabled") is not True:
+            problems.append("TP-AGT-012 needs tools_enabled: true (the run drives SRD-1's one tool, fee_refund)")
+        for k in ("store_replies", "m4_baseline_log", "m4_baseline_pubkey"):
+            if k in raw:
+                problems.append(f"{k} applies to the procedure TP-SEC-006 only")
     else:
         if "item_set" in raw and raw["item_set"] not in ITEM_SETS:
             problems.append(f"item_set must be one of {', '.join(ITEM_SETS)}")
         for k in ("store_replies", "m4_baseline_log", "m4_baseline_pubkey"):
             if k in raw:
                 problems.append(f"{k} applies to the procedure TP-SEC-006 only")
+    if not agt012:
+        for k in ("containment", "halt_on_bypass"):
+            if k in raw:
+                problems.append(f"{k} applies to the procedure TP-AGT-012 only")
+    else:
+        problems += _validate_containment(raw)
+        hob = raw.get("halt_on_bypass", False)
+        if not isinstance(hob, bool):
+            problems.append("halt_on_bypass must be true or false")
     te, tk = raw.get("tools_enabled", False), raw.get("tool_key_env")
     if not isinstance(te, bool):
         problems.append("tools_enabled must be true or false")
@@ -298,7 +351,8 @@ def validate(raw):
         for k in ("temperature", "seed"):
             if raw.get(k) is None:
                 problems.append(f"evidence mode: {k} is not set")
-        if not isinstance(m4, dict) or m4.get("value") is None or m4.get("reason") is None:
+        if not agt012 and (not isinstance(m4, dict) or m4.get("value") is None or m4.get("reason") is None):
+            # TP-AGT-012 takes M1 and M4 from the record (both 0 with a reason), not from the settings.
             problems.append("evidence mode: reviewer_values.M4 needs a value and a reason")
     return problems
 
@@ -309,6 +363,7 @@ def from_raw(raw):
     m4 = (raw.get("reviewer_values") or {}).get("M4") or {}
     m3 = (raw.get("reviewer_values") or {}).get("M3") or {}
     proc = raw.get("procedure", PROCEDURE_DEFAULT)
+    cont = raw.get("containment") or {}
     return Settings(
         provider=raw["provider"], model_id=raw["model_id"], mode=raw["mode"],
         only=tuple(r.get("only") or ()), allow_fallbacks=r.get("allow_fallbacks"), zdr=r.get("zdr"),
@@ -318,11 +373,17 @@ def from_raw(raw):
         m4_value=m4.get("value"), m4_reason=m4.get("reason"),
         temperature=raw.get("temperature"), seed=raw.get("seed"),
         runs_per_item=raw.get("runs_per_item", RUNS_DEFAULT),
-        item_set=raw.get("item_set", SEC006 if proc == SEC006 else ITEM_SET_DEFAULT),
+        item_set=raw.get("item_set", _default_item_set(proc)),
         procedure=proc, store_replies=raw.get("store_replies", "full"), m4_baseline_log=raw.get("m4_baseline_log"),
         m4_baseline_pubkey=raw.get("m4_baseline_pubkey"), m3_value=m3.get("value"), m3_reason=m3.get("reason"),
         tools_enabled=raw.get("tools_enabled", False), tool_key_env=raw.get("tool_key_env"),
+        containment_delays_ms=tuple(cont.get("delays_ms") or ()), containment_runs=cont.get("runs"),
+        halt_on_bypass=raw.get("halt_on_bypass", False),
     )
+
+
+def _default_item_set(proc):
+    return {SEC006: SEC006, AGT012: AGT012_ITEM_SET}.get(proc, ITEM_SET_DEFAULT)
 
 
 def load_settings(path):

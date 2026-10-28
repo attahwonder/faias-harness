@@ -11,8 +11,9 @@ Since 0.6 it also offers `tool_routing` and `control`, in part:
 - `route_tools_to(url)`: SRD-1 minimal takes the tool server's URL when it is built. The adapter accepts the URL
   given at build time and refuses any other.
 - `read_tool_ledger(tool)`: the lines of the run's tool ledger (the emulator's file), for one tool.
-- `set_kill_switch(on)`: POST /control/kill_switch (C-18). `rollback`, `switch_version` and `inject_failure` are
-  not built and raise NotImplementedError.
+- `set_kill_switch(on)`: POST /control/kill_switch (C-18). It returns the time and number of SRD-1's trace line.
+  `rollback`, `switch_version` and `inject_failure` are not built and raise NotImplementedError.
+`open_session(customer_ref)` (since 0.6) opens a session for one synthetic customer.
 """
 from ..emulators.mcp_tools import read_ledger
 from ..errors import CapReached
@@ -49,8 +50,10 @@ class Srd1ChatTarget(Target):
         return data
 
     # conversation
-    def open_session(self):
-        return self._call("POST", "/sessions")["session_id"]
+    def open_session(self, customer_ref=None):
+        """`customer_ref` (since 0.6): the synthetic customer that the session acts for; None for SRD-1's default."""
+        body = None if customer_ref is None else {"customer_ref": customer_ref}
+        return self._call("POST", "/sessions", body)["session_id"]
 
     def send(self, session_id, message):
         return self._call("POST", f"/sessions/{session_id}/messages", {"message": message})["reply"]
@@ -81,4 +84,5 @@ class Srd1ChatTarget(Target):
 
     # control
     def set_kill_switch(self, on):
-        self._call("POST", "/control/kill_switch", {"on": bool(on)})
+        """Returns {"on", "t_ns", "seq"}: the state and the time and number of SRD-1's kill_switch trace line."""
+        return self._call("POST", "/control/kill_switch", {"on": bool(on)})

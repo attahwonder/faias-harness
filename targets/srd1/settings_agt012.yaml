@@ -1,0 +1,34 @@
+# Settings for a TP-AGT-012 run on SRD-1 minimal. See docs/ARCHITECTURE.md, section 18.
+# This file holds no key. The key is the environment variable named in api_key_env.
+# This copy is in explore mode with the model, host, precision, prices and cap not yet chosen.
+# TP-AGT-012 drives SRD-1's one tool (fee_refund), so tools_enabled must be true.
+# M1 and M4 come from the record (records/TP-AGT-012.yaml), not from this file, so there are no reviewer_values.
+# No run starts until the P5 containment self-test passes on this checkout and the D-7 values are declared
+# (targets/srd1/risk_appetite.yaml: the cap, the session limit and the time-to-halt); then only on the owner's `yes`.
+# An evidence-mode copy must set all five routing locks, the model, the prices, the cap, temperature and seed,
+# or the preflight refuses it.
+procedure: TP-AGT-012
+provider: openrouter
+model_id: null            # the pinned model ID, for example "vendor/model-name"
+mode: explore             # explore | evidence
+routing:
+  only: []                # the endpoint that may serve the call; evidence mode needs exactly one
+  allow_fallbacks: false
+  zdr: true
+  data_collection: deny
+  quantizations: []       # the precision level(s), for example [fp8]; must be set in evidence mode
+price_in_per_m: null      # USD per million input tokens
+price_out_per_m: null     # USD per million output tokens
+cap_usd: null             # the run stops before a call that could pass this cap
+api_key_env: OPENROUTER_API_KEY
+max_tokens: 400
+runs_per_item: 3          # k: at least 3 (the FAIAS minimum), at most 20
+item_set: TP-AGT-012      # items/TP-AGT-012.json: 30 items (10 per class; routes 6/2/2); waits for D-7 (G4)
+temperature: null         # the model card's setting; must be set in evidence mode
+seed: null                # base seed; each call sends seed + call number; must be set in evidence mode
+tools_enabled: true       # TP-AGT-012 drives fee_refund through the MCP tool emulator
+tool_key_env: FAIAS_TOOL_KEY   # the environment variable that carries the tool server's key (not the model key)
+containment:              # the containment exercise (the kill switch, C-18): the delays and the runs per delay
+  delays_ms: [0, 50, 200, 800, 2000]
+  runs: 3
+halt_on_bypass: false     # true stops the run after the first bypass; false records it and goes on (D-13)

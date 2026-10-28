@@ -13,7 +13,14 @@ call_failed. A sent call records `mcp_call_seq`, the number of MCP calls that th
 engine run SRD-1 is the only client of the emulator, so it equals the `seq` of the ledger line.
 
 There are no workflow gates, no re-anchoring and no retry rules. Every turn writes one line to the trace store
-(C-15), also when the model call fails.
+(C-15), also when the model call fails. With tools on, the `turn` line also holds `calls`: the facts of each model
+call of the turn (host, model, tokens, cost, latency, finish reason, block). A switch that is on before a model call
+writes a `killed_before_model_call` line.
+
+The gate layer (since 0.6, for the TP-AGT-012 positive control): `gate_layer="orchestrator"` (the default) checks
+C-09 here. `gate_layer="prompt"` skips that check: the cap and the limit are then only a rule in the system prompt
+(render_prompt_gate), the prompt-only gate that PLAYBOOK_AGT_012.md line 24 names as the failure. C-07 and C-18 stay
+on. config_read("gate") states the layer.
 """
 import hashlib
 import json
@@ -27,6 +34,11 @@ PROMPT_FILE = Path(__file__).with_name("system_prompt.txt")
 # The positive control: the same assistant with no rules. A run with it must find successes.
 WEAKENED_PROMPT_FILE = Path(__file__).with_name("system_prompt_weakened.txt")
 PROMPT_VARIANTS = {"standard": PROMPT_FILE, "positive_control": WEAKENED_PROMPT_FILE}
+# The prompt of the prompt-only gate (gate_layer "prompt"): a template with the fields {cap_gbp} and
+# {session_limit_gbp}. Its text waits for the owner's declared values, so the file is not shipped yet.
+PROMPT_GATE_FILE = Path(__file__).with_name("system_prompt_prompt_gate.txt")
+PROMPT_GATE_FIELDS = ("{cap_gbp}", "{session_limit_gbp}")
+GATE_LAYERS = ("orchestrator", "prompt")
 MAX_TURNS = 20
 MAX_MESSAGE_CHARS = 4000
 MAX_TOOL_ROUNDS = 3         # tool rounds in one turn; a model that still asks for a tool after them gets no call
@@ -36,6 +48,19 @@ DENIED_TEXT = "Refused: the account is not one of the customer's accounts. No ca
 
 def load_system_prompt(path=PROMPT_FILE):
     return Path(path).read_text(encoding="utf-8")
+
+
+def _figure(v):
+    return f"{v:.0f}" if float(v).is_integer() else f"{v:.2f}"
+
+
+def render_prompt_gate(template, gate):
+    """The prompt of the prompt-only gate: the template with the cap and the limit of `gate` (a RefundGate)."""
+    missing = [f for f in PROMPT_GATE_FIELDS if f not in template]
+    if missing:
+        raise ValueError(f"the prompt-gate template lacks {', '.join(missing)}")
+    return template.replace("{cap_gbp}", _figure(gate.cap_gbp)).replace("{session_limit_gbp}",
+                                                                         _figure(gate.session_limit_gbp))
 
 
 class TooManyTurns(Exception):
@@ -60,8 +85,14 @@ class Killed(Exception):
 
 class Orchestrator:
     def __init__(self, system_prompt, gateway, trace, tools=(), prompt_source=None, *, mcp=None, entitlements=None,
-                 gate=None, max_tool_rounds=MAX_TOOL_ROUNDS):
-        """`mcp`: an open McpClient; it turns tools on, and then `entitlements` and `gate` are required."""
+                 gate=None, max_tool_rounds=MAX_TOOL_ROUNDS, gate_layer="orchestrator"):
+        """`mcp`: an open McpClient; it turns tools on, and then `entitlements` and `gate` are required.
+        `gate_layer`: "orchestrator" (C-09 checks here) or "prompt" (no check here; tools on only)."""
+        if gate_layer not in GATE_LAYERS:
+            raise ValueError(f"gate_layer must be one of {', '.join(GATE_LAYERS)}")
+        if gate_layer == "prompt" and mcp is None:
+            raise ValueError("gate_layer prompt needs tools on")
+        self.gate_layer = gate_layer
         self.system_prompt = system_prompt
         self.prompt_sha256 = hashlib.sha256(system_prompt.encode("utf-8")).hexdigest()
         self.prompt_source = prompt_source      # the file name of the prompt, for config_read; None if not known
@@ -104,6 +135,11 @@ class Orchestrator:
             if self.gate is None:
                 return {"enabled": False, "layer": "orchestrator", "module": "targets/srd1/app/gate.py",
                         "note": "tools are off, so the refund gate is not built"}
+            if self.gate_layer == "prompt":
+                return {"enabled": True, **self.gate.config(), "layer": "prompt", "module": self.prompt_source,
+                        "function": None, "call_site": None, "module_sha256": self.prompt_sha256,
+                        "note": "the cap and the limit are a rule in the system prompt only; the orchestrator does "
+                                "not check them"}
             return {"enabled": True, **self.gate.config()}
         if kind == "entitlements":
             if self.entitlements is None:
@@ -150,7 +186,7 @@ class Orchestrator:
         results, rounds = [], 0
         while True:
             if self.killed:         # C-18: checked before each model call
-                self.trace.append("turn_halted", sid, turn=s["turns"], at="before_model_call", model_calls=len(results))
+                self.trace.append("killed_before_model_call", sid, turn=s["turns"], model_calls=len(results))
                 raise Killed(sid)
             try:
                 r = self.gateway.complete(history, tools=self.tool_definitions) if self.tools_on \
@@ -176,7 +212,12 @@ class Orchestrator:
             extra = {"model_calls": len(results), "tool_rounds": rounds,
                      "tool_rounds_exhausted": bool(pending) and rounds >= self.max_tool_rounds,
                      "cost_usd_turn": sum(x.cost_usd for x in results),
-                     "host_ok_all": all(x.host_ok for x in results)}
+                     "host_ok_all": all(x.host_ok for x in results),
+                     "calls": [{"served_host": x.served_host, "model_served": x.model_served, "host_ok": x.host_ok,
+                                "prompt_tokens": x.prompt_tokens, "completion_tokens": x.completion_tokens,
+                                "usage_missing": x.usage_missing, "cost_usd": x.cost_usd, "latency_ms": x.latency_ms,
+                                "finish_reason": x.finish_reason, "blocked": x.blocked, "retries": x.retries}
+                               for x in results]}
         entry = self.trace.append(
             "turn", sid, turn=s["turns"], user_message=message, reply=r.reply,
             model_requested=r.model_requested, model_served=r.model_served, served_host=r.served_host,
@@ -214,7 +255,7 @@ class Orchestrator:
             self.trace.append("tool_call", sid, **base, decision="denied_entitlement")
             return DENIED_TEXT
         amount = args.get("amount_gbp")
-        hold = self.gate.check(s["refund_total_gbp"], amount)
+        hold = self.gate.check(s["refund_total_gbp"], amount) if self.gate_layer == "orchestrator" else None
         if hold:                    # C-09: in the orchestrator, not the prompt
             self.trace.append("gate_hold", sid, tool=name, amount_gbp=amount, cap_gbp=self.gate.cap_gbp,
                               session_limit_gbp=self.gate.session_limit_gbp,

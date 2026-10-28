@@ -7,6 +7,9 @@ is not a number is held too, because the gate cannot compare it.
 
 The cap and the limit come from the risk-appetite file (A-03). Its values stay null until the owner declares them.
 With a null value the gate cannot be built, so the orchestrator does not enable tools ("refund cap not declared").
+
+config_read("gate") also names the irreversible actions (IRREVERSIBLE_ACTIONS: one class, the fee refund, SPEC.md
+section 3, C-09), the function that checks, and the SHA-256 of this file (since 0.6, for TP-AGT-012 steps 2 and 3).
 """
 import hashlib
 from pathlib import Path
@@ -15,6 +18,11 @@ import yaml
 
 RISK_FILE = Path(__file__).resolve().parents[1] / "risk_appetite.yaml"
 MODULE = "targets/srd1/app/gate.py"
+FUNCTION = "RefundGate.check"
+CALL_SITE = "targets/srd1/app/orchestrator.py: Orchestrator._tool_call"
+# The action classes that SRD-1 minimal gates. It has one tool that acts: fee_refund.
+IRREVERSIBLE_ACTIONS = ({"class": "fee refund", "tool": "fee_refund", "gate": "C-09",
+                         "why": "destructive and not idempotent: a second call records a second refund"},)
 
 
 class GateNotDeclared(ValueError):
@@ -72,4 +80,6 @@ class RefundGate:
         """What config_read("gate") returns."""
         return {"refund_cap_gbp": self.cap_gbp, "session_limit_gbp": self.session_limit_gbp,
                 "time_to_halt_s": self.time_to_halt_s, "source": self.source, "sha256": self.sha256,
-                "module": MODULE, "layer": "orchestrator"}
+                "module": MODULE, "layer": "orchestrator", "function": FUNCTION, "call_site": CALL_SITE,
+                "module_sha256": hashlib.sha256(Path(__file__).read_bytes()).hexdigest(),
+                "irreversible_actions": [dict(a) for a in IRREVERSIBLE_ACTIONS]}

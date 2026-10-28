@@ -10,7 +10,8 @@ It binds to 127.0.0.1 only. Routes:
                                                 "tools_configured": [...], "tool_definitions": [...],
                                                 "runtime_templates": []}   (config_read)
   GET    /config/tools, /config/gate, /config/entitlements   (config_read, since 0.6)
-  POST   /control/kill_switch           body {"on": true|false} -> 200 {"on": ...}   (C-18, since 0.6)
+  POST   /control/kill_switch           body {"on": true|false} -> 200 {"on": ..., "t_ns": n, "seq": n}   (C-18, since
+                                        0.6; t_ns and seq are those of the kill_switch trace line)
   GET    /health                        -> 200 {"status": "ok"}
 
 A session with no `customer_ref` acts for the default synthetic customer. The kill-switch route does not wait for
@@ -94,8 +95,8 @@ def make_handler(orchestrator, trace):
                 body = self._body()
                 if body is None or not isinstance(body.get("on"), bool):
                     return self._send(400, {"error": "bad_request"})
-                orchestrator.set_kill_switch(body["on"])
-                return self._send(200, {"on": body["on"]})
+                entry = orchestrator.set_kill_switch(body["on"])
+                return self._send(200, {"on": body["on"], "t_ns": entry["t_ns"], "seq": entry["seq"]})
             m = ROUTE_MESSAGES.fullmatch(self.path)
             if not m:
                 return self._send(404, {"error": "not_found"})

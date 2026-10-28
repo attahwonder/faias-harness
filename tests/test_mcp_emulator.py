@@ -337,3 +337,102 @@ class SyntheticBankTests(unittest.TestCase):
             with self.subTest(path=path.name):
                 self.assertEqual(sec006.find_placeholders([text]), [])
                 self.assertNotIn(".invalid", text.lower())
+
+
+FEE = {"account_ref": "SYN-A-0001", "fee_id": "SYN-F-0001", "amount_gbp": 12.0, "reason": "r"}
+
+
+class FaultTests(_Base):
+    """G1 of the TP-AGT-012 build: the faults map and the probe ledger (0.6)."""
+
+    def fault_emu(self, name, faults=None, **kw):
+        e = mt.ToolEmulator(mt.load_tools(STORE_TOOLS_FILE), self.dir / name, faults=faults, **kw).start()
+        self.addCleanup(e.stop)
+        return e
+
+    def call(self, e, args=FEE, mid=1, client=None):
+        params = {"name": "fee_refund", "arguments": args, "_meta": modern_meta()}
+        h = {"Accept": "application/json, text/event-stream", "MCP-Protocol-Version": "2026-07-28",
+             "Mcp-Method": "tools/call", "Mcp-Name": "fee_refund"}
+        return (client or self.http).post(e.url, json={"jsonrpc": "2.0", "id": mid, "method": "tools/call",
+                                                       "params": params}, headers=h)
+
+    def assert_clean(self, e, before):
+        self.assertTrue(mt.verify_ledger(e.ledger.path, expected_head=e.ledger.head)[0])
+        self.assertEqual(STORE_FILE.read_bytes(), before)
+
+    def test_truncate_applies_to_the_first_call_only(self):
+        before = STORE_FILE.read_bytes()
+        e = self.fault_emu("truncate.jsonl", {("fee_refund", "SYN-F-0001"): "truncate"})
+        first = self.call(e).json()["result"]
+        second = self.call(e, mid=2).json()["result"]
+        whole = second["content"][0]["text"]
+        self.assertNotIn("structuredContent", first)
+        same = whole.replace("REF-SYN-0002", "REF-SYN-0001")       # the first call's result, as sent without a fault
+        self.assertEqual(first["content"][0]["text"], same[:len(same) // 2])
+        self.assertEqual(second["structuredContent"]["status"], "recorded")
+        lines = mt.read_ledger(e.ledger.path)
+        self.assertEqual([(x.get("fault"), x["status"]) for x in lines], [("truncate", "recorded"), (None, "recorded")])
+        self.assertNotIn("fault", lines[1])
+        self.assertEqual(e.pending_faults(), {})
+        self.assert_clean(e, before)
+
+    def test_inject_clearance_appends_the_note_and_marks_the_line(self):
+        before = STORE_FILE.read_bytes()
+        e = self.fault_emu("inject.jsonl", {("fee_refund", "SYN-F-0001"): "inject_clearance"})
+        res = self.call(e).json()["result"]
+        self.assertEqual(len(res["content"]), 2)
+        self.assertEqual(res["content"][1]["text"], mt.INJECT_TEXT.format(figure="120.00"))
+        self.assertEqual(res["structuredContent"]["status"], "recorded")
+        line = mt.read_ledger(e.ledger.path)[0]
+        self.assertEqual((line.get("injected"), line.get("fault")), (True, None))
+        self.assert_clean(e, before)
+
+    def test_ambiguous_jsonrpc_error_and_http_500(self):
+        before = STORE_FILE.read_bytes()
+        e = self.fault_emu("errors.jsonl")
+        e.arm_faults({("fee_refund", "SYN-F-0001"): "ambiguous"})
+        amb = self.call(e).json()["result"]
+        self.assertEqual((amb["content"][0]["text"], "structuredContent" in amb), (mt.AMBIGUOUS_TEXT, False))
+        e.arm_faults({("fee_refund", "SYN-F-0001"): "jsonrpc_error"})
+        err = self.call(e, mid=2)
+        self.assertEqual((err.status_code, err.json()["error"]["code"]), (200, -32603))
+        e.arm_faults({("fee_refund", "SYN-F-0001"): "http_500"})
+        self.assertEqual(self.call(e, mid=3).status_code, 500)
+        lines = mt.read_ledger(e.ledger.path)
+        self.assertEqual([x["fault"] for x in lines], ["ambiguous", "jsonrpc_error", "http_500"])
+        self.assertEqual([x["status"] for x in lines], ["recorded"] * 3)       # the back office ran each time
+        self.assert_clean(e, before)
+
+    def test_timeout_holds_the_call_past_the_client_timeout(self):
+        before = STORE_FILE.read_bytes()
+        e = self.fault_emu("timeout.jsonl", {("fee_refund", "SYN-F-0001"): "timeout"}, fault_hold_s=1.5)
+        with httpx.Client(trust_env=False, timeout=1.0) as quick:
+            with self.assertRaises(httpx.TimeoutException):
+                self.call(e, client=quick)
+        self.assertEqual(mt.read_ledger(e.ledger.path)[0]["fault"], "timeout")
+        self.assert_clean(e, before)
+
+    def test_a_bad_fault_is_refused(self):
+        e = self.fault_emu("bad.jsonl")
+        for faults in ({("fee_refund", "SYN-F-0001"): "slow"}, {("other_tool", "SYN-F-0001"): "truncate"},
+                       {"fee_refund": "truncate"}):
+            with self.subTest(faults=faults), self.assertRaises(ValueError):
+                e.arm_faults(faults)
+
+    def test_the_probe_ledger_keeps_probe_calls_out_of_the_run_ledger(self):
+        e = mt.ToolEmulator(mt.load_tools(REPO / "targets" / "srd1" / "tools.yaml"), self.dir / "run.jsonl",
+                            faults={("fee_refund", "SYN-F-0001"): "truncate"}).start()
+        self.addCleanup(e.stop)
+        init = self.post(e, {"jsonrpc": "2.0", "id": 1, "method": "initialize",
+                             "params": {"protocolVersion": "2025-06-18", "capabilities": {}, "clientInfo": CLIENT_INFO}})
+        self.assertEqual(init.json()["result"]["serverInfo"]["name"], "faias-tool-emulator")
+        with e.probing(self.dir / "probe.jsonl") as probe:
+            res = self.call(e, {"account_ref": "SYN-A-0001", "fee_id": "SYN-F-9999", "amount_gbp": 1.0}).json()["result"]
+            self.call(e, FEE, mid=2)          # inside the probe block no fault applies
+        self.assertEqual(res["structuredContent"]["status"], "rejected")
+        self.assertEqual(len(mt.read_ledger(probe.path)), 2)
+        self.assertNotIn("fault", mt.read_ledger(probe.path)[1])
+        self.assertEqual(mt.read_ledger(e.ledger.path), [])
+        self.assertEqual(e.pending_faults(), {("fee_refund", "SYN-F-0001"): "truncate"})
+        self.assertTrue(mt.verify_ledger(probe.path)[0])
