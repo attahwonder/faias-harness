@@ -16,10 +16,24 @@ in SRD-1 minimal, C-07 (entitlements) and C-09 (the refund gate) in its orchestr
 
 The store is a YAML file with a list `accounts`. Each account has `account_ref`, `customer_ref` and `fees`. Each fee
 has `fee_id` and `amount_gbp` (targets/srd1/data/synthetic_bank.yaml).
+
+document_search (since TP-DAT-009) is the emulated document store of SRD-1. Its tools file is
+targets/srd1/tools_retrieval.yaml. The arguments are query and, as an option, on_behalf_of. The store file has a
+list `documents` and a list `customers` (targets/srd1/data/synthetic_documents.yaml). The list `customers` is the
+entitlement table of the store. With on_behalf_of, the handler applies the document rule for that customer. The
+customer may read the content documents of their own domain and their own records. The handler trusts the
+presented principal, as a back office does. Without on_behalf_of, the call runs under the service credential, and
+the handler searches every document. An unknown principal or an empty query gives `status: rejected`. The result
+holds `status`, `principal` (the customer reference, or "service") and the documents found, at most TOP_K. The
+scorer is lexical tf-idf over whole documents. It is a copy of the scorer of SRD-1 (targets/srd1/app/retrieval.py).
+A test checks that the two put the documents in the same order. The handler reads the store once and never writes
+it. The control under test is which principal SRD-1 presents (C-07 in its orchestrator).
 """
 import hashlib
 import math
+import re
 import threading
+from collections import Counter
 from pathlib import Path
 
 import yaml
@@ -39,8 +53,9 @@ def load_store(path):
         data = yaml.safe_load(raw.decode("utf-8"))
     except (UnicodeDecodeError, yaml.YAMLError) as e:
         raise StoreError(f"cannot read the store ({type(e).__name__})") from None
-    if not isinstance(data, dict) or not isinstance(data.get("accounts"), list):
-        raise StoreError("the store must be a mapping with a list 'accounts'")
+    if not isinstance(data, dict) or not (isinstance(data.get("accounts"), list)
+                                          or isinstance(data.get("documents"), list)):
+        raise StoreError("the store must be a mapping with a list 'accounts' or a list 'documents'")
     return data, hashlib.sha256(raw).hexdigest()
 
 
@@ -101,4 +116,65 @@ class FeeRefund:
                 "amount_gbp": float(self.fees[(account, fee)])}, False
 
 
-HANDLERS = {"fee_refund": FeeRefund}
+_TOKEN = re.compile(r"[a-z0-9]+")
+
+
+class DocumentSearch:
+    TOP_K = 3
+    OUTPUT_SCHEMA = {
+        "type": "object",
+        "properties": {
+            "status": {"type": "string", "enum": ["ok", "rejected"]},
+            "principal": {"type": "string"},
+            "documents": {"type": "array", "items": {"type": "object", "properties": {
+                "doc_id": {"type": "string"}, "title": {"type": "string"}, "text": {"type": "string"}}}},
+            "reason": {"type": "string"},
+        },
+        "required": ["status"],
+    }
+
+    def __init__(self, store):
+        docs, customers = store.get("documents"), store.get("customers")
+        if not isinstance(docs, list) or not docs or not isinstance(customers, list):
+            raise StoreError("document_search needs a store with a list 'documents' and a list 'customers'")
+        self.domains = {c.get("customer_ref"): c.get("domain") for c in customers}
+        self.documents = {d.get("doc_id"): d for d in docs}
+        self.tf = {i: Counter(_TOKEN.findall(f"{d.get('title')} {d.get('text')}".lower()))
+                   for i, d in self.documents.items()}
+        self.df = Counter(t for c in self.tf.values() for t in c)
+        self.n = len(self.documents)
+
+    def allowed(self, principal, doc):
+        """The document rule of the store: own records, and the content of the principal's domain."""
+        if doc.get("customer_ref") is not None:
+            return doc["customer_ref"] == principal
+        return doc.get("domain") == self.domains.get(principal)
+
+    def rank(self, query, ids):
+        """[(doc_id, score)] with a score above zero, high to low, then by doc_id (the scorer of retrieval.py)."""
+        terms = sorted(set(_TOKEN.findall(str(query).lower())))
+        out = []
+        for i in ids:
+            tf = self.tf[i]
+            s = sum(tf[t] * (math.log((self.n + 1) / (self.df[t] + 1)) + 1) for t in terms if tf[t])
+            if s > 0:
+                out.append((i, s))
+        return sorted(out, key=lambda x: (-x[1], x[0]))
+
+    def call(self, args):
+        """(result object, is_error)."""
+        query, principal = args.get("query"), args.get("on_behalf_of")
+        if not isinstance(query, str) or not query.strip():
+            return {"status": "rejected", "reason": "query must be a non-empty string"}, True
+        if principal is None:
+            principal, ids = "service", list(self.documents)
+        elif isinstance(principal, str) and principal in self.domains:
+            ids = [i for i, d in self.documents.items() if self.allowed(principal, d)]
+        else:
+            return {"status": "rejected", "reason": "unknown principal"}, True
+        found = [self.documents[i] for i, _ in self.rank(query, ids)[:self.TOP_K]]
+        return {"status": "ok", "principal": principal,
+                "documents": [{"doc_id": d["doc_id"], "title": d["title"], "text": d["text"]} for d in found]}, False
+
+
+HANDLERS = {"fee_refund": FeeRefund, "document_search": DocumentSearch}
