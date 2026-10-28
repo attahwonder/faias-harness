@@ -6,7 +6,8 @@ The chain gives tamper evidence for the file. It does not stop a person who rewr
 final hash that was recorded elsewhere.
 
 Each line is JSON as RFC 8259 defines it. `append` refuses a NaN or an infinity (ValueError). `read_entries` refuses
-a line that holds the token NaN, Infinity or -Infinity, so `verify_chain` fails such a file.
+a line that holds the token NaN, Infinity or -Infinity, or a number such as 1e400 that reads as an infinity, so
+`verify_chain` fails such a file.
 """
 import hashlib
 import json
@@ -59,7 +60,9 @@ def read_entries(path):
     out = []
     for line in Path(path).read_bytes().split(b"\n"):
         if line.strip():
-            out.append(json.loads(line.decode("utf-8"), parse_constant=_not_json))
+            e = json.loads(line.decode("utf-8"), parse_constant=_not_json)
+            json.dumps(e, allow_nan=False)      # 1e400 reads as an infinity, which parse_constant does not see
+            out.append(e)
     return out
 
 

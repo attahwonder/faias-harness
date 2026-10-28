@@ -38,9 +38,10 @@ What it does:
   arguments that are not an object): the time, the era, the protocol version, the tool, the arguments, whether the
   result is an error, the reason for a refusal, and a hash chained to the line before. `verify_ledger` finds an
   edited, removed or reordered line. It does not stop a person who rewrites the whole file.
-- It reads and writes JSON as RFC 8259 defines it. A body that holds NaN, Infinity, -Infinity or a number too large
-  for a float gets HTTP 400 with error -32700, as other text that is not JSON does, and no ledger line. A ledger line
-  that holds such a token does not read, so `verify_ledger` fails the file.
+- It reads and writes JSON as RFC 8259 defines it. A body that holds NaN, Infinity or -Infinity is not JSON. It
+  gets HTTP 400 with error -32700 and no ledger line. So does a number such as 1e400, which reads as an infinity.
+  An integer too large for a float reads, and the handler
+  rejects it. A ledger line that holds such a token or number does not read, so `verify_ledger` fails the file.
 
 What it does not do: resources, prompts, sampling, elicitation, subscriptions or event streams; the deprecated
 HTTP+SSE transport; OAuth. It does not configure any platform: the firm adds the emulator's URL to its staging agent.
@@ -202,6 +203,8 @@ def read_ledger(path, tool=None):
     returns for a target whose tool was wired to this emulator."""
     entries = [json.loads(x, parse_constant=_not_json) for x in Path(path).read_text(encoding="utf-8").splitlines()
                if x.strip()]
+    for e in entries:
+        _canonical(e)       # 1e400 reads as an infinity, which parse_constant does not see: ValueError
     return [e for e in entries if tool is None or e.get("tool") == tool]
 
 

@@ -6,8 +6,9 @@ no tool is called and no tool definition goes to the model.
 Tools on (since 0.6, `tools_enabled: true`): the orchestrator sends the definition of its one tool, `fee_refund`,
 with each model call. When the model asks for tool calls, it takes each one in order: it parses the arguments
 (JSON), then checks C-18 (the kill switch), C-07 (entitlements, entitlements.py) and C-09 (the refund gate,
-gate.py), and only then makes the MCP call (mcp_client.py). Arguments that hold NaN, an infinity or a number too
-large for a float are bad_arguments. It gives the result to the model and calls the model
+gate.py), and only then makes the MCP call (mcp_client.py). Arguments that hold NaN or an infinity are bad_arguments.
+So are arguments with a number such as 1e400, which reads as an infinity. An integer too large for a float goes
+to the gate, which holds it. It gives the result to the model and calls the model
 again, at most MAX_TOOL_ROUNDS times in one turn. Each decision writes one `tool_call` line to the trace, with the
 decision: sent, denied_entitlement, held_for_approval, killed_before_tool_call, bad_arguments, unknown_tool or
 call_failed. A sent call records `mcp_call_seq`, the number of MCP calls that this orchestrator has sent; in an
@@ -206,7 +207,7 @@ class Orchestrator:
             args = None
         if not isinstance(args, dict):
             self.trace.append("tool_call", sid, **base, arguments=None, decision="bad_arguments")
-            return "The tool arguments are not a JSON object. No call was made."
+            return "The tool arguments are not a valid JSON object. No call was made."
         base["arguments"] = args
         if name not in self.tool_names:
             self.trace.append("tool_call", sid, **base, decision="unknown_tool")

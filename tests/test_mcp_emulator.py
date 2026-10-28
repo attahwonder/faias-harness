@@ -352,6 +352,19 @@ class HandlerTests(_Base):
         bad.write_bytes(e.ledger.path.read_bytes().replace(b'"amount_gbp":12.0', b'"amount_gbp":NaN', 1))
         ok, problems = mt.verify_ledger(bad)
         self.assertEqual((ok, problems), (False, ["cannot read the ledger (ValueError)"]))
+        big = self.dir / "big_ledger.jsonl"          # re-check R1: 1e400 reads as an infinity
+        big.write_bytes(e.ledger.path.read_bytes().replace(b'"amount_gbp":12.0', b'"amount_gbp":1e400', 1))
+        self.assertEqual(mt.verify_ledger(big), (False, ["cannot read the ledger (ValueError)"]))
+
+    def test_a_store_fee_that_is_not_a_finite_number_above_zero_is_refused(self):
+        """Re-check R3: a NaN fee would equal every amount, so the handler refuses the store."""
+        def store(fee):
+            return {"accounts": [{"account_ref": "SYN-A-0001", "fees": [{"fee_id": "SYN-F-0001", "amount_gbp": fee}]}]}
+        for fee in (float("nan"), float("inf"), float("-inf"), 0, -12.0, "12.0", True, None):
+            with self.subTest(fee=fee):
+                with self.assertRaises(mt.handlers_mod.StoreError):
+                    mt.handlers_mod.FeeRefund(store(fee))
+        self.assertEqual(mt.handlers_mod.FeeRefund(store(12.0)).fees, {("SYN-A-0001", "SYN-F-0001"): 12.0})
 
 
 class SyntheticBankTests(unittest.TestCase):

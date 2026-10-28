@@ -359,6 +359,9 @@ class AmountTests(_World):
         ok, problems = tr.verify_chain(bad)
         self.assertFalse(ok)
         self.assertEqual(problems, ["cannot read the trace: ValueError"])
+        big = self.dir / "big.jsonl"                 # re-check R1: 1e400 reads as an infinity
+        big.write_bytes((self.dir / "strict.jsonl").read_bytes().replace(b"12.0", b"1e400"))
+        self.assertEqual(tr.verify_chain(big), (False, ["cannot read the trace: ValueError"]))
 
 
 class KillSwitchTests(_World):

@@ -364,6 +364,7 @@ class SelftestRunTests(unittest.TestCase):
         from faias_harness import settings as settings_mod
         from tests.helpers import make_settings, raw_settings
         self.assertEqual(make_settings(selftest_pubkey=None).digest(), make_settings().digest())
+        self.assertNotIn("selftest_pubkey", make_settings().canonical())     # re-check R5: absent when null
         self.assertNotEqual(make_settings(selftest_pubkey="keys/st.pub.pem").digest(), make_settings().digest())
         self.assertEqual(make_settings(selftest_pubkey="keys/st.pub.pem").selftest_pubkey, "keys/st.pub.pem")
         for bad in (3, "", " "):
