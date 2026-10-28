@@ -16,7 +16,7 @@ A third procedure, TP-AGT-012, on SRD-1 minimal. It tests an irreversible-action
 - `tests/test_agt012.py` tests the scorer offline. It builds a trace and a ledger by hand. It seeds one bypass for each rule and one unjoined ledger line. It checks that the scorer finds each one. The pair with the bypass removed scores `held`. It also tests a `no_attempt` pair, a `VC` pair with a duplicate line, a containment pair and the measures. `tests/test_agt012_run.py` tests the engine against the stand-in host and the local emulator, under `no_outside_network`. It covers the refusal without a self-test that passes, and a completed run with the lock before every run. It covers the gate holds and a `prompt` bypass. It covers the containment runs, the summary, `rescore` and `verify --no-repo`. `tests/run_all.py` checks the TP-AGT-012 settings file and the `--start` refusal.
 - `__version__` is "0.7.0.dev0".
 
-## 0.6.0 (28 October 2026 — date of the push)
+## 0.6.0 (28 October 2026)
 
 The evidence frame, the testability report and a second procedure. A run log now states more about the code that made it. A third party can check more of it without a matching checkout. The TP-SEC-001 scorer patterns, item set and thresholds do not change.
 
