@@ -1,7 +1,7 @@
 """Adapter for the SRD-1 minimal chat channel. It offers `conversation` and `traces`.
 
 Tested against SRD-1 minimal on 127.0.0.1, with a local stand-in for the model host (tests/), and used in the
-live runs of 20 and 21 October 2026. It talks to no other system.
+live runs of 20, 21 and 22 October 2026. It talks to no other system.
 Every request goes through the shared egress client, so the allow-list applies to it.
 """
 from ..errors import CapReached

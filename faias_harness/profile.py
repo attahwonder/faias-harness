@@ -4,7 +4,7 @@ A profile never holds a key. A key is an environment variable. The profile may n
 in settings.api_key_env.
 Paths in a profile (firm_values, attestation_file) are relative to the repository root, unless absolute.
 The optional `adapter_options` (version 0.5) holds the settings of a channel adapter; the adapter checks them
-(adapters/registry.py). A key-like field name anywhere in it is refused.
+(adapters/registry.py). A field name from a fixed list of key-like names is refused anywhere in it.
 """
 from dataclasses import dataclass, field
 from pathlib import Path

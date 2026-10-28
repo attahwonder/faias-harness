@@ -11,7 +11,7 @@ An adapter connects the target interface (`faias_harness/target.py`) to a real s
 | `a2a` | `a2a.py` | Agent2Agent (A2A) JSON-RPC, protocol version 1.0 or 0.3 | `conversation` | Added in 0.5. Untested against a platform. Tested against a local stand-in agent of each version. |
 | `json-http` | `json_http.py` | A firm's own chat endpoint, JSON over HTTP, from a request template and a reply path | `conversation` | Added in 0.5. Untested against a platform. Tested against a local stand-in. |
 | `generic-http` | `openai_chat.py` | OpenAI-compatible chat completions | `conversation` | Written in 0.1. In 0.5 it moved onto the egress client and gained a test against a local stand-in. One live run: OpenRouter chat completions endpoint, 22 October 2026, 60 calls to openai/gpt-oss-120b. Channel and engine only: no system prompt; routing lock requested, not observed. |
-| `srd1-http` | `srd1_http.py` | SRD-1 minimal chat channel | `conversation`, `traces` | Added in 0.3.0. Tested against SRD-1 minimal on 127.0.0.1, with a local stand-in for the model host, and used in the live runs of 20 and 21 October 2026. It talks to no other system. |
+| `srd1-http` | `srd1_http.py` | SRD-1 minimal chat channel | `conversation`, `traces` | Added in 0.3.0. Tested against SRD-1 minimal on 127.0.0.1, with a local stand-in for the model host, and used in the live runs of 20, 21 and 22 October 2026. It talks to no other system. |
 | Amazon Lex V2, Dialogflow CX, contact-centre messaging, Agentforce Agent API | none | none | not decided | Not built. |
 | Amazon Bedrock InvokeAgent | none | none | not decided | Not built. It needs AWS request signing. Where AgentCore exposes an A2A endpoint, `a2a` may reach it; that is not tested. |
 
@@ -23,9 +23,9 @@ An external run tests the path through the channel that the adapter reaches. If 
 
 ## Profile fields for a channel adapter
 
-- `endpoint`: the channel's base URL. Plain HTTP goes only to the local machine (the egress client refuses it otherwise).
+- `endpoint`: the channel's base URL. Plain HTTP goes only to the local machine (the egress client refuses it otherwise). The profile validator refuses a query string in it (0.5), because a query can hold a key.
 - `settings.api_key_env`: the name of the environment variable that holds the key or token, where the adapter needs one.
-- `adapter_options`: the adapter's own settings. Each module's docstring lists them, and `validate_options` checks them. A key-like field name anywhere in `adapter_options` is refused by the profile validator.
+- `adapter_options`: the adapter's own settings. Each module's docstring lists them, and `validate_options` checks them. The profile validator refuses a field name from a fixed list of key-like names anywhere in `adapter_options`.
 
 ## What each adapter records for each call
 
