@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.6.0 (unreleased)
+
+- Testability report (`faias_harness/testability.py`, `tests/test_testability.py`). It writes `testability.json` and `testability.md` from a target profile alone, with the preflight result of each of the 45 procedures. It makes no network call. It can sign the JSON file, and its `verify` command checks the signature.
+
 ## 0.5.0 (unreleased)
 
 External targets. The engine can now run TP-SEC-001 against a deployed staging agent, through the channel that the agent's own front end uses, and the harness has a tool emulator for `tool_routing`. Each adapter is tested against a local stand-in. One live run has used an external target, on 22 October 2026. That run sent 60 calls of the spike set to openai/gpt-oss-120b, through `generic-http` and the OpenRouter chat completions endpoint. It tested the channel and the engine only. The adapter sends no system prompt. The harness asked OpenRouter for the routing lock. It cannot see if OpenRouter applied the lock. The other four adapters are untested against the platform they are written for. The harness supports no platform.
