@@ -16,7 +16,7 @@ Profile:
   adapter_options:
     version: "1.0" (default) or "0.3"
     auth_header: the header that carries the key (default Authorization)
-    auth_scheme: Bearer (default) or none
+    auth_scheme: Bearer (default for Authorization) or none (default for any other header)
     poll_ms: the wait between task reads (default 1000)
 
 Wire forms (1.0, with the header A2A-Version: 1.0): method SendMessage; role ROLE_USER; parts {"text": ...};
@@ -111,7 +111,7 @@ class A2ATarget(ChannelTarget):
         o = self.options
         self.version = str(o.get("version", "1.0"))
         self.auth_header = o.get("auth_header", "Authorization")
-        self.auth_scheme = o.get("auth_scheme", "Bearer")
+        self.auth_scheme = o.get("auth_scheme", "Bearer" if self.auth_header.lower() == "authorization" else "none")
         self.poll_s = o.get("poll_ms", 1000) / 1000
         self._sessions = {}
         self._rpc_id = 0

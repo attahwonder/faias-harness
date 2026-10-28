@@ -233,6 +233,15 @@ class A2ATests(unittest.TestCase):
         self.assertEqual(reply, "I will not do that.")
         self.assertEqual((t.last_exchange["blocked"], t.last_exchange["block_type"]), (True, "a2a_rejected"))
 
+    def test_auth_scheme_defaults_to_bearer_for_authorization_and_none_for_another_header(self):
+        url = "http://127.0.0.1:9"
+        for header, expected in ((None, {"Authorization": f"Bearer {FAKE_KEY_VALUE}"}),
+                                 ("X-Api-Key", {"X-Api-Key": FAKE_KEY_VALUE})):
+            with self.subTest(header=header):
+                options = {"version": "0.3"} if header is None else {"version": "0.3", "auth_header": header}
+                t = A2ATarget(url, egress_for(url), options=options, api_key_env=KEY_ENV, env=ENV)
+                self.assertEqual(t._headers(), expected)
+
     def test_helpers(self):
         self.assertEqual(norm_state("TASK_STATE_INPUT_REQUIRED"), "input-required")
         self.assertEqual(norm_state("completed"), "completed")
