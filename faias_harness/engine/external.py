@@ -251,6 +251,7 @@ def execute(settings, profile, *, run_dir, sign_key, confirmation, probes=None, 
     log = runlog.RunLog(log_path)
     try:
         log.write(header)                   # the lock is on disk before the first item is sent
+        runlog.wait_past_lock(header, clock_ns)
         runner = _ExternalRunner(log, clock_ns, budget, settings)
         k, items = settings.runs_per_item, run_items(settings, repo=repo)
         if engine == "inspect":

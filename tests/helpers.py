@@ -6,9 +6,11 @@ that behaves like the model host in the few ways that the tests need.
 import contextlib
 import copy
 import ipaddress
+import itertools
 import json
 import socket
 import threading
+import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from unittest import mock
 
@@ -40,6 +42,13 @@ def make_settings(**changes):
     problems = settings_mod.validate(raw)
     assert not problems, problems
     return settings_mod.from_raw(raw)
+
+
+def lock_time_twice_clock():
+    """A clock that gives its first value twice, then 1 ns more at each call. The engine takes the lock time from
+    the first value. A clock that moves in steps (Python 3.11 and 3.12 on Windows) can give that time again."""
+    start, calls = time.time_ns(), itertools.count()
+    return lambda: start + max(0, next(calls) - 1)
 
 
 def _is_local(host):

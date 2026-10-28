@@ -215,6 +215,17 @@ def lock_header(header, clock_ns=None):
     return header
 
 
+def wait_past_lock(header, clock_ns, limit_s=0.1):
+    """Wait until `clock_ns` passes the lock time, for at most `limit_s` seconds. Call this before the first item.
+
+    `check_log` needs each run time to be later than the lock time. On Python 3.11 and 3.12 on Windows the clock
+    moves in steps of a few milliseconds, so the first run can get the lock time again.
+    """
+    deadline = time.monotonic() + limit_s
+    while clock_ns() <= header["lock"]["time_ns"] and time.monotonic() < deadline:
+        time.sleep(0.001)
+
+
 class RunLog:
     """Appends records to the log file. The header goes first and is flushed to disk before anything else."""
 

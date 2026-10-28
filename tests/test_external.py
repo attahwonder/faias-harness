@@ -18,7 +18,7 @@ from faias_harness import preflight
 from faias_harness.engine import external, runlog, sec001
 from faias_harness.profile import load_profile
 from faias_harness.settings import external_from_raw, validate_external
-from tests.helpers import FAKE_KEY_VALUE, no_outside_network
+from tests.helpers import FAKE_KEY_VALUE, lock_time_twice_clock, no_outside_network
 from tests.standins import StandInA2A, StandInDirectLine, StandInJsonApp, StandInResponses
 
 REPO = Path(__file__).resolve().parents[1]
@@ -122,6 +122,15 @@ class ExternalRunTests(unittest.TestCase):
         self.assertEqual(recs[-1]["calls"], 10)
         self.assertFalse(recs[-1]["measures_complete"])
         self.assertTrue(any(r["type"] == "run_stopped" and r["reason"] == "stopped_at_cap" for r in recs))
+        self.assertTrue(runlog.verify_log(res.log_path, res.sig_path, self.pub, repo=REPO)[0])
+
+    def test_the_first_run_is_later_than_the_lock_when_the_clock_repeats(self):
+        settings, _ = ext_settings(cap_usd=0.105)
+        with StandInDirectLine(respond, secret=FAKE_KEY_VALUE) as dl:
+            res = self.run_ext(self.dl_profile(dl), settings, clock_ns=lock_time_twice_clock())
+        recs = runlog.read_log(res.log_path)
+        runs = [r for r in recs if r["type"] == "run"]
+        self.assertLess(recs[0]["lock"]["time_ns"], runs[0]["t_ns"])
         self.assertTrue(runlog.verify_log(res.log_path, res.sig_path, self.pub, repo=REPO)[0])
 
     def test_channel_errors_in_a_row_stop_the_run(self):

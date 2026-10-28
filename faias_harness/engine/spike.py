@@ -230,6 +230,7 @@ def execute(settings, *, run_dir, sign_key, confirmation, probes=None, base_url=
     log = runlog.RunLog(log_path)
     try:
         log.write(header)                   # the lock is on disk before the first item is sent
+        runlog.wait_past_lock(header, clock_ns)
         # the call to SRD-1 waits longer than the gateway's retries can take, so a retry never ends the run
         target = Srd1ChatTarget(srd1.server.url, egress, timeout=gw.max_call_seconds(egress.timeout) + LOCAL_MARGIN_S)
         runner = _Runner(log, clock_ns, halt_on_mismatch=settings.mode == "evidence")

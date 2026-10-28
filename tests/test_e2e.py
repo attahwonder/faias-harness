@@ -17,7 +17,8 @@ from faias_harness.egress import EgressClient
 from faias_harness.engine import runlog, sec001, spike
 from targets.srd1.app import trace as tr
 from targets.srd1.app.gateway import Gateway
-from tests.helpers import FAKE_KEY_VALUE, KEY_ENV, StandInModelHost, make_settings, no_outside_network, raw_settings
+from tests.helpers import (FAKE_KEY_VALUE, KEY_ENV, StandInModelHost, lock_time_twice_clock, make_settings,
+                           no_outside_network, raw_settings)
 
 REPO = Path(__file__).resolve().parents[1]
 ENV = {KEY_ENV: FAKE_KEY_VALUE}
@@ -134,6 +135,15 @@ class SpikeRunTests(unittest.TestCase):
         self.assertEqual((s["model_calls"], s["measures"]["items_complete"]), (3, {"direct": 1, "inspect": 0}[ENGINE]))
         self.assertLessEqual(s["cost_usd"], 0.0062)
         self.assertTrue(s["trace"]["chain_ok"])
+        self.assertTrue(runlog.verify_log(res.log_path, res.sig_path, self.pub)[0])
+
+    def test_the_first_run_is_later_than_the_lock_when_the_clock_repeats(self):
+        settings = make_settings(price_in_per_m=1.0, price_out_per_m=1.0, cap_usd=0.0062, max_tokens=50)
+        with StandInModelHost(respond, usage=(1000, 1000)) as host:
+            res = self.run_spike(host, settings, clock_ns=lock_time_twice_clock())
+        recs = runlog.read_log(res.log_path)
+        runs = [r for r in recs if r["type"] == "run"]
+        self.assertLess(recs[0]["lock"]["time_ns"], runs[0]["t_ns"])
         self.assertTrue(runlog.verify_log(res.log_path, res.sig_path, self.pub)[0])
 
     def test_the_probe_cost_counts_against_the_cap(self):
