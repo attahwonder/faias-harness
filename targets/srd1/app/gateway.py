@@ -27,7 +27,11 @@ OPENROUTER_BASE = "https://openrouter.ai/api/v1"
 
 
 class CapMeter:
-    """Counts cost from token use. `check` raises CapReached when the next call could pass the cap."""
+    """Counts cost from token use. `check` raises CapReached when the next call could pass the cap.
+
+    A host can report more completion tokens than `max_tokens` (in a live run of 20 October 2026: 1846 against a
+    limit of 1500). So the worst case uses the larger of `max_tokens` and the largest completion-token count seen so
+    far, and `calls_over_max_tokens` counts the calls that reported more than `max_tokens`."""
 
     def __init__(self, cap_usd, price_in_per_m, price_out_per_m, max_tokens):
         self.cap_usd = float(cap_usd)
@@ -36,13 +40,15 @@ class CapMeter:
         self.max_tokens = int(max_tokens)
         self.spent_usd = 0.0
         self.calls = 0
+        self.max_completion_seen = 0
+        self.calls_over_max_tokens = 0
 
     def cost(self, prompt_tokens, completion_tokens):
         return (prompt_tokens * self.price_in + completion_tokens * self.price_out) / 1_000_000
 
     def worst_case(self, est_prompt_tokens):
-        """The cost of the next call if it uses all its output tokens."""
-        return self.cost(est_prompt_tokens, self.max_tokens)
+        """The cost of the next call if it uses all its output tokens, or as many as the most that a call used."""
+        return self.cost(est_prompt_tokens, max(self.max_tokens, self.max_completion_seen))
 
     def check(self, est_prompt_tokens):
         worst = self.worst_case(est_prompt_tokens)
@@ -60,6 +66,9 @@ class CapMeter:
         c = self.cost(prompt_tokens, completion_tokens)
         self.spent_usd += c
         self.calls += 1
+        self.max_completion_seen = max(self.max_completion_seen, completion_tokens)
+        if completion_tokens > self.max_tokens:
+            self.calls_over_max_tokens += 1
         return c
 
 
