@@ -46,7 +46,7 @@ def make_settings(**changes):
 
 def lock_time_twice_clock():
     """A clock that gives its first value twice, then 1 ns more at each call. The engine takes the lock time from
-    the first value. A clock that moves in steps (Python 3.11 and 3.12 on Windows) can give that time again."""
+    the first value. A clock that moves in steps (Python before 3.13 on Windows) can give that time again."""
     start, calls = time.time_ns(), itertools.count()
     return lambda: start + max(0, next(calls) - 1)
 
