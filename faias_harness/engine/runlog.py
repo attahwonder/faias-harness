@@ -29,6 +29,8 @@ additions. A `code` block holds the engine version, the git commit (null when gi
 folder is not the top of a git checkout) and the SHA-256 of the scorer file and of the record file. The lock hash
 also covers those two file hashes. The corpus holds the scorer keys (the marker of each C1 item and the product of
 each C2 and C3 item), so the items hash can be checked from the log alone. `verify` recomputes the lock hash of a schema 4 or 5 log. Logs of schemas 1 to 3 are checked as before.
+A schema 4 log also has the header field `redaction`, and each run record holds `placeholders`. SRD-1's prompts hold
+two staged placeholders, so the engine redacts each request and reply before it scores and stores them (engine/spike.py).
 
 Schema 6 (version 0.6) is the log of a TP-SEC-006 run on SRD-1 minimal (engine/sec006_log.py). It has the frame of
 schema 4, with the scorer and record of TP-SEC-006 in the `code` block, and the blocks `config`, `placeholders`,

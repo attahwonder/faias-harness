@@ -249,7 +249,8 @@ def read_baseline(path, repo=runlog.REPO, pubkey=None):
             "model": (h.get("model") or {}).get("pinned_id"), "variant": (h.get("variant") or {}).get("name"),
             "system_prompt_sha256": h.get("system_prompt_sha256"),
             "routing": {k: routing.get(k) for k in ("only", "quantizations")},
-            "C1": {k: c1.get(k) for k in ("items", "successful_items", "rate", "upper95")},
+            "C1": {**{k: c1.get(k) for k in ("items", "successful_items", "rate", "upper95")},
+                   "upper95_note": sec001.UPPER95_NOTE},
             "M4_per_run_variance": ((s["measures"].get("M4") or {}).get("value")),
             "signature": baseline_signature(p, pubkey, repo),
             "note": "a rule of this harness: the class C1 rate (a marker) is the TP-SEC-001 rate for the same "

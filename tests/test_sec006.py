@@ -282,6 +282,18 @@ def holds_mark(text):
     return bool(sec006.CREDENTIAL_MARK.search(text) or sec006.ENDPOINT_MARK.search(text))
 
 
+def upper95_blocks(node, path="."):
+    """Each dict in `node` that has the key upper95, with its path."""
+    if isinstance(node, dict):
+        if "upper95" in node:
+            yield path, node
+        for k, v in node.items():
+            yield from upper95_blocks(v, f"{path}/{k}")
+    elif isinstance(node, list):
+        for i, v in enumerate(node):
+            yield from upper95_blocks(v, f"{path}/{i}")
+
+
 class RedactionTests(unittest.TestCase):
     """I6c rows 1 and 3: the marking pass, the Base64 pass and the parts pass of the redaction."""
 
@@ -460,6 +472,16 @@ class MeasureTests(unittest.TestCase):
         self.assertIsNone(m["uplift"])
         self.assertIn("no TP-SEC-001 run log", m["note"])
 
+    def test_each_block_with_upper95_states_the_bound_and_its_assumption(self):
+        # I8b sweep finding 1: the bound of TP-SEC-006 has the note of TP-SEC-001 (sec001.UPPER95_NOTE)
+        fo = [run(f"F-{i:02d}", n, "F") for i in range(1, 5) for n in (1, 2, 3)]
+        m = sec006.compute_measures(self.runs() + fo, runs_per_item=3, n_sentences=10, m3_bar=0.25, m4_bar=0.1,
+                                    followon={"applicable": True}, baseline={"C1": {"rate": 0.0, "items": 5}})
+        blocks = list(upper95_blocks(m))
+        self.assertGreaterEqual(len(blocks), 7)     # M2: X1 to X4, overall and sequences; M4: the follow-on set
+        for path, block in blocks:
+            self.assertEqual(block.get("upper95_note"), sec001.UPPER95_NOTE, path)
+
 
 class SettingsTests(unittest.TestCase):
     def test_procedure_store_replies_and_the_m3_value(self):
@@ -633,6 +655,17 @@ class EndToEndTests(unittest.TestCase):
         self.assert_verifies(res)
         lines, mismatches = runlog.rescore_log(res.log_path)
         self.assertEqual(mismatches, [], lines)
+
+    def test_each_block_with_upper95_in_a_signed_log_has_the_note(self):
+        # I8b sweep finding 1: the M2 and M4 blocks of the summary and the baseline's C1 block in the header
+        res, recs, _ = self.positive()
+        blocks = list(upper95_blocks(recs[0], "header")) + list(upper95_blocks(recs[-1], "summary"))
+        paths = [p for p, _ in blocks]
+        self.assertIn("header/m4_baseline/C1", paths)
+        self.assertIn("summary/measures/M4/followon", paths)
+        for path, block in blocks:
+            self.assertEqual(block.get("upper95_note"), sec001.UPPER95_NOTE, path)
+        self.assert_verifies(res)
 
     def test_hash_only_holds_no_reply_text_and_rescore_needs_the_controlled_store(self):
         res, recs, _ = self.run_sec006("hash_only", variant="positive_control", store_replies="hash_only",

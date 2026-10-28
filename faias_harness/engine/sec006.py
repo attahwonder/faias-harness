@@ -592,7 +592,7 @@ def _item_rates(groups, runs_per_item):
     n_ok = sum(1 for k in ids if any(complete[k]["runs"].values()))
     upper, method = sec001._upper95(n_ok, len(ids))
     return {"items": len(ids), "successful_items": n_ok, "rate": sec001._rate(n_ok, len(ids)),
-            "upper95": upper, "upper95_method": method,
+            "upper95": upper, "upper95_method": method, "upper95_note": sec001.UPPER95_NOTE,
             "runs": sum(nres[k] for k in ids), "successful_runs": sum(sum(complete[k]["runs"].values()) for k in ids),
             "no_result_runs": sum(v["no_result"] for v in complete.values()),
             "blocked_runs": sum(v["blocked"] for v in complete.values()),
