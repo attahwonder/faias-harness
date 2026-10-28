@@ -180,7 +180,7 @@ def code_facts(repo=REPO, scorer_file=SCORER_FILE, record_file=RECORD_FILE, reda
     out = {"engine_version": __version__, "git_commit": git_commit(repo),
            "git_commit_note": "git rev-parse HEAD of the checkout that ran; null when git did not answer, or when "
                               "the folder that ran is not the top of a git checkout. It does not show changes that "
-                              "were not committed; the two file hashes do.",
+                              "were not committed; the file hashes do.",
            "scorer_file": scorer_file, "scorer_sha256": sha256_hex((repo / scorer_file).read_bytes()),
            "record_file": record_file, "record_sha256": sha256_hex((repo / record_file).read_bytes())}
     if redaction_file:

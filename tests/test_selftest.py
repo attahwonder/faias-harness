@@ -59,6 +59,8 @@ class GuardTests(unittest.TestCase):
         server.bind(("127.0.0.1", 0))
         server.listen(1)
         self.addCleanup(server.close)
+        # In a source archive (no .git) git cannot answer for this folder; the guard must still allow the call.
+        checkout = runlog.git_commit(REPO) is not None
         with Guard() as g:
             s = socket.socket()
             self.addCleanup(s.close)
@@ -74,8 +76,9 @@ class GuardTests(unittest.TestCase):
             ok = subprocess.run(["git", "-C", str(REPO), "rev-parse", "HEAD"], capture_output=True, text=True)
             with self.assertRaises(GuardTrip):
                 subprocess.run(["git", "push"], env={"SELFTEST_ONLY": "not recorded"}, capture_output=True)
-        self.assertEqual(ok.returncode, 0)
-        self.assertRegex(ok.stdout.strip(), r"^[0-9a-f]{40}$")
+        if checkout:
+            self.assertEqual(ok.returncode, 0)
+            self.assertRegex(ok.stdout.strip(), r"^[0-9a-f]{40}$")
         self.assertEqual(g.trips, [
             {"kind": "connect", "host": "203.0.113.1", "port": 443},
             {"kind": "getaddrinfo", "host": "x.harness-selftest.invalid", "port": 443},
@@ -312,7 +315,7 @@ class SelftestRunTests(unittest.TestCase):
             self.assertIn("Isolation self-test: none found", out)
             rc, out = call(preflight.main, args + ["--selftest-log", str(self.log.parent)])
         line = next(x for x in out.splitlines() if x.startswith("Isolation self-test:"))
-        self.assertEqual(line, f"Isolation self-test: PASS at {self.header['lock']['time']}, commit "
+        self.assertEqual(line, f"Isolation self-test: PASS (key not pinned) at {self.header['lock']['time']}, commit "
                                f"{self.header['code']['git_commit'] or 'not recorded'}, code manifest matches: yes")
         with mock.patch.dict("os.environ", {"FAIAS_HARNESS_RUNS": str(self.dir)}):
             status = selftest.current()
@@ -330,6 +333,43 @@ class SelftestRunTests(unittest.TestCase):
         self.assertEqual(selftest.gate_problems("TP-AGT-012", status), [])
         self.assertTrue(selftest.gate_problems("TP-AGT-012", None))
         self.assertTrue(any("does not match" in p for p in selftest.gate_problems("TP-DAT-009", changed)))
+
+    def test_the_pinned_key_and_the_evidence_gate(self):
+        """CHECK_060_P5 F4: with the key from the log's own .sig file, the check shows integrity, not who signed."""
+        unpinned = selftest.current(selftest_log=self.log)
+        pinned = selftest.current(selftest_log=self.log, pubkey=self.pub)
+        _, other = runlog.make_key(self.dir / "other_keys", repo=REPO)
+        wrong = selftest.current(selftest_log=self.log, pubkey=other)
+        self.assertEqual([(s["verified"], s["pinned"]) for s in (unpinned, pinned, wrong)],
+                         [(True, False), (True, True), (False, True)])
+        self.assertIn("Isolation self-test: PASS (key not pinned) at ", selftest.preflight_line(unpinned))
+        self.assertNotIn("not pinned", selftest.preflight_line(pinned))
+        for proc in selftest.GATED:
+            with self.subTest(procedure=proc):
+                self.assertTrue(any("pinned public key" in p for p in selftest.gate_problems(proc, unpinned, "evidence")))
+                self.assertEqual(selftest.gate_problems(proc, unpinned, "explore"), [])
+                self.assertEqual(selftest.gate_problems(proc, pinned, "evidence"), [])
+                self.assertTrue(selftest.gate_problems(proc, wrong, "evidence"))
+        self.assertEqual(selftest.gate_problems("TP-SEC-001", unpinned, "evidence"), [])
+        args = ["--profile", "targets/srd1/profile.yaml", "--settings", "targets/srd1/settings.yaml",
+                "--selftest-log", str(self.log.parent), "--selftest-pubkey", str(self.pub)]
+        rc, out = call(preflight.main, args)
+        self.assertEqual(rc, 0, out)
+        line = next(x for x in out.splitlines() if x.startswith("Isolation self-test:"))
+        self.assertEqual(line, f"Isolation self-test: PASS at {self.header['lock']['time']}, commit "
+                               f"{self.header['code']['git_commit'] or 'not recorded'}, code manifest matches: yes")
+
+    def test_the_setting_selftest_pubkey(self):
+        """F4: the settings field; a file without it keeps its settings hash."""
+        from faias_harness import settings as settings_mod
+        from tests.helpers import make_settings, raw_settings
+        self.assertEqual(make_settings(selftest_pubkey=None).digest(), make_settings().digest())
+        self.assertNotEqual(make_settings(selftest_pubkey="keys/st.pub.pem").digest(), make_settings().digest())
+        self.assertEqual(make_settings(selftest_pubkey="keys/st.pub.pem").selftest_pubkey, "keys/st.pub.pem")
+        for bad in (3, "", " "):
+            with self.subTest(value=bad):
+                self.assertTrue(any("selftest_pubkey must be" in p
+                                    for p in settings_mod.validate(raw_settings(selftest_pubkey=bad))))
 
 
 class SeededFaultTests(unittest.TestCase):

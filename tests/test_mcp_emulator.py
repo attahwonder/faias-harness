@@ -311,6 +311,48 @@ class HandlerTests(_Base):
         with self.assertRaises(ValueError):
             mt.ToolEmulator(mt.load_tools(STORE_TOOLS_FILE), self.dir / "missing.jsonl", store=self.dir / "nope.yaml")
 
+    def raw_call(self, e, amount_text, mid=1):
+        """A tools/call whose amount is the JSON text given, as a client may send it (CHECK_060_P5 F1 and F2)."""
+        params = {"name": "fee_refund", "arguments": {"account_ref": "SYN-A-0001", "fee_id": "SYN-F-0001",
+                                                      "amount_gbp": "AMOUNT", "reason": "r"}, "_meta": modern_meta()}
+        body = json.dumps({"jsonrpc": "2.0", "id": mid, "method": "tools/call", "params": params})
+        return self.http.post(e.url, content=body.replace('"AMOUNT"', amount_text).encode("utf-8"), headers={
+            "Content-Type": "application/json", "Accept": "application/json, text/event-stream",
+            "MCP-Protocol-Version": "2026-07-28", "Mcp-Method": "tools/call", "Mcp-Name": "fee_refund"})
+
+    def test_nan_infinity_and_a_number_out_of_range_are_not_json_and_not_recorded(self):
+        e = self.store_emu()
+        for text in ("NaN", "Infinity", "-Infinity", "1e400"):
+            with self.subTest(amount=text):
+                r = self.raw_call(e, text)
+                self.assertEqual((r.status_code, r.json()["error"]["code"]), (400, mt.PARSE_ERROR))
+        self.assertEqual(mt.read_ledger(e.ledger.path), [])
+        out = []
+        for i, text in enumerate(("-12.0", "0", "1" + "0" * 400, "12.0"), 1):
+            out.append(self.raw_call(e, text, mid=i).json()["result"]["structuredContent"])
+        self.assertEqual([(x["status"], x.get("reason")) for x in out],
+                         [("rejected", "amount_gbp must be above zero"), ("rejected", "amount_gbp must be above zero"),
+                          ("rejected", "the amount differs from the fee"), ("recorded", None)])
+        self.assertEqual([x["status"] for x in mt.read_ledger(e.ledger.path)], ["rejected"] * 3 + ["recorded"])
+        self.assertTrue(mt.verify_ledger(e.ledger.path)[0])
+        handler = mt.handlers_mod.FeeRefund(mt.handlers_mod.load_store(STORE_FILE)[0])
+        for v in (float("nan"), float("inf"), float("-inf")):
+            self.assertEqual(handler.call({"account_ref": "SYN-A-0001", "fee_id": "SYN-F-0001", "amount_gbp": v}),
+                             ({"status": "rejected", "reason": "amount_gbp must be a number"}, True))
+
+    def test_the_ledger_writes_and_reads_strict_json_only(self):
+        e = self.store_emu()
+        self.call(e, {"account_ref": "SYN-A-0001", "fee_id": "SYN-F-0001", "amount_gbp": 12.0})
+        with self.assertRaises(ValueError):
+            e.ledger.append({"tool": "fee_refund", "arguments": {"amount_gbp": float("nan")}})
+        self.call(e, {"account_ref": "SYN-A-0001", "fee_id": "SYN-F-0001", "amount_gbp": 12.0}, mid=2)
+        self.assertEqual([x["seq"] for x in mt.read_ledger(e.ledger.path)], [1, 2])   # no gap after the refused line
+        self.assertTrue(mt.verify_ledger(e.ledger.path)[0])
+        bad = self.dir / "nan_ledger.jsonl"
+        bad.write_bytes(e.ledger.path.read_bytes().replace(b'"amount_gbp":12.0', b'"amount_gbp":NaN', 1))
+        ok, problems = mt.verify_ledger(bad)
+        self.assertEqual((ok, problems), (False, ["cannot read the ledger (ValueError)"]))
+
 
 class SyntheticBankTests(unittest.TestCase):
     """T10: SRD-1's synthetic customers, accounts and fees."""

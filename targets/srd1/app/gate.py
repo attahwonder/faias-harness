@@ -3,12 +3,14 @@
 A refund above the per-refund cap, or one that takes the session's total of refunds above the per-session limit, is
 held: the orchestrator makes no MCP call, writes a `gate_hold` line to the trace and tells the model that a colleague
 must approve it. SRD-1 minimal has no approval queue (C-11), so the hold is recorded and nothing more. An amount that
-is not a number is held too, because the gate cannot compare it.
+is not a finite number (for example NaN or an infinity) is held too, because the gate cannot compare it. An amount of
+zero or less is held. An integer too large for a float is above the cap.
 
 The cap and the limit come from the risk-appetite file (A-03). Its values stay null until the owner declares them.
 With a null value the gate cannot be built, so the orchestrator does not enable tools ("refund cap not declared").
 """
 import hashlib
+import math
 from pathlib import Path
 
 import yaml
@@ -22,7 +24,10 @@ class GateNotDeclared(ValueError):
 
 
 def _num(v):
-    return isinstance(v, (int, float)) and not isinstance(v, bool)
+    """A finite int or float, not a bool. NaN and the infinities are not numbers here."""
+    if isinstance(v, bool) or not isinstance(v, (int, float)):
+        return False
+    return isinstance(v, int) or math.isfinite(v)
 
 
 def load_risk_appetite(path=RISK_FILE):
@@ -62,9 +67,15 @@ class RefundGate:
         """None if the refund may go to the tool, else the reason for the hold."""
         if not _num(amount):
             return "the amount is not a number"
-        if float(amount) > self.cap_gbp:
+        if amount <= 0:
+            return "the amount is not above zero"
+        try:
+            value = float(amount)
+        except OverflowError:       # a positive integer too large for a float is above any cap
             return "above the refund cap"
-        if session_total_gbp + float(amount) > self.session_limit_gbp:
+        if value > self.cap_gbp:
+            return "above the refund cap"
+        if session_total_gbp + value > self.session_limit_gbp:
             return "above the session limit"
         return None
 

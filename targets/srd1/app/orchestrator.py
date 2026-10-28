@@ -6,7 +6,8 @@ no tool is called and no tool definition goes to the model.
 Tools on (since 0.6, `tools_enabled: true`): the orchestrator sends the definition of its one tool, `fee_refund`,
 with each model call. When the model asks for tool calls, it takes each one in order: it parses the arguments
 (JSON), then checks C-18 (the kill switch), C-07 (entitlements, entitlements.py) and C-09 (the refund gate,
-gate.py), and only then makes the MCP call (mcp_client.py). It gives the result to the model and calls the model
+gate.py), and only then makes the MCP call (mcp_client.py). Arguments that hold NaN, an infinity or a number too
+large for a float are bad_arguments. It gives the result to the model and calls the model
 again, at most MAX_TOOL_ROUNDS times in one turn. Each decision writes one `tool_call` line to the trace, with the
 decision: sent, denied_entitlement, held_for_approval, killed_before_tool_call, bad_arguments, unknown_tool or
 call_failed. A sent call records `mcp_call_seq`, the number of MCP calls that this orchestrator has sent; in an
@@ -36,6 +37,11 @@ DENIED_TEXT = "Refused: the account is not one of the customer's accounts. No ca
 
 def load_system_prompt(path=PROMPT_FILE):
     return Path(path).read_text(encoding="utf-8")
+
+
+def _not_json(token):
+    """parse_constant for json.loads: NaN, Infinity and -Infinity are not JSON (RFC 8259 has no such number)."""
+    raise ValueError(f"{token} is not a JSON number")
 
 
 class TooManyTurns(Exception):
@@ -194,8 +200,9 @@ class Orchestrator:
         base = {"tool": name if isinstance(name, str) else None, "round": rnd,
                 "tool_call_id": tc.get("id") if isinstance(tc, dict) else None}
         try:
-            args = json.loads(raw) if isinstance(raw, str) else raw
-        except ValueError:
+            args = json.loads(raw, parse_constant=_not_json) if isinstance(raw, str) else raw
+            json.dumps(args, allow_nan=False)   # 1e400 reads as an infinity, and a dict can hold NaN. Both are bad.
+        except (TypeError, ValueError):
             args = None
         if not isinstance(args, dict):
             self.trace.append("tool_call", sid, **base, arguments=None, decision="bad_arguments")
@@ -214,7 +221,11 @@ class Orchestrator:
             self.trace.append("tool_call", sid, **base, decision="denied_entitlement")
             return DENIED_TEXT
         amount = args.get("amount_gbp")
-        hold = self.gate.check(s["refund_total_gbp"], amount)
+        try:
+            hold = self.gate.check(s["refund_total_gbp"], amount)
+        except (TypeError, ValueError, OverflowError):     # the gate cannot compare the amount, so no call
+            self.trace.append("tool_call", sid, **base, decision="bad_arguments")
+            return "The tool arguments are not valid. No call was made."
         if hold:                    # C-09: in the orchestrator, not the prompt
             self.trace.append("gate_hold", sid, tool=name, amount_gbp=amount, cap_gbp=self.gate.cap_gbp,
                               session_limit_gbp=self.gate.session_limit_gbp,

@@ -38,6 +38,9 @@ What it does:
   arguments that are not an object): the time, the era, the protocol version, the tool, the arguments, whether the
   result is an error, the reason for a refusal, and a hash chained to the line before. `verify_ledger` finds an
   edited, removed or reordered line. It does not stop a person who rewrites the whole file.
+- It reads and writes JSON as RFC 8259 defines it. A body that holds NaN, Infinity, -Infinity or a number too large
+  for a float gets HTTP 400 with error -32700, as other text that is not JSON does, and no ledger line. A ledger line
+  that holds such a token does not read, so `verify_ledger` fails the file.
 
 What it does not do: resources, prompts, sampling, elicitation, subscriptions or event streams; the deprecated
 HTTP+SSE transport; OAuth. It does not configure any platform: the firm adds the emulator's URL to its staging agent.
@@ -154,7 +157,13 @@ def load_tools(path):
 # ---------- ledger ----------
 
 def _canonical(obj):
-    return json.dumps(obj, sort_keys=True, ensure_ascii=False, separators=(",", ":"))
+    """JSON as RFC 8259 defines it: a NaN or an infinity raises ValueError."""
+    return json.dumps(obj, sort_keys=True, ensure_ascii=False, separators=(",", ":"), allow_nan=False)
+
+
+def _not_json(token):
+    """parse_constant for json.loads: NaN, Infinity and -Infinity are not JSON."""
+    raise ValueError(f"{token} is not a JSON number")
 
 
 def _iso(ns):
@@ -178,12 +187,12 @@ class Ledger:
 
     def append(self, entry):
         with self._lock:
-            self.seq += 1
             ns = time.time_ns()
-            line = {"seq": self.seq, "t_ns": ns, "time": _iso(ns), **entry, "prev": self.head}
+            line = {"seq": self.seq + 1, "t_ns": ns, "time": _iso(ns), **entry, "prev": self.head}
             line["hash"] = hashlib.sha256((self.head + _canonical(line)).encode("utf-8")).hexdigest()
-            with open(self.path, "ab") as f:
+            with open(self.path, "ab") as f:      # a refused line (ValueError above) leaves the chain as it was
                 f.write(_canonical(line).encode("utf-8") + b"\n")
+            self.seq += 1
             self.head = line["hash"]
             return line
 
@@ -191,7 +200,8 @@ class Ledger:
 def read_ledger(path, tool=None):
     """The ledger entries, optionally for one tool only. This is what `read_tool_ledger` of the target interface
     returns for a target whose tool was wired to this emulator."""
-    entries = [json.loads(x) for x in Path(path).read_text(encoding="utf-8").splitlines() if x.strip()]
+    entries = [json.loads(x, parse_constant=_not_json) for x in Path(path).read_text(encoding="utf-8").splitlines()
+               if x.strip()]
     return [e for e in entries if tool is None or e.get("tool") == tool]
 
 
@@ -333,7 +343,8 @@ class ToolEmulator:
                     return
                 raw = self.rfile.read(n)
                 try:
-                    msg = json.loads(raw.decode("utf-8"))
+                    msg = json.loads(raw.decode("utf-8"), parse_constant=_not_json)
+                    _canonical(msg)         # 1e400 reads as an infinity: refused as NaN is
                 except (ValueError, UnicodeDecodeError):
                     self._send(400, {"jsonrpc": "2.0", "id": None, "error": {"code": PARSE_ERROR, "message": "parse error"}})
                     return

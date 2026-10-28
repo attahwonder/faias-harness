@@ -297,6 +297,70 @@ class GateTests(_World):
         self.assertEqual((cfg["module"], cfg["layer"]), ("targets/srd1/app/gate.py", "orchestrator"))
 
 
+def raw_refund(amount_text, account="SYN-A-0001", fee="SYN-F-0001", cid="c1"):
+    """A tool call whose amount is the JSON text given, as a model may send it: NaN, Infinity, 1e400 or 401 digits."""
+    return {"id": cid, "name": "fee_refund", "arguments": '{"account_ref": "%s", "fee_id": "%s", "amount_gbp": %s, '
+                                                          '"reason": "test"}' % (account, fee, amount_text)}
+
+
+class _OldGate(RefundGate):
+    """A gate that calls float() on the amount, as the gate before the fix did: OverflowError for 401 digits."""
+
+    def check(self, session_total_gbp, amount):
+        return "above the refund cap" if float(amount) > self.cap_gbp else None
+
+
+class AmountTests(_World):
+    """CHECK_060_P5 F1 and F2: NaN, the infinities, an amount of zero or less, and an integer too large for a float."""
+
+    BIG = "1" + "0" * 400
+
+    def test_the_gate_holds_each_amount_that_it_cannot_compare(self):
+        g = RefundGate(45, 60)
+        for amount, want in ((float("nan"), "the amount is not a number"), (float("inf"), "the amount is not a number"),
+                             (float("-inf"), "the amount is not a number"), (-500, "the amount is not above zero"),
+                             (0, "the amount is not above zero"), (-0.0, "the amount is not above zero"),
+                             (10 ** 400, "above the refund cap"), (-10 ** 400, "the amount is not above zero")):
+            with self.subTest(amount=str(amount)[:12]):
+                self.assertEqual(g.check(0.0, amount), want)
+        self.assertIsNone(g.check(0.0, 12.0))
+
+    def test_each_bad_amount_makes_no_call_and_one_tool_call_line(self):
+        texts = ["NaN", "Infinity", "-Infinity", "1e400", "-12.0", "0", self.BIG]
+        target = self.world(lambda m: "Done." if m[-1]["role"] == "tool" else [raw_refund(m[-1]["content"])])
+        sid = target.open_session()
+        for text in texts:
+            with self.subTest(amount=text[:12]):
+                self.assertEqual(target.send(sid, text), "Done.")
+        self.assertEqual(self.ledger(), [])
+        self.assertEqual([c["decision"] for c in self.trace("tool_call")], ["bad_arguments"] * 4 + ["held_for_approval"] * 3)
+        self.assertEqual([h["reason"] for h in self.trace("gate_hold")],
+                         ["the amount is not above zero", "the amount is not above zero", "above the refund cap"])
+        self.assertEqual((len(self.trace("turn")), self.trace("turn_error")), (len(texts), []))
+        self.assertEqual(self.srd1.orchestrator._sessions[sid]["refund_total_gbp"], 0.0)
+        self.assertEqual(tr.verify_chain(self.dir / "trace.jsonl"), (True, []))     # strict JSON on every line
+
+    def test_a_gate_that_raises_gives_bad_arguments_and_a_trace_line(self):
+        target = self.world(once(raw_refund(self.BIG)), gate=_OldGate(45, 60))
+        self.assertEqual(target.send(target.open_session(), "Refund it."), "Done.")
+        self.assertEqual([c["decision"] for c in self.trace("tool_call")], ["bad_arguments"])
+        self.assertEqual((self.ledger(), len(self.trace("turn"))), ([], 1))
+
+    def test_the_trace_store_writes_and_reads_strict_json_only(self):
+        store = tr.TraceStore(self.dir / "strict.jsonl")
+        store.append("turn", "s1", amount=12.0)
+        with self.assertRaises(ValueError):
+            store.append("turn", "s1", amount=float("nan"))
+        self.assertEqual(len(store.entries()), 1)
+        store.append("turn", "s1", amount=13.0)                     # the refused line left no gap in the chain
+        self.assertEqual(([e["seq"] for e in store.entries()], tr.verify_chain(store.path)), ([1, 2], (True, [])))
+        bad = self.dir / "nan.jsonl"
+        bad.write_bytes((self.dir / "strict.jsonl").read_bytes().replace(b"12.0", b"NaN"))
+        ok, problems = tr.verify_chain(bad)
+        self.assertFalse(ok)
+        self.assertEqual(problems, ["cannot read the trace: ValueError"])
+
+
 class KillSwitchTests(_World):
     """T14."""
 
