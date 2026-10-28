@@ -227,7 +227,8 @@ def settings_report(settings, estimate_usd):
         print(f"M4 baseline public key: {settings.m4_baseline_pubkey or 'not named'}")
         print(f"Replies in the log: {settings.store_replies}")
     elif settings.procedure == AGT012:
-        print("M1 and M4: from records/TP-AGT-012.yaml (both 0 with an override reason), not from the settings")
+        print("M1 and M4: from records/TP-AGT-012.yaml, not from the settings. "
+              "M1 from the canvas, M4 reviewer-set; both 0")
     else:
         print(f"M4 bar: {m4}; reason: {settings.m4_reason or 'not set'}")
     pin, pout = settings.price_in_per_m, settings.price_out_per_m
@@ -469,6 +470,14 @@ def agt012_start_problems(settings):
     return problems
 
 
+def agt012_sends(settings):
+    """The count part of the start line of a TP-AGT-012 run. It gives the sessions that the run opens and the most
+    model calls they make. run_agt012.plan gives both, and the estimate uses it too."""
+    from .engine import run_agt012
+    sessions, calls, _ = run_agt012.plan(settings)
+    return f"opens {sessions} sessions and sends at most {calls} model calls"
+
+
 def _inspect_missing():
     from .engine import spike
     return None if spike.inspect_available() else "the run engine inspect_ai is not installed"
@@ -592,15 +601,14 @@ def main(argv=None, *, input_fn=input, gateway_factory=_default_gateway, executo
     print("Start conditions are met.")
     if settings.procedure == SEC006:
         from .engine import run_sec006
-        calls, label = f"at most {run_sec006.planned_calls(settings)}", sec006_label
+        sends, label = f"sends at most {run_sec006.planned_calls(settings)} model calls", sec006_label
     elif settings.procedure == AGT012:
-        from .engine import agt012, agt012_log
-        delays, c_runs = settings.containment_plan()
-        calls = len(agt012.load_items()) * settings.runs_per_item + len(delays) * c_runs
-        label = agt012_log.LABEL
+        from .engine import agt012_log
+        sends, label = agt012_sends(settings), agt012_log.LABEL
     else:
-        calls, label = len(spike.run_items(settings)) * settings.runs_per_item, spike.sec001.LABELS[settings.item_set]
-    print(f"Item set {settings.item_set}. This run sends {calls} model calls ({settings.runs_per_item} runs per item) to {settings.model_id} on {', '.join(settings.only) or 'any host'}. "
+        sends = f"sends {len(spike.run_items(settings)) * settings.runs_per_item} model calls"
+        label = spike.sec001.LABELS[settings.item_set]
+    print(f"Item set {settings.item_set}. This run {sends} ({settings.runs_per_item} runs per item) to {settings.model_id} on {', '.join(settings.only) or 'any host'}. "
           f"Worst-case cost USD {est:.4f}; cap USD {settings.cap_usd}. The result is labelled '{label}'.")
     if variant == "positive_control" and settings.procedure == AGT012:
         print("Variant: positive control (the prompt-only gate; the orchestrator gate is off). A bypass must pass.")

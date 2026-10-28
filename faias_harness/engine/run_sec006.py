@@ -190,8 +190,7 @@ class _Runner:
         outcome = sec001.outcome(sc, redacted, tr.get("finish_reason"), tr.get("blocked"))
         self.hosts[str(tr["served_host"])] += 1
         self.models[str(tr["model_served"])] += 1
-        self.mismatches += 1 if tr["host_ok"] is False else 0
-        self.host_not_reported += 1 if tr["host_ok"] is None else 0
+        halt = spike.host_tally(self, tr["host_ok"])
         self.usage_missing += 1 if tr["usage_missing"] else 0
         self.retries += tr.get("retries", 0)
         self.runs.append({"item": item.id, "cls": item.cls, "run": n, "turn": turn, "outcome": outcome,
@@ -216,7 +215,7 @@ class _Runner:
                    cost_usd=tr["cost_usd"], latency_ms=tr["latency_ms"], seed=tr.get("seed"),
                    retries=tr.get("retries", 0), retry_reasons=tr.get("retry_reasons", []), trace_seq=tr["seq"])
         self.log.write(rec)
-        if self.halt_on_mismatch and tr["host_ok"] is False:
+        if halt:
             self.status = "stopped_host_mismatch"
             self._stop(item, n, t_ns, turn, served_host=tr["served_host"])
         shown = redacted if full else f"reply stored as SHA-256 only: {rec['reply_sha256']}"

@@ -123,6 +123,15 @@ def _host_entry(url):
     return p.hostname + (f":{p.port}" if p.port else "")
 
 
+def host_tally(runner, host_ok):
+    """Count the host check of one model call on `runner` (its `mismatches` and `host_not_reported`). Returns True
+    when the run must stop. That is a host other than the locked one, with `halt_on_mismatch` (evidence mode). The
+    runners of TP-SEC-001, TP-SEC-006 and TP-AGT-012 call it."""
+    runner.mismatches += 1 if host_ok is False else 0
+    runner.host_not_reported += 1 if host_ok is None else 0
+    return bool(runner.halt_on_mismatch and host_ok is False)
+
+
 class _Runner:
     """One run of one item: send it, read its trace, score it, write its record. Both engines call `one`.
 
@@ -178,8 +187,7 @@ class _Runner:
             outcome = sec001.outcome(sc, reply, turn.get("finish_reason"), turn.get("blocked"))
         self.hosts[str(turn["served_host"])] += 1
         self.models[str(turn["model_served"])] += 1
-        self.mismatches += 1 if turn["host_ok"] is False else 0
-        self.host_not_reported += 1 if turn["host_ok"] is None else 0
+        halt = host_tally(self, turn["host_ok"])
         self.usage_missing += 1 if turn["usage_missing"] else 0
         self.retries += turn.get("retries", 0)
         self.runs.append({"item": item.id, "cls": item.cls, "run": n, "success": sc.success, "outcome": outcome})
@@ -195,7 +203,7 @@ class _Runner:
                         "usage_missing": turn["usage_missing"], "cost_usd": turn["cost_usd"],
                         "latency_ms": turn["latency_ms"], "seed": turn.get("seed"), "retries": turn.get("retries", 0), "retry_reasons": turn.get("retry_reasons", []),
                         "trace_seq": turn["seq"]})
-        if self.halt_on_mismatch and turn["host_ok"] is False:
+        if halt:
             self.status = "stopped_host_mismatch"
             self._stop(item, n, t_ns, served_host=turn["served_host"])
         return reply
