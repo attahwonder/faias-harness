@@ -29,6 +29,8 @@ import base64
 import hashlib
 import json
 import os
+import re
+import subprocess
 import sys
 import time
 from datetime import datetime, timezone
@@ -42,9 +44,18 @@ from .. import __version__
 from . import sec001
 
 REPO = Path(__file__).resolve().parents[2]
-SCHEMA = "faias-harness-run-log/2"   # 2 adds the item set, the clean-baseline arm and the list `not_in_run`
+SCHEMA = "faias-harness-run-log/4"   # 4 (version 0.6): schema 2 with the code block and the scorer keys
+SCHEMA_EXTERNAL = "faias-harness-run-log/5"   # 5 (version 0.6): schema 3 with the code block and the scorer keys
+SCHEMA_V3 = "faias-harness-run-log/3"   # 3 (version 0.5): a run against an external target; still checked
+SCHEMA_V2 = "faias-harness-run-log/2"   # 2 adds the item set, the clean-baseline arm and the list `not_in_run`; still checked
 SCHEMA_V1 = "faias-harness-run-log/1"  # logs of the engine spike in version 0.3; still checked
-SCHEMA_EXTERNAL = "faias-harness-run-log/3"   # 3 (version 0.5): a run against an external target through an adapter
+EXTERNAL_SCHEMAS = (SCHEMA_V3, SCHEMA_EXTERNAL)
+CODE_SCHEMAS = (SCHEMA, SCHEMA_EXTERNAL)      # the logs with the code block, the scorer keys and the wider lock
+KNOWN_SCHEMAS = (SCHEMA_V1, SCHEMA_V2, SCHEMA_V3, SCHEMA, SCHEMA_EXTERNAL)
+SCORER_FILE = "faias_harness/engine/sec001.py"
+RECORD_FILE = "records/TP-SEC-001.yaml"
+HEX64 = re.compile(r"[0-9a-f]{64}")
+GIT_COMMIT = re.compile(r"[0-9a-f]{40}|[0-9a-f]{64}")
 EGRESS_LIMIT = ("client-level control: requests made through the shared client are checked against the allow-list. "
                 "It is not a network sandbox.")
 VARIANTS = {
@@ -114,6 +125,26 @@ def items_digest(items=sec001.ITEMS, baseline=()):
                                  for i in tuple(items) + tuple(baseline)]))
 
 
+def git_commit(repo=REPO):
+    """The commit of the checkout (`git rev-parse HEAD`), or None when git does not answer. Local only."""
+    try:
+        p = subprocess.run(["git", "-C", str(repo), "rev-parse", "HEAD"], capture_output=True, text=True, timeout=20)
+    except (OSError, subprocess.SubprocessError):
+        return None
+    out = p.stdout.strip()
+    return out if p.returncode == 0 and GIT_COMMIT.fullmatch(out) else None
+
+
+def code_facts(repo=REPO):
+    """The code block of a schema 4 or 5 header: what code made the log."""
+    repo = Path(repo)
+    return {"engine_version": __version__, "git_commit": git_commit(repo),
+            "git_commit_note": "git rev-parse HEAD of the checkout that ran; null when git did not answer. It does "
+                               "not show changes that were not committed; the two file hashes do.",
+            "scorer_file": SCORER_FILE, "scorer_sha256": sha256_hex((repo / SCORER_FILE).read_bytes()),
+            "record_file": RECORD_FILE, "record_sha256": sha256_hex((repo / RECORD_FILE).read_bytes())}
+
+
 def build_header(settings, *, allow_hosts, system_prompt_sha256, confirmation, probes=None, repo=REPO,
                  variant="standard", engine="inspect"):
     """The header, without the lock. `lock_header` adds the lock."""
@@ -121,6 +152,7 @@ def build_header(settings, *, allow_hosts, system_prompt_sha256, confirmation, p
     items, baseline = sec001.load_items(settings.item_set, repo=repo)
     return {
         "type": "header", "schema": SCHEMA, "label": sec001.LABELS[settings.item_set], "engine_version": __version__,
+        "code": code_facts(repo),
         "procedure": {"tp": rec["tp"], "title": rec["title"], "irq": rec["irq"], "star": rec["star"],
                       "star_note": "copied from the Confidence line of the procedure; the harness never computes it",
                       "faias_version": sec001.FAIAS_VERSION, "source": rec["source"]},
@@ -136,6 +168,7 @@ def build_header(settings, *, allow_hosts, system_prompt_sha256, confirmation, p
                    f"set by the reviewer above the FAIAS minimum of 3 (PLAYBOOK_SEC_001.md line 27) and disclosed here",
                    "per_class": {c: sum(1 for i in items if i.cls == c) for c in sec001.CLASSES},
                    "manifest": sec001.manifest(items, baseline), "items_sha256": items_digest(items, baseline),
+                   "scorer_keys": sec001.scorer_keys(items),
                    "scoring": "deterministic; no model judge; the clean-baseline requests are recorded, not scored"},
         "variant": {"name": variant, "purpose": VARIANTS[variant]},
         "run_engine": _engine_facts(engine),
@@ -155,7 +188,7 @@ def build_external_header(settings, *, target, allow_hosts, confirmation, probes
     items, baseline = sec001.load_items(settings.item_set, repo=repo)
     return {
         "type": "header", "schema": SCHEMA_EXTERNAL, "label": sec001.LABELS[settings.item_set],
-        "engine_version": __version__,
+        "engine_version": __version__, "code": code_facts(repo),
         "procedure": {"tp": rec["tp"], "title": rec["title"], "irq": rec["irq"], "star": rec["star"],
                       "star_note": "copied from the Confidence line of the procedure; the harness never computes it",
                       "faias_version": sec001.FAIAS_VERSION, "source": rec["source"]},
@@ -181,6 +214,7 @@ def build_external_header(settings, *, target, allow_hosts, confirmation, probes
                    "set by the reviewer above the FAIAS minimum of 3 (PLAYBOOK_SEC_001.md line 27) and disclosed here",
                    "per_class": {c: sum(1 for i in items if i.cls == c) for c in sec001.CLASSES},
                    "manifest": sec001.manifest(items, baseline), "items_sha256": items_digest(items, baseline),
+                   "scorer_keys": sec001.scorer_keys(items),
                    "scoring": "deterministic; no model judge; the clean-baseline requests are recorded, not scored"},
         "variant": {"name": "external", "purpose": VARIANTS["external"]},
         "run_engine": _engine_facts(engine),
@@ -203,16 +237,28 @@ LOCK_KEYS = ("procedure", "thresholds", "settings_hash", "routing", "model", "va
 LOCK_KEYS_EXTERNAL = ("procedure", "thresholds", "settings_hash", "target", "model", "budget", "variant")
 
 
+def lock_fixed(header):
+    """The fixed parts of a header that the lock hash covers. Schemas 4 and 5 add the scorer and record hashes."""
+    schema = header.get("schema")
+    fixed = {k: header.get(k) for k in (LOCK_KEYS_EXTERNAL if schema in EXTERNAL_SCHEMAS else LOCK_KEYS)}
+    fixed["items_sha256"] = (header.get("corpus") or {}).get("items_sha256")
+    if schema in CODE_SCHEMAS:
+        code = header.get("code") or {}
+        fixed["scorer_sha256"], fixed["record_sha256"] = code.get("scorer_sha256"), code.get("record_sha256")
+    return fixed
+
+
 def lock_header(header, clock_ns=None):
     """Add the lock: a time, and a hash over the fixed parts. Call this just before the log is opened."""
     ns = time.time_ns() if clock_ns is None else clock_ns
-    external = header.get("schema") == SCHEMA_EXTERNAL
-    fixed = {k: header[k] for k in (LOCK_KEYS_EXTERNAL if external else LOCK_KEYS)}
-    fixed["items_sha256"] = header["corpus"]["items_sha256"]
+    external = header.get("schema") in EXTERNAL_SCHEMAS
     covers = ("procedure, thresholds with bases, settings hash, target with its declared model and version, "
               "budget, item set") if external else \
         "procedure, thresholds with bases, settings hash, routing locks, model ID, system prompt hash, item set"
-    header["lock"] = {"time": iso(ns), "time_ns": ns, "hash": sha256_hex(canonical(fixed)), "covers": covers}
+    if header.get("schema") in CODE_SCHEMAS:
+        covers += f", scorer file hash ({SCORER_FILE}), record file hash ({RECORD_FILE})"
+    header["lock"] = {"time": iso(ns), "time_ns": ns, "hash": sha256_hex(canonical(lock_fixed(header))),
+                      "covers": covers}
     return header
 
 
@@ -239,8 +285,78 @@ def read_log(path):
     return [json.loads(line) for line in Path(path).read_bytes().decode("utf-8").split("\n") if line.strip()]
 
 
-def check_log(path, repo=REPO):
-    """Return the list of problems in the form of a run log (empty if none)."""
+def log_items(h, runs):
+    """The items of a log's set, rebuilt from the log alone: the header's manifest and scorer keys, and the request
+    of each run record. Returns (items, None), or (None, the reason) when the log does not hold all of that."""
+    corpus = h.get("corpus") or {}
+    keys = corpus.get("scorer_keys")
+    if not isinstance(keys, dict):
+        return None, "the log does not hold the scorer keys; only schemas 4 and 5 hold them"
+    texts = {}
+    for r in runs:
+        texts.setdefault(r.get("item"), r.get("request"))
+    manifest = corpus.get("manifest") or []
+    missing = [m.get("id") for m in manifest if m.get("id") not in texts]
+    if missing:
+        return None, f"{len(missing)} items of the manifest have no run record, so their text is not in the log"
+    items = []
+    for m in manifest:
+        k = keys.get(m["id"]) or {}
+        items.append(sec001.Item(m["id"], m.get("class"), m.get("activity"), m.get("objective"), texts[m["id"]],
+                                 marker=k.get("marker", ""), subject=k.get("subject", "")))
+    return items, None
+
+
+def items_hash_from_log(h, runs):
+    """("matches" | "differs" | "not checked", detail): the header's items hash against the log alone."""
+    items, reason = log_items(h, runs)
+    if items is None:
+        return "not checked", reason
+    if items_digest(items) == (h.get("corpus") or {}).get("items_sha256"):
+        return "matches", "the manifest, the scorer keys and the requests in the log"
+    return "differs", "the manifest, the scorer keys and the requests in the log"
+
+
+def _code_problems(h):
+    """The checks that only a schema 4 or 5 header has: the code block, the scorer keys and the lock hash."""
+    out = []
+    c = h.get("code") or {}
+    if not c.get("engine_version"):
+        out.append("header: the code block has no engine version")
+    if "git_commit" not in c or not (c["git_commit"] is None or GIT_COMMIT.fullmatch(str(c["git_commit"]))):
+        out.append("header: the code block has no git commit (null is allowed)")
+    for k in ("scorer_sha256", "record_sha256"):
+        if not HEX64.fullmatch(str(c.get(k))):
+            out.append(f"header: the code block has no {k}")
+    if not isinstance((h.get("corpus") or {}).get("scorer_keys"), dict):
+        out.append("header: the corpus has no scorer keys")
+    lock = h.get("lock") or {}
+    if lock.get("hash") and lock["hash"] != sha256_hex(canonical(lock_fixed(h))):
+        out.append("header: the lock hash does not match the fixed parts of the header")
+    return out
+
+
+def _run_items_problems(h, runs):
+    """Without the repository: each run names an item of the manifest, of the same class, with one request text."""
+    classes = {m.get("id"): m.get("class") for m in (h.get("corpus") or {}).get("manifest") or []}
+    out, texts = [], {}
+    for r in runs:
+        i, n = r.get("item"), r.get("run")
+        if i not in classes:
+            out.append(f"run {i}/{n}: the item is not in the manifest")
+        elif "class" in r and r["class"] != classes[i]:
+            out.append(f"run {i}/{n}: the class differs from the manifest")
+        if texts.setdefault(i, r.get("request")) != r.get("request"):
+            out.append(f"run {i}/{n}: the request differs from the request of an earlier run of that item")
+    return out
+
+
+def check_log(path, repo=REPO, use_repo=True):
+    """Return the list of problems in the form of a run log (empty if none).
+
+    With `use_repo` false, nothing is read from the record or the item set of the checkout: the procedure ID and
+    the star must be present, each run must name an item of the manifest with one request text, and the items
+    hash is checked against the log alone where the log holds what that needs (`items_hash_from_log`)."""
     problems = []
     try:
         recs = read_log(path)
@@ -249,19 +365,26 @@ def check_log(path, repo=REPO):
     if not recs or recs[0].get("type") != "header":
         return ["the first line is not the header"]
     h = recs[0]
-    rec = sec001.load_record(repo=repo)
-    if h.get("schema") not in (SCHEMA, SCHEMA_V1, SCHEMA_EXTERNAL):
+    rec = sec001.load_record(repo=repo) if use_repo else None
+    schema = h.get("schema")
+    if schema not in KNOWN_SCHEMAS:
         problems.append("unknown schema")
-    external = h.get("schema") == SCHEMA_EXTERNAL
-    # A version 1 log is a spike log: it names no item set. A version 2 or 3 log must name its set.
-    item_set = (h.get("corpus") or {}).get("item_set") if h.get("schema") in (SCHEMA, SCHEMA_EXTERNAL) else "spike"
+    external = schema in EXTERNAL_SCHEMAS
+    # A version 1 log is a spike log: it names no item set. A log of a later version must name its set.
+    item_set = (h.get("corpus") or {}).get("item_set") if schema in KNOWN_SCHEMAS[1:] else "spike"
     if item_set is None:
         return problems + ["header: the item set is missing"]
     p = h.get("procedure") or {}
-    if p.get("tp") != rec["tp"]:
-        problems.append("header: procedure ID differs from the record")
-    if p.get("star") != rec["star"] or p.get("star") != "★" + "4":
-        problems.append("header: star label is not the label of the record (★4)")
+    if rec is None:
+        if not p.get("tp") or not p.get("star"):
+            problems.append("header: the procedure ID or the star label is missing")
+    else:
+        if p.get("tp") != rec["tp"]:
+            problems.append("header: procedure ID differs from the record")
+        if p.get("star") != rec["star"]:
+            problems.append(f"header: star label is not the label of the record ({rec['star']})")
+    if schema in CODE_SCHEMAS:
+        problems += _code_problems(h)
     if external:
         t = h.get("target") or {}
         if t.get("kind") != "external" or not t.get("adapter") or not t.get("endpoint_host"):
@@ -301,16 +424,22 @@ def check_log(path, repo=REPO):
         return problems + ["header: the item set is unknown"]
     if h.get("label") != sec001.LABELS[item_set]:
         problems.append(f"header: the label '{sec001.LABELS[item_set]}' is missing")
-    items, baseline = sec001.load_items(item_set, repo=repo)
-    if (h.get("corpus") or {}).get("items_sha256") != items_digest(items, baseline):
-        problems.append(f"header: the items hash differs from the item set '{item_set}' in the repository")
-    texts = {i.id: i.text for i in items + baseline}
+    runs = [r for r in recs if r.get("type") == "run"]
+    if use_repo:
+        items, baseline = sec001.load_items(item_set, repo=repo)
+        if (h.get("corpus") or {}).get("items_sha256") != items_digest(items, baseline):
+            problems.append(f"header: the items hash differs from the item set '{item_set}' in the repository")
+        texts = {i.id: i.text for i in items + baseline}
+    else:
+        texts = None
+        problems += _run_items_problems(h, runs)
+        if items_hash_from_log(h, runs)[0] == "differs":
+            problems.append("header: the items hash differs from the manifest, the scorer keys and the requests in the log")
     lock = h.get("lock") or {}
     if not lock.get("hash") or not isinstance(lock.get("time_ns"), int):
         problems.append("header: the lock is missing")
-    runs = [r for r in recs if r.get("type") == "run"]
     for r in runs:
-        if r.get("request") != texts.get(r.get("item")):
+        if texts is not None and r.get("request") != texts.get(r.get("item")):
             problems.append(f"run {r.get('item')}/{r.get('run')}: the request is not the text of that item in the set")
         if not isinstance(r.get("t_ns"), int) or r["t_ns"] <= lock.get("time_ns", 0):
             problems.append(f"run {r.get('item')}/{r.get('run')}: time is not later than the lock time")

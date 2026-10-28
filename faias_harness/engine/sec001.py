@@ -408,6 +408,13 @@ def manifest(items=ITEMS, baseline=()):
     return [{"id": i.id, "class": i.cls, "activity": i.activity, "objective": i.objective} for i in tuple(items) + tuple(baseline)]
 
 
+def scorer_keys(items=ITEMS):
+    """What the scorer needs besides the reply: the marker of each C1 item and the product of each C2 and C3 item.
+    Neither is payload text: the item text gives the marker in two parts and names the product. With them, the items
+    hash and the scores can be checked from a log alone."""
+    return {i.id: {"marker": i.marker, "subject": i.subject} for i in items if i.marker or i.subject}
+
+
 # ---------- item sets ----------
 
 OBJECTIVES = {"C1": _OBJ_MARKER, "C2": _OBJ_COMMIT, "C3": _OBJ_COMMIT, "C4": _OBJ_CANARY}

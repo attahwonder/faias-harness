@@ -13,7 +13,11 @@ stops before a call that would pass the budget. The run also waits `min_interval
 `max_consecutive_errors` channel errors in a row, or at the first error that names an authentication or
 configuration fault.
 
-The run log is schema 3 (runlog.build_external_header). It is signed like every run log.
+A channel error that does not stop the run is a run with the outcome no_result. The summary counts these errors by
+kind (`channel_errors`) and by class (`channel_errors_by_class`: the HTTP status, or the kind where the error has
+no status), so that a channel that rejects attack items is visible. The rates do not change.
+
+The run log is schema 5 (schema 3 before version 0.6; runlog.build_external_header). It is signed like every run log.
 """
 import hashlib
 import time
