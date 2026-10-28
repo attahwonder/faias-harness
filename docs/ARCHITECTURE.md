@@ -1,12 +1,12 @@
 # Architecture
 
-Harness version 0.6 (in development). This document describes the design of the harness and what exists today. Each section says what is built and what is not.
+Harness version 0.6. This document describes the design of the harness and what exists today. Each section says what is built and what is not.
 
 ## 1. Scope and status
 
 The harness is planned to run the FAIAS test procedures against an AI system in a test environment. FAIAS is the Financial AI Independent Assurance Standard. Version 1.3.4 of FAIAS has 109 test procedures, one for each Independent Review Question (FAIAS `README.md`, line 31).
 
-Version 0.6 (in development) shows the design and the direction. It has eight parts that work:
+Version 0.6 shows the design and the direction. It has eight parts that work:
 
 - the **records**: one generic record for each of 45 procedures;
 - the **record checker**: it compares each record with the FAIAS source lines;
@@ -15,7 +15,7 @@ Version 0.6 (in development) shows the design and the direction. It has eight pa
 - the **external run**: the same procedure against a deployed staging agent, through a channel adapter (section 13);
 - the **tool emulator**: an MCP server with synthetic tool results and a ledger, for `tool_routing` (section 14). A result is fixed, or (since 0.6) a built-in handler computes it from a synthetic store;
 - the **testability report** (0.6, section 15). `python -m faias_harness.testability` writes the preflight result of a profile as a report. The report can be signed and verified;
-- the **containment self-test** (0.6, section 17). `python -m faias_harness.selftest` probes each path from the harness to a host outside the local machine. It writes a signed log. It makes client-level and process-level checks. It is not a network sandbox.
+- the **containment self-test** (0.6, section 17). `python -m faias_harness.selftest` probes each path from the harness to a host outside the local machine. It writes a log. With `--sign-key`, it signs the log. It makes client-level and process-level checks. It is not a network sandbox.
 
 The engine runs two procedures only, TP-SEC-001 and, since 0.6.0, TP-SEC-006 on SRD-1 minimal. A run on the full item set is labelled "uncalibrated scorer, not a finding", and a run on the spike set "engine spike, not a finding". A run of TP-SEC-006 is labelled "uncalibrated scorer, not a finding; items from one model family". The channel adapters are tested against local stand-ins. Only `generic-http` has also run live, against the OpenRouter chat completions endpoint (section 13). The other four are untested against the platform they are written for. The example target SRD-1 is built only in a minimal form.
 
@@ -213,7 +213,7 @@ Limits of this draft:
 ## 10. What version 0.6 does not do
 
 - It runs two procedures only, TP-SEC-001 and, on SRD-1 minimal, TP-SEC-006. Their results are not findings.
-- The threshold lock, log signing and spend cap exist for the engines of these two procedures only. The engine has no network sandbox. The containment self-test (section 17) makes client-level and process-level checks only. The MCP tool emulator exists (section 14). The TP-SEC-001 and TP-SEC-006 engines use it when `tools_enabled` is true.
+- The threshold lock and log signing exist for the engines of these two procedures and for the containment self-test only. The spend cap exists for the two engines only. The engine has no network sandbox. The containment self-test (section 17) makes client-level and process-level checks only. The MCP tool emulator exists (section 14). The TP-SEC-001 and TP-SEC-006 engines use it when `tools_enabled` is true.
 - No adapter is tested against the platform it is written for. The harness supports no platform. `generic-http` has run live one time, against the OpenRouter chat completions endpoint on 22 October 2026. That run tested the channel and the engine only.
 - An external run cannot pin or observe the agent's model. It sees a block only where the channel names one (section 13).
 - SRD-1 is built only in a minimal form (section 11).

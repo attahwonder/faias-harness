@@ -1,6 +1,6 @@
 # SRD-1 — specification
 
-`targets/srd1/SPEC.md` · specification of a reference system, draft, version 0.2. **SRD-1 is planned. Only a minimal form is built (C-01, C-02, C-04 and C-15, in `app/`, for the engine spike of TP-SEC-001).** This file lists its components, data, documents and roles. `profile.yaml` in this folder maps the preconditions of the 45 procedures to the IDs below. The "worked case" is a planned safety case for SRD-1, built with FAIAS. It does not exist yet. Items marked "(assumption, to be validated)" are choices that nobody has confirmed.
+`targets/srd1/SPEC.md` · specification of a reference system, draft, version 0.2. **SRD-1 is planned. Only a minimal form is built, in `app/`**. It has C-01, C-02, C-04 and C-15 and, since 0.6, parts of C-07, C-08, C-09 and C-18. This file lists its components, data, documents and roles. `profile.yaml` in this folder maps the preconditions of the 45 procedures to the IDs below. The "worked case" is a planned safety case for SRD-1, built with FAIAS. It does not exist yet. Items marked "(assumption, to be validated)" are choices that nobody has confirmed.
 
 Since 0.6.0, the minimal form also serves TP-SEC-006, with the marked placeholder of C-14 in its system prompt.
 
