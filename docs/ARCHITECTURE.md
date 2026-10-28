@@ -71,7 +71,7 @@ One YAML file describes one target. `faias_harness/profile.py` loads and validat
 |---|---|
 | `name` | A label for the target. |
 | `adapter` | The adapter ID, for example `generic-http`. |
-| `endpoint` | The URL of the staging endpoint, or `null`. It starts with `http://` or `https://`. |
+| `endpoint` | The URL of the staging endpoint, or `null`. It starts with `http://` or `https://`. It has no query string (0.5), because a query can hold a key. |
 | `trace_source` | Where the harness reads traces, or `null`. |
 | `capabilities` | The list of capabilities the target exposes. Each is one of the seven. |
 | `precondition_map` | A map from each procedure to its four precondition categories (`environment`, `access`, `artefacts`, `personnel`). Each category has a `status` (`met`, `partly`, `not met`), a list of `ids`, and an optional `note`. May be `null`. |

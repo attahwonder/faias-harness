@@ -96,6 +96,9 @@ def validate(raw):
     ep = raw.get("endpoint")
     if isinstance(ep, str) and not ep.startswith(("http://", "https://")):
         problems.append("'endpoint' must start with http:// or https://")
+    if isinstance(ep, str) and "?" in ep:
+        problems.append("'endpoint' must not have a query string, because a query can hold a key "
+                        "(openai-responses takes its query from adapter_options.query)")
     caps = raw.get("capabilities")
     if "capabilities" in raw:
         if not isinstance(caps, list):

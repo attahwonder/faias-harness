@@ -322,6 +322,15 @@ class ExternalSettingsTests(unittest.TestCase):
         self.assertTrue(any("adapter_options.secret" in p for p in problems))
         self.assertFalse(any("TESTVALUE_y" in p for p in problems))
 
+    def test_profile_refuses_an_endpoint_with_a_query_string(self):
+        from faias_harness.profile import validate
+        raw = yaml.safe_load((REPO / "targets" / "examples" / "json_app.yaml").read_text(encoding="utf-8"))
+        self.assertEqual(validate(raw), [])
+        raw["endpoint"] = "https://staging.example.test/api/chat?code=TESTVALUE_z"
+        problems = validate(raw)
+        self.assertTrue(any("'endpoint' must not have a query string" in p for p in problems), problems)
+        self.assertFalse(any("TESTVALUE_z" in p for p in problems))
+
 
 if __name__ == "__main__":
     unittest.main()
