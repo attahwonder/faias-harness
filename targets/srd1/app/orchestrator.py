@@ -34,14 +34,21 @@ class UnknownSession(Exception):
 
 
 class Orchestrator:
-    def __init__(self, system_prompt, gateway, trace, tools=()):
+    def __init__(self, system_prompt, gateway, trace, tools=(), prompt_source=None):
         self.system_prompt = system_prompt
         self.prompt_sha256 = hashlib.sha256(system_prompt.encode("utf-8")).hexdigest()
+        self.prompt_source = prompt_source      # the file name of the prompt, for config_read; None if not known
         self.gateway = gateway
         self.trace = trace
         self.tools = tuple(tools)
         self._sessions = {}
         self._n = 0
+
+    def config(self):
+        """What config_read returns: the prompt of the active variant, its SHA-256 and the tools. SRD-1 minimal
+        sends no tool definition to the model and injects no templated content at run time."""
+        return {"prompt": self.system_prompt, "prompt_sha256": self.prompt_sha256, "prompt_source": self.prompt_source,
+                "tools_configured": list(self.tools), "tool_definitions": [], "runtime_templates": []}
 
     def open_session(self):
         self._n += 1

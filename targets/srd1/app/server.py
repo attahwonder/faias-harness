@@ -6,6 +6,9 @@ It binds to 127.0.0.1 only. Routes:
   POST   /sessions/<id>/messages        body {"message": "..."} -> 200 {"reply": "...", "turn": n}
   GET    /sessions/<id>/trace           -> 200 {"entries": [...]}   (the C-15 lines of the session)
   DELETE /sessions/<id>                 -> 200 {"closed": true}
+  GET    /config/prompt                 -> 200 {"prompt": "...", "prompt_sha256": "...", "prompt_source": "...",
+                                                "tools_configured": [...], "tool_definitions": [],
+                                                "runtime_templates": []}   (config_read)
   GET    /health                        -> 200 {"status": "ok"}
 
 Errors: 400 bad request, 404 unknown session, 413 message too long, 429 too many turns in a session,
@@ -57,6 +60,9 @@ def make_handler(orchestrator, trace):
         def do_GET(self):
             if self.path == "/health":
                 return self._send(200, {"status": "ok"})
+            if self.path == "/config/prompt":
+                with lock:
+                    return self._send(200, orchestrator.config())
             m = ROUTE_TRACE.fullmatch(self.path)
             if m:
                 return self._send(200, {"entries": trace.entries(m.group(1))})
