@@ -23,6 +23,21 @@ Schema 3 (version 0.5) is the log of an external run (engine/external.py). Its h
 adapter, the channel, the endpoint host, what the channel shows, and the declared model and version with their
 basis), a `model` block that states the model is not pinned, and a `budget` block (cap, the operator's cost per call,
 call budget) in place of the routing locks and prices. `verify` checks these fields.
+
+Schemas 4 (an SRD-1 run) and 5 (an external run) are the logs of version 0.6. They are schemas 2 and 3 with three
+additions. A `code` block holds the engine version, the git commit (null when git does not answer) and the SHA-256 of
+the scorer file and of the record file. The lock hash also covers those two file hashes. The corpus holds the scorer
+keys (the marker of each C1 item and the product of each C2 and C3 item), so the items hash can be checked from the
+log alone. `verify` recomputes the lock hash of a schema 4 or 5 log. Logs of schemas 1 to 3 are checked as before.
+
+Three more commands, none of which makes a network call:
+
+  rescore  --log <log>               scores each run's reply again with the scorer of this checkout; exit 1 on a
+                                     difference from the recorded score
+  verify   --log <log> --sig <sig> --no-repo
+                                     checks the signature and the form without the item set and the record of this
+                                     checkout; the items hash is checked against the log itself
+  stamp    --log <log>               writes <log>.sha256 and prints the OpenTimestamps command to run
 """
 import argparse
 import base64
@@ -508,8 +523,12 @@ def sign_log(log_path, key_path):
     return out
 
 
-def verify_log(log_path, sig_path, pubkey_path=None, repo=REPO):
-    """Return (ok, message). The signature is over the exact bytes of the log."""
+def verify_log(log_path, sig_path, pubkey_path=None, repo=REPO, use_repo=True):
+    """Return (ok, message). The signature is over the exact bytes of the log.
+
+    With `use_repo` false (`verify --no-repo`), the form is checked without the record and the item set of this
+    checkout (`check_log`), and the message ends with the items hash line and "repository item set: not checked"."""
+    tail = "" if use_repo else "\n" + _no_repo_lines(log_path)
     try:
         s = json.loads(Path(sig_path).read_bytes().decode("utf-8"))
         data = Path(log_path).read_bytes()
@@ -517,18 +536,93 @@ def verify_log(log_path, sig_path, pubkey_path=None, repo=REPO):
         pub = serialization.load_pem_public_key(pub_pem)
         pub.verify(base64.b64decode(s["signature_b64"]), data)
     except InvalidSignature:
-        return False, "FAIL: the signature does not match the log"
+        return False, "FAIL: the signature does not match the log" + tail
     except Exception as e:      # noqa: BLE001
-        return False, f"FAIL: cannot verify ({type(e).__name__})"
-    problems = check_log(log_path, repo=repo)
+        return False, f"FAIL: cannot verify ({type(e).__name__})" + tail
+    problems = check_log(log_path, repo=repo, use_repo=use_repo)
     if problems:
-        return False, "FAIL: the signature is valid but the log is malformed: " + "; ".join(problems)
+        return False, "FAIL: the signature is valid but the log is malformed: " + "; ".join(problems) + tail
     pin = "pinned public key" if pubkey_path else "public key taken from the signature file (not pinned)"
-    return True, f"PASS: signature valid ({pin}); log form ok"
+    form = "log form ok" if use_repo else "log form ok without the repository"
+    return True, f"PASS: signature valid ({pin}); {form}" + tail
+
+
+def _no_repo_lines(log_path):
+    try:
+        recs = read_log(log_path)
+        status, detail = items_hash_from_log(recs[0], [r for r in recs if r.get("type") == "run"])
+        items_line = f"items hash: {status} ({detail})"
+    except (ValueError, OSError, IndexError, AttributeError) as e:
+        items_line = f"items hash: not checked (cannot read the log: {type(e).__name__})"
+    return items_line + "\nrepository item set: not checked"
+
+
+# ---------- rescore, stamp ----------
+
+def rescore_log(log_path, repo=REPO):
+    """Score each run's reply again with the scorer that this process runs, and compare with the recorded score.
+
+    The marker and product of each item come from the scorer keys in the log (schemas 4 and 5), or else from the
+    item set of the checkout. A clean-baseline run is never scored: its recorded score must be the baseline score.
+    Returns (lines to print, mismatches). Makes no network call."""
+    recs = read_log(log_path)
+    h, runs = recs[0], [r for r in recs if r.get("type") == "run"]
+    used = sha256_hex(Path(sec001.__file__).read_bytes())
+    logged = (h.get("code") or {}).get("scorer_sha256")
+    lines = [f"scorer used: {SCORER_FILE} of this checkout, sha256 {used}",
+             "scorer in the log: " + (f"sha256 {logged} ({'equal to' if logged == used else 'differs from'} the "
+                                      "scorer used)" if logged else "not recorded (logs before schema 4 do not record it)")]
+    corpus = h.get("corpus") or {}
+    keys = corpus.get("scorer_keys")
+    if isinstance(keys, dict):      # schemas 4 and 5: the log holds what the scorer needs, also for a stopped run
+        items = [sec001.Item(m["id"], m.get("class"), m.get("activity"), m.get("objective"), "",
+                             marker=(keys.get(m["id"]) or {}).get("marker", ""),
+                             subject=(keys.get(m["id"]) or {}).get("subject", ""))
+                 for m in corpus.get("manifest") or []]
+        source = "the scorer keys in the log"
+    else:
+        item_set = "spike" if h.get("schema") == SCHEMA_V1 else corpus.get("item_set")
+        its, base = sec001.load_items(item_set, repo=repo)
+        items = its + base
+        source = f"the item set '{item_set}' of this checkout (the log does not hold the scorer keys)"
+    by_id = {i.id: i for i in items}
+    lines.append(f"markers and products from: {source}")
+    mismatches = []
+    for r in runs:
+        it, where = by_id.get(r.get("item")), f"{r.get('item')}/{r.get('run')}"
+        if it is None:
+            mismatches.append(f"{where}: the item is not in {source}")
+            continue
+        if it.cls == sec001.BASELINE:
+            now = sec001.Score(False, "baseline", "")
+        else:
+            item = sec001.Item(it.id, it.cls, it.activity, it.objective, r.get("request") or "", marker=it.marker,
+                               subject=it.subject)
+            now = sec001.score_response(item, r.get("reply") or "")
+        got = {"success": now.success, "kind": now.kind, "evidence": now.evidence}
+        recorded = {k: (r.get("score") or {}).get(k) for k in got}
+        if got != recorded:
+            mismatches.append(f"{where}: recorded {canonical(recorded)}; now {canonical(got)}")
+    lines.append(f"runs rescored: {len(runs)}; mismatches: {len(mismatches)}")
+    return lines + ["MISMATCH " + m for m in mismatches], mismatches
+
+
+def stamp_log(log_path):
+    """Write <log>.sha256 (the hex digest and the file name, in sha256sum format) and return its path and the
+    OpenTimestamps command to run. The harness does not run `ots` and makes no network call. A different
+    <log>.sha256 that exists already is never overwritten."""
+    log_path = Path(log_path)
+    line = f"{sha256_hex(log_path.read_bytes())}  {log_path.name}\n"
+    out = log_path.with_name(log_path.name + ".sha256")
+    if out.exists() and out.read_bytes() != line.encode("utf-8"):
+        raise FileExistsError(f"{out.name} exists and holds a different digest; it is never overwritten")
+    out.write_bytes(line.encode("utf-8"))
+    return out, f'ots stamp "{log_path}"'
 
 
 def main(argv=None):
-    ap = argparse.ArgumentParser(prog="faias_harness.engine.runlog", description="Run-signing key, sign and verify.")
+    ap = argparse.ArgumentParser(prog="faias_harness.engine.runlog",
+                                 description="Run-signing key, sign, verify, rescore and stamp.")
     sub = ap.add_subparsers(dest="cmd", required=True)
     a = sub.add_parser("make-key", help="make the run-signing key in a folder outside the repository")
     a.add_argument("--out", required=True)
@@ -539,7 +633,30 @@ def main(argv=None):
     c.add_argument("--log", required=True)
     c.add_argument("--sig", required=True)
     c.add_argument("--pubkey")
+    c.add_argument("--no-repo", action="store_true",
+                   help="check without the record and the item set of this checkout")
+    d = sub.add_parser("rescore", help="score each reply again and compare with the recorded score (exit 1 on a difference)")
+    d.add_argument("--log", required=True)
+    e = sub.add_parser("stamp", help="write <log>.sha256 and print the OpenTimestamps command (no network call)")
+    e.add_argument("--log", required=True)
     args = ap.parse_args(argv)
+    if args.cmd == "rescore":
+        try:
+            lines, mismatches = rescore_log(args.log)
+        except (OSError, ValueError, KeyError, IndexError, TypeError) as e:
+            print(f"cannot rescore the log ({type(e).__name__})")
+            return 2
+        print("\n".join(lines))
+        return 1 if mismatches else 0
+    if args.cmd == "stamp":
+        try:
+            out, command = stamp_log(args.log)
+        except (FileExistsError, OSError) as e:
+            print(f"refused: {e}")
+            return 2
+        print(f"sha256 file: {out}\nTo timestamp the log, run this command yourself. It contacts the OpenTimestamps "
+              f"calendar servers; the harness makes no network call.\n  {command}")
+        return 0
     if args.cmd == "make-key":
         try:
             priv, pub = make_key(args.out)
@@ -555,7 +672,7 @@ def main(argv=None):
             return 2
         print(f"signature file: {sign_log(args.log, args.key)}")
         return 0
-    ok, msg = verify_log(args.log, args.sig, args.pubkey)
+    ok, msg = verify_log(args.log, args.sig, args.pubkey, use_repo=not args.no_repo)
     print(msg)
     return 0 if ok else 1
 
