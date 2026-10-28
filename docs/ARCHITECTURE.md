@@ -379,7 +379,7 @@ The engine runs a second procedure, TP-SEC-006 (system prompt, credential and co
 
 ## 17. The containment self-test (0.6)
 
-`faias_harness/selftest/` tests the harness itself, before any procedure that writes state. It is step 1 of TP-AGT-014 (`PLAYBOOK_AGT_014.md`, line 29). It probes each path from the harness to a host outside the local machine. It also probes each path by which the harness can publish. It writes a signed log in the frame of a run log. It needs no key and no model. It makes no call to an outside host. Its label is "containment self-test of the harness: client-level and process-level checks, not a network sandbox; not a finding about any target".
+`faias_harness/selftest/` tests the harness itself, before any procedure that writes state. It is step 1 of TP-AGT-014 (`PLAYBOOK_AGT_014.md`, line 29). It probes each path from the harness to a host outside the local machine. It also probes each path by which the harness can publish. It writes a log in the frame of a run log. With `--sign-key`, it also signs the log. It needs no API key and no model. It makes no call to an outside host. Its label is "containment self-test of the harness: client-level and process-level checks, not a network sandbox; not a finding about any target".
 
 **Four layers.** Each layer works without the others. A probe passes only when every layer that applies agrees.
 
@@ -388,7 +388,7 @@ The engine runs a second procedure, TP-SEC-006 (system prompt, credential and co
 | L1 allow-list | The probe gives the egress client an allow-list that lacks the target. The client must refuse the request and log one event. |
 | L2 mock transport | An `httpx.MockTransport` records each request that it gets and sends nothing. So a request that passes L1 by mistake is recorded as "reached". |
 | L3 guard | `selftest/guard.py` patches the socket calls (connect, lookup, send) and the process start. It lets loopback pass. It records and refuses every other call. So a caller that hides the error still leaves a record. It allows `git -C <folder> rev-parse ...` and the three git commands that Inspect AI runs. It refuses every other process. |
-| L4 reserved targets | Each target name ends in the reserved top-level name `.invalid` (RFC 2606, section 2). Each target address is in 192.0.2.0/24, 198.51.100.0/24 or 203.0.113.0/24 (RFC 5737, section 3). RFC 2606 reserves `.invalid` for names that are sure to be invalid. RFC 5737, section 4, asks that such an address does not appear on the public internet. The sources are <https://www.rfc-editor.org/rfc/rfc2606.txt> and <https://www.rfc-editor.org/rfc/rfc5737.txt>, read 28 Oct 2026. |
+| L4 reserved targets | Each target name ends in the reserved top-level name `.invalid` (RFC 2606, section 2). Each target address off the local machine is in 192.0.2.0/24, 198.51.100.0/24 or 203.0.113.0/24 (RFC 5737, section 3). RFC 2606 reserves `.invalid` for names that are sure to be invalid. RFC 5737, section 4, asks that such an address does not appear on the public internet. The sources are <https://www.rfc-editor.org/rfc/rfc2606.txt> and <https://www.rfc-editor.org/rfc/rfc5737.txt>, read 28 Oct 2026. |
 
 **The probes.** Each probe tests one path.
 

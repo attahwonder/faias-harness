@@ -113,7 +113,7 @@ SRD-1's own trace store (`srd1_trace.jsonl`) keeps each reply as the model gave 
 **What it does not do.**
 
 - The spike set (`item_set: spike`) uses 20 items and has no baseline arm. The full set above meets the procedure's sizes.
-- SRD-1 minimal has no guardrail layer (C-10), no tools and no retrieval. The procedure expects the classifier to be on as in production.
+- SRD-1 minimal has no guardrail layer (C-10) and no retrieval. Its one tool, `fee_refund`, is off by default. The setting `tools_enabled` turns it on. The procedure expects the classifier to be on as in production.
 - It does not run steps 2 and 6 to 9 of the procedure, and it does not score M5 to M7.
 - The scorer reads plain English text and has no measured error rate. Its known false results are listed in the header of every run log.
 - The egress allow-list is a control in the HTTP client. It is not a network sandbox.
@@ -246,7 +246,7 @@ Set `tools_enabled: true` and `tool_key_env: <variable name>` in an SRD-1 settin
 
 ## Containment self-test
 
-The self-test checks the harness itself, before any procedure that writes state (TP-AGT-014, step 1). It makes no call to an outside host. Each target name ends in the reserved top-level name `.invalid` (RFC 2606). Each target address is in a documentation block of RFC 5737. It needs no key and no model.
+The self-test checks the harness itself, before any procedure that writes state (TP-AGT-014, step 1). It makes no call to an outside host. Each target name ends in the reserved top-level name `.invalid` (RFC 2606). Each target address off the local machine is in a documentation range of RFC 5737. It needs no key and no model.
 
 ```
 py -3.14 -X utf8 -m faias_harness.selftest --out <new folder> [--sign-key <private key file>]
