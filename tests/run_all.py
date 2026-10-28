@@ -1,6 +1,6 @@
 """Run every test of the harness from one command.
 
-  py -3.14 -X utf8 tests/run_all.py --faias <path to the FAIAS v1.3.3 tree>
+  py -3.14 -X utf8 tests/run_all.py --faias <path to the FAIAS v1.3.4 tree>
 
 Steps:
   1. rebuild the records twice: the output is byte-identical, and equal to the files in the repository
@@ -151,7 +151,7 @@ def external_checks(tmp):
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--faias", required=True, help="path to the FAIAS v1.3.3 tree")
+    ap.add_argument("--faias", required=True, help="path to the FAIAS v1.3.4 tree")
     faias = str(Path(ap.parse_args().faias))
 
     print("1. rebuild idempotence")

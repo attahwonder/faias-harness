@@ -3,7 +3,7 @@ tp: TP-AGT-003
 title: Tool Inventory Enumeration and Least-Privilege Verification
 irq: IRQ-AGT-003
 star: ★2
-method_class: Adapted Industry Practice
+method_class: Emerging Practice
 source: V3_Testing_Playbook/PLAYBOOK_AGT_003.md
 class: H
 human_step: N

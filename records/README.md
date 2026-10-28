@@ -4,7 +4,7 @@ This folder holds one generic record for each of 45 FAIAS test procedures. The s
 
 ## Attribution
 
-The records quote text from **FAIAS — Financial AI Independent Assurance Standard**, version 1.3.3, Wonder Attah, licensed under CC BY 4.0 (<https://creativecommons.org/licenses/by/4.0/>). The standard is at <https://github.com/attahwonder/faias-standard>.
+The records quote text from **FAIAS — Financial AI Independent Assurance Standard**, version 1.3.4, Wonder Attah, licensed under CC BY 4.0 (<https://creativecommons.org/licenses/by/4.0/>). The standard is at <https://github.com/attahwonder/faias-standard>.
 
 Each quoted item carries `src: <file>:<line>`. The file is a path in the FAIAS tree, and the line is the line of that file from which the text comes. The builder removes Markdown marks and table pipes. It does not change the words. The code in this repository is under Apache-2.0. The quoted FAIAS text stays under CC BY 4.0.
 
@@ -23,8 +23,8 @@ The licence of FAIAS grants no rights in the name "FAIAS". Do not present a chan
 ## Rebuild and check
 
 ```
-py -3.14 -X utf8 tools/build_records.py --faias <path to the FAIAS v1.3.3 tree>
-py -3.14 -X utf8 tools/check_records.py --faias <path to the FAIAS v1.3.3 tree>
+py -3.14 -X utf8 tools/build_records.py --faias <path to the FAIAS v1.3.4 tree>
+py -3.14 -X utf8 tools/check_records.py --faias <path to the FAIAS v1.3.4 tree>
 ```
 
 A second build gives byte-identical files. The checker compares each record with its source lines in the FAIAS tree. It also checks the form of `capability_needs.yaml` and that every FAIAS line that the file cites exists.

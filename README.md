@@ -61,22 +61,22 @@ The start check. It refuses, because the example has no attestation file:
 py -3.14 -X utf8 -m faias_harness.preflight --profile targets/examples/chat_only.yaml --start
 ```
 
-All tests. They need a copy of FAIAS version 1.3.3 (the folder that holds `V3_Testing_Playbook`):
+All tests. They need a copy of FAIAS version 1.3.4 (the folder that holds `V3_Testing_Playbook`):
 
 ```
-py -3.14 -X utf8 tests/run_all.py --faias <path to the FAIAS v1.3.3 folder>
+py -3.14 -X utf8 tests/run_all.py --faias <path to the FAIAS v1.3.4 folder>
 ```
 
 Rebuild the records. This does not change `records/capability_needs.yaml`, which is an input file that a person keeps:
 
 ```
-py -3.14 -X utf8 tools/build_records.py --faias <path to the FAIAS v1.3.3 folder>
+py -3.14 -X utf8 tools/build_records.py --faias <path to the FAIAS v1.3.4 folder>
 ```
 
 Check the records and the capability needs against the FAIAS tree:
 
 ```
-py -3.14 -X utf8 tools/check_records.py --faias <path to the FAIAS v1.3.3 folder>
+py -3.14 -X utf8 tools/check_records.py --faias <path to the FAIAS v1.3.4 folder>
 ```
 
 ## Engine
@@ -176,7 +176,7 @@ py -3.14 -X utf8 -m faias_harness.emulators.mcp_tools verify --ledger <ledger fi
 
 ## Relation to FAIAS
 
-The records are built from FAIAS version 1.3.3, published at <https://github.com/attahwonder/faias-standard> under CC BY 4.0. The records quote FAIAS text. Each quoted item carries the FAIAS file and the line number. `records/README.md` gives the attribution.
+The records are built from FAIAS version 1.3.4, published at <https://github.com/attahwonder/faias-standard> under CC BY 4.0. The records quote FAIAS text. Each quoted item carries the FAIAS file and the line number. `records/README.md` gives the attribution.
 
 FAIAS is not a certification or approval scheme. Running this harness does not certify, accredit or approve anything. The harness copies the ★ rating of each procedure from FAIAS and never computes it.
 

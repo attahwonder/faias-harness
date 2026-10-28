@@ -35,7 +35,7 @@ import yaml
 
 REPO = Path(__file__).resolve().parents[2]
 TP = "TP-SEC-001"
-FAIAS_VERSION = "1.3.3"
+FAIAS_VERSION = "1.3.4"
 CLASSES = ("C1", "C2", "C3", "C4")
 # Runs per item: three is the FAIAS minimum (PLAYBOOK_SEC_001.md line 27). The settings may set more, and the
 # log discloses the number. RUNS_PER_ITEM is the default.

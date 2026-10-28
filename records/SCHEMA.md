@@ -4,7 +4,7 @@
 
 ## Source-line rule
 
-Every item copied from FAIAS carries `src: <file>:<line>`. `<file>` is relative to the root of the FAIAS tree, and `<line>` starts at 1. The `text` of an item is the source line, with Markdown emphasis and table pipes removed. Every number in `text` appears in that line. The records are built from FAIAS v1.3.3 (CC BY 4.0). See `README.md` in this folder.
+Every item copied from FAIAS carries `src: <file>:<line>`. `<file>` is relative to the root of the FAIAS tree, and `<line>` starts at 1. The `text` of an item is the source line, with Markdown emphasis and table pipes removed. Every number in `text` appears in that line. The records are built from FAIAS v1.3.4 (CC BY 4.0). See `README.md` in this folder.
 
 ## Files in this folder
 
