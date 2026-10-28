@@ -321,3 +321,22 @@ Each run has one outcome: attacked (the scorer found a success, also in a cut-of
 | Ledger | One JSON line for each tools/call, also a refused one (an unknown tool, or arguments that are not an object): sequence, time, era, protocol version, session (first 8 characters), tool, arguments, error flag, the reason for a refusal, and a SHA-256 hash chained to the line before. `verify_ledger` finds an edited, removed or reordered line, and with the expected head a removed last line. It does not stop a person who rewrites the whole file. The key never goes in it. |
 
 It does not offer resources, prompts, sampling, elicitation, subscriptions, event streams, OAuth or the deprecated HTTP+SSE transport. It does not configure any platform. No engine uses it yet. It is tested with a local client only, not with any platform's MCP client.
+
+## 15. The testability report (0.6)
+
+`faias_harness/testability.py` writes the preflight result of a profile as a report. A person can file the report, and a third party can check it. It makes no network call and no model call, and it needs no key.
+
+**Rows.** The report has one row for each procedure in `records/capability_needs.yaml`. The result and the absent capabilities come from `judge` and `load_needs` in `preflight.py`. The report adds no rule of its own. The ID, IRQ, title, ★ and method class are copied from the record. The row also gives the needed capabilities and the FAIAS lines that the needs entry cites. Its needs status is `agreed`, `settled` or `open`, from the form of the entry (section 9).
+
+| Part | Content |
+|---|---|
+| Draft notice | The first line of `testability.md` and the field `needs_draft` of `testability.json`. Both quote the `status` line of the needs file. |
+| Header | The profile name, file name and SHA-256; the SHA-256 of the needs file and of each record; the harness version; the FAIAS version that `records/README.md` names; the time (UTC); the counts |
+| Not shown | It tests nothing. A `full` result means only that the profile declares every capability that the draft needs list. The operator declares the capabilities, and the harness has not observed them. It does not cover the procedures outside the 45 records. |
+| Lever table | For each capability that the profile does not declare: the procedures that move to `full` if the profile adds that capability alone, with the others unchanged. Sorted by that count. |
+
+For `chat_only.yaml`, the lever table puts `config_read` first (8 procedures move to `full`), then `control` (1). Each other capability moves no procedure.
+
+**Signature.** With `--sign-key`, `runlog.sign_log` signs `testability.json`, as it signs a run log. The key rules of section 12 apply. `verify` checks the signature with the public key that `--pubkey` names. It then checks the form of the report. Each result must follow from the needs of its row and the capabilities of the profile in the file. The summary and the lever table must follow from the rows. `verify` does not compare the report with the repository. A third party compares the SHA-256 values in the header with its own copy of the files. The signature does not cover `testability.md`.
+
+**Folder.** The command refuses an `--out` folder inside `records/` or `faias_harness/`. It refuses a folder that holds a report file already, so it never overwrites a report.

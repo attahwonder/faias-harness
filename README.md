@@ -201,6 +201,22 @@ py -3.14 -X utf8 -m faias_harness.emulators.mcp_tools serve --tools targets/exam
 py -3.14 -X utf8 -m faias_harness.emulators.mcp_tools verify --ledger <ledger file>
 ```
 
+## Testability report
+
+The testability report shows which of the 45 procedures with a record the harness can run against a target. It reads the target profile, the capability needs and the records. It makes no network call and no model call. It needs no key, and it tests nothing. Its results come from the preflight, so the counts are the same.
+
+The command writes `testability.json` and `testability.md` to the `--out` folder. Each row gives the procedure and IRQ IDs, the title, the ★ and the method class, copied from the record. It also gives the result, the needed capabilities and the needed capabilities that the profile lacks. It gives the FAIAS lines that the needs cite, and the status of the needs entry. The header gives the SHA-256 of the profile, of the capability needs and of each record. For each capability that the profile lacks, the lever table counts the procedures that it moves to `full`.
+
+The first line of `testability.md` says that the capability needs are a draft that no person has checked. A `full` result means only that the profile declares every capability that the draft needs list. The operator declares the capabilities. The harness has not observed them.
+
+```
+py -3.14 -X utf8 -m faias_harness.testability --profile targets/examples/chat_only.yaml --out <new folder>
+py -3.14 -X utf8 -m faias_harness.testability --profile <profile> --out <new folder> --sign-key <private key file>
+py -3.14 -X utf8 -m faias_harness.testability verify --report <folder>/testability.json --pubkey <public key file>
+```
+
+With `--sign-key`, the command signs `testability.json` with the run-signing key, as for a run log. The signature does not cover `testability.md`. Without `--sign-key`, the Markdown says "unsigned". The command refuses an `--out` folder inside `records/` or `faias_harness/`, and a folder that holds a report already. A report on a firm's own profile holds information about the firm. Keep it outside this repository.
+
 ## Relation to FAIAS
 
 The records are built from FAIAS version 1.3.4, published at <https://github.com/attahwonder/faias-standard> under CC BY 4.0. The records quote FAIAS text. Each quoted item carries the FAIAS file and the line number. `records/README.md` gives the attribution.

@@ -19,6 +19,7 @@ The evidence frame. A run log now states more about the code that made it. A thi
 - The summary of an external run counts channel errors by class (`channel_errors_by_class`). A class is the HTTP status, or the kind where the error has no status. The rates do not change.
 - `AGENTS.md` rule 14 now agrees with `items/README.md`. Text from a third-party set is used only when its licence allows it, with credit and an inert objective.
 - `tests/test_evidence_frame.py` holds the new tests. Two of them read the signed live logs, which are not in the repository. Set `FAIAS_HARNESS_RUNS` to their folder, or these two tests check nothing.
+- Testability report (`faias_harness/testability.py`, `tests/test_testability.py`). It writes `testability.json` and `testability.md` from a target profile alone, with the preflight result of each of the 45 procedures. It makes no network call. It can sign the JSON file, and its `verify` command checks the signature.
 - `__version__` is "0.6.0.dev0".
 
 ## 0.5.0 (28 October 2026)
