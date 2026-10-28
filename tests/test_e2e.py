@@ -178,7 +178,7 @@ class SpikeRunTests(unittest.TestCase):
             self.assertEqual([s for s in sec006_log._strings(doc) if holds_mark(s)], [], p.name)
             self.assertFalse(any(v.encode() in p.read_bytes() for v in (CREDENTIAL, ENDPOINT, PREFIX)), p.name)
         # SRD-1's own trace store holds the reply as the model gave it (the target's record). It is in the folder
-        # target/, with the README of TP-SEC-006 (I11 "found, not changed" 1). No other file holds a value.
+        # target/, with the README of TP-SEC-006. No other file holds a value.
         target = res.run_dir / "target"
         self.assertIn(CREDENTIAL.encode(), (target / "srd1_trace.jsonl").read_bytes())
         self.assertEqual(sorted(p.name for p in target.iterdir()), ["README.txt", "srd1_trace.jsonl"])
@@ -203,7 +203,7 @@ class SpikeRunTests(unittest.TestCase):
         return copy
 
     def test_the_form_check_fails_a_schema_4_log_that_holds_a_placeholder_marking(self):
-        # I11 "found, not changed" 2: as the TP-SEC-006 check does, `check_log` fails a schema 4 log in which a string
+        # As the TP-SEC-006 check does, `check_log` fails a schema 4 log in which a string
         # holds the marking of a placeholder. The engine's own log passes by construction.
         with StandInModelHost(respond) as host:
             res = self.run_spike(host, make_settings(cap_usd=10.0))
@@ -221,7 +221,7 @@ class SpikeRunTests(unittest.TestCase):
         self.assertEqual(runlog.check_log(copy), [])
 
     def test_the_code_block_hashes_the_redaction_file_and_the_lock_covers_it(self):
-        # I11 "found, not changed" 4: the code block hashes the file that holds the redaction, as it hashes the scorer
+        # The code block hashes the file that holds the redaction, as it hashes the scorer
         # and the record, and the lock covers that hash.
         with StandInModelHost(respond) as host:
             res = self.run_spike(host, make_settings(cap_usd=10.0))

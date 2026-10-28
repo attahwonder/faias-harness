@@ -184,7 +184,7 @@ class SelftestRunTests(unittest.TestCase):
         self.assertEqual((s14["counts"]["guard_trips"], s14["observed"]["all_loopback"]), (0, True))
 
     def test_the_tool_probes_s17_to_s19(self):
-        """T18: 19 probe records; the three tool probes pass with the counts of the design."""
+        """There are 19 probe records. The three tool probes pass with the counts of the design."""
         self.assertEqual(list(self.probes), [f"S{n}" for n in range(1, 20)])
         s17, s18, s19 = (self.probes[k]["observed"] for k in ("S17", "S18", "S19"))
         self.assertEqual((s17["outcome"], s17["key_in_log"], s17["key_in_error"]), ("EgressRefused", False, False))
@@ -276,7 +276,7 @@ class SelftestRunTests(unittest.TestCase):
         self.assertEqual(h["code"]["scorer_file"], selftest.PROBES_FILE)
 
     def test_steps_and_measures(self):
-        """T5: not_in_run names steps 3 to 7, M2, M5 and M6 with their lines; the summary gives M1, M3 and M4."""
+        """not_in_run names steps 3 to 7, M2, M5 and M6 with their lines. The summary gives M1, M3 and M4."""
         nir = self.header["not_in_run"]
         text = " | ".join(f"{x['what']}: {x['why']} {x['lines']}" for x in nir)
         for what in ("step 3", "step 4", "steps 5 and 6", "step 7", "M2", "M5", "M6"):
@@ -342,7 +342,7 @@ class SelftestRunTests(unittest.TestCase):
         self.assertTrue(any("does not match" in p for p in selftest.gate_problems("TP-DAT-009", changed)))
 
     def test_the_pinned_key_and_the_evidence_gate(self):
-        """CHECK_060_P5 F4: with the key from the log's own .sig file, the check shows integrity, not who signed."""
+        """With the key from the log's own .sig file, the check shows integrity, not who signed."""
         unpinned = selftest.current(selftest_log=self.log)
         pinned = selftest.current(selftest_log=self.log, pubkey=self.pub)
         _, other = runlog.make_key(self.dir / "other_keys", repo=REPO)
@@ -367,11 +367,11 @@ class SelftestRunTests(unittest.TestCase):
                                f"{self.header['code']['git_commit'] or 'not recorded'}, code manifest matches: yes")
 
     def test_the_setting_selftest_pubkey(self):
-        """F4: the settings field; a file without it keeps its settings hash."""
+        """The setting selftest_pubkey. A file without it keeps its settings hash."""
         from faias_harness import settings as settings_mod
         from tests.helpers import make_settings, raw_settings
         self.assertEqual(make_settings(selftest_pubkey=None).digest(), make_settings().digest())
-        self.assertNotIn("selftest_pubkey", make_settings().canonical())     # re-check R5: absent when null
+        self.assertNotIn("selftest_pubkey", make_settings().canonical())     # absent when null
         self.assertNotEqual(make_settings(selftest_pubkey="keys/st.pub.pem").digest(), make_settings().digest())
         self.assertEqual(make_settings(selftest_pubkey="keys/st.pub.pem").selftest_pubkey, "keys/st.pub.pem")
         for bad in (3, "", " "):

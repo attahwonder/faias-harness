@@ -360,7 +360,7 @@ class HandlerTests(_Base):
             mt.ToolEmulator(mt.load_tools(STORE_TOOLS_FILE), self.dir / "missing.jsonl", store=self.dir / "nope.yaml")
 
     def raw_call(self, e, amount_text, mid=1):
-        """A tools/call whose amount is the JSON text given, as a client may send it (CHECK_060_P5 F1 and F2)."""
+        """A tools/call whose amount is the JSON text given, as a client may send it."""
         params = {"name": "fee_refund", "arguments": {"account_ref": "SYN-A-0001", "fee_id": "SYN-F-0001",
                                                       "amount_gbp": "AMOUNT", "reason": "r"}, "_meta": modern_meta()}
         body = json.dumps({"jsonrpc": "2.0", "id": mid, "method": "tools/call", "params": params})
@@ -400,12 +400,12 @@ class HandlerTests(_Base):
         bad.write_bytes(e.ledger.path.read_bytes().replace(b'"amount_gbp":12.0', b'"amount_gbp":NaN', 1))
         ok, problems = mt.verify_ledger(bad)
         self.assertEqual((ok, problems), (False, ["cannot read the ledger (ValueError)"]))
-        big = self.dir / "big_ledger.jsonl"          # re-check R1: 1e400 reads as an infinity
+        big = self.dir / "big_ledger.jsonl"          # 1e400 reads as an infinity
         big.write_bytes(e.ledger.path.read_bytes().replace(b'"amount_gbp":12.0', b'"amount_gbp":1e400', 1))
         self.assertEqual(mt.verify_ledger(big), (False, ["cannot read the ledger (ValueError)"]))
 
     def test_a_store_fee_that_is_not_a_finite_number_above_zero_is_refused(self):
-        """Re-check R3: a NaN fee would equal every amount, so the handler refuses the store."""
+        """A NaN fee would equal every amount, so the handler refuses the store."""
         def store(fee):
             return {"accounts": [{"account_ref": "SYN-A-0001", "fees": [{"fee_id": "SYN-F-0001", "amount_gbp": fee}]}]}
         for fee in (float("nan"), float("inf"), float("-inf"), 0, -12.0, "12.0", True, None):
@@ -416,7 +416,7 @@ class HandlerTests(_Base):
 
 
 class SyntheticBankTests(unittest.TestCase):
-    """T10: SRD-1's synthetic customers, accounts and fees."""
+    """SRD-1's synthetic customers, accounts and fees."""
 
     def test_counts_domains_and_references(self):
         import yaml

@@ -76,8 +76,8 @@ def respond(text, nth):
 
 
 def copy_repo(dst):
-    """The parts of the repository that a spike-set header reads: the record, the scorer file and (since the I11
-    redaction) the redaction file."""
+    """A spike-set header reads three parts of the repository. They are the record, the scorer file and (since
+    the redaction of 0.6.0) the redaction file."""
     for rel in (runlog.RECORD_FILE, runlog.SCORER_FILE, runlog.REDACTION_FILE):
         (dst / rel).parent.mkdir(parents=True, exist_ok=True)
         shutil.copyfile(REPO / rel, dst / rel)
@@ -108,7 +108,7 @@ def run_record(item, n=1, reply="I cannot do that.", t_ns=2_000, request=None):
 
 
 class BoundTests(unittest.TestCase):
-    """F1: the one-sided 95% upper bound on the item rate, and the note on per-item intervals."""
+    """The one-sided 95% upper bound on the item rate, and the note on per-item intervals."""
 
     def test_hand_computed_values(self):
         self.assertEqual(sec001._upper95(0, 25), (0.1129, "clopper_pearson_exact_zero"))     # 1 - 0.05 ** (1/25)
@@ -149,7 +149,7 @@ class BoundTests(unittest.TestCase):
 
 
 class LockTests(unittest.TestCase):
-    """F2: the code block, and a lock that covers the scorer file and the record file."""
+    """The code block, and a lock that covers the scorer file and the record file."""
 
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
@@ -234,7 +234,7 @@ class LockTests(unittest.TestCase):
 
 
 class StarTests(unittest.TestCase):
-    """F6: the header star is compared with the record's star only."""
+    """The header star is compared with the record's star only."""
 
     def test_a_record_with_another_star_passes_and_a_wrong_star_fails(self):
         with tempfile.TemporaryDirectory() as d:
@@ -253,7 +253,7 @@ class StarTests(unittest.TestCase):
 
 
 class LogToolTests(unittest.TestCase):
-    """F3, F4 and F5 on logs that the engine writes: rescore, verify --no-repo and stamp."""
+    """Rescore, verify --no-repo and stamp on logs that the engine writes."""
 
     @classmethod
     def setUpClass(cls):
@@ -389,7 +389,7 @@ class LogToolTests(unittest.TestCase):
 
 
 class LiveLogTests(unittest.TestCase):
-    """F2, F3, F4 on the signed live logs. They are outside the repository. Without them these tests check nothing;
+    """Verify, verify --no-repo and rescore on the signed live logs. They are outside the repository. Without them these tests check nothing;
     they do not skip, because tests/run_all.py accepts a bare OK only. Each test prints the number of logs that it
     read, or why it read none, and tests/run_all.py shows that line."""
 
@@ -439,7 +439,7 @@ class LiveLogTests(unittest.TestCase):
 
 
 class FinishErrorTests(unittest.TestCase):
-    """F7: finish reason "error" is no_result, and the gateway retries it as a processed failure."""
+    """Finish reason "error" is no_result, and the gateway retries it as a processed failure."""
 
     def test_outcomes(self):
         hit, miss = sec001.Score(True, "override", "X"), sec001.Score(False, "override", "")
@@ -482,7 +482,7 @@ class FinishErrorTests(unittest.TestCase):
 
 
 class MaxTokensTests(unittest.TestCase):
-    """F8: the cap meter's worst case and the count of calls above max_tokens."""
+    """The cap meter's worst case and the count of calls above max_tokens."""
 
     def test_the_worst_case_follows_the_largest_completion_seen(self):
         cap = CapMeter(10.0, 1.0, 2.0, 1500)
@@ -505,7 +505,7 @@ class MaxTokensTests(unittest.TestCase):
 
 
 class ChannelErrorClassTests(unittest.TestCase):
-    """F9: channel errors by class in an external run; the rates do not change."""
+    """Channel errors by class in an external run; the rates do not change."""
 
     def test_the_runner_counts_by_http_status_or_by_kind(self):
         errors = [ChannelError("channel_error", "x", 400), ChannelError("channel_error", "x", 400),
@@ -538,7 +538,7 @@ class ChannelErrorClassTests(unittest.TestCase):
 
 
 class VersionTextTests(unittest.TestCase):
-    """CHECK_060_P5 F5 and F6: the version text names both procedures; the code block note counts no file hashes."""
+    """The version text names both procedures, and the code block note counts no file hashes."""
 
     @staticmethod
     def text(rel):

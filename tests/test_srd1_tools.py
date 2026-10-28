@@ -103,7 +103,7 @@ class _World(unittest.TestCase):
 
 
 class McpClientTests(_World):
-    """T11."""
+    """SRD-1's MCP client, with the session flow, an empty allow-list and the key in error text."""
 
     def test_the_client_completes_the_session_flow_through_the_egress_client(self):
         e = self.emulator()
@@ -152,7 +152,7 @@ class McpClientTests(_World):
 
 
 class ToolLoopTests(_World):
-    """T15, and the key search of T11 over a whole turn."""
+    """The tool rounds of one turn, and the search for the key over a whole turn."""
 
     def test_one_turn_makes_two_model_calls_one_ledger_line_and_one_sent_trace_line(self):
         target = self.world(once(refund()))
@@ -209,7 +209,7 @@ class ToolLoopTests(_World):
 
 
 class EntitlementTests(_World):
-    """T12."""
+    """The entitlement check of C-07."""
 
     def test_own_account_passes_and_another_customer_is_denied(self):
         target = self.world(once(refund("SYN-A-0001", "SYN-F-0001", 12.0)))
@@ -239,7 +239,7 @@ class EntitlementTests(_World):
 
 
 class GateTests(_World):
-    """T13."""
+    """The refund gate of C-09."""
 
     def test_at_the_cap_passes_and_above_the_cap_is_held(self):
         target = self.world(lambda m: "Done." if m[-1]["role"] == "tool" else
@@ -284,7 +284,7 @@ class GateTests(_World):
         self.assertEqual(preflight.tools_problems(make_settings()), [])
         sec006 = preflight.tools_problems(make_settings(tools_enabled=True, tool_key_env=TOOL_ENV, mode="explore",
                                                         procedure="TP-SEC-006", item_set="TP-SEC-006"))
-        self.assertFalse(any("not built yet" in p for p in sec006), sec006)      # T17: the engine starts the emulator
+        self.assertFalse(any("not built yet" in p for p in sec006), sec006)      # the engine starts the emulator
         self.assertTrue(any(p.startswith("refund cap not declared") for p in sec006), sec006)
 
     def test_config_read_gate(self):
@@ -311,7 +311,7 @@ class _OldGate(RefundGate):
 
 
 class AmountTests(_World):
-    """CHECK_060_P5 F1 and F2: NaN, the infinities, an amount of zero or less, and an integer too large for a float."""
+    """NaN, the infinities, an amount of zero or less, and an integer too large for a float."""
 
     BIG = "1" + "0" * 400
 
@@ -359,13 +359,13 @@ class AmountTests(_World):
         ok, problems = tr.verify_chain(bad)
         self.assertFalse(ok)
         self.assertEqual(problems, ["cannot read the trace: ValueError"])
-        big = self.dir / "big.jsonl"                 # re-check R1: 1e400 reads as an infinity
+        big = self.dir / "big.jsonl"                 # 1e400 reads as an infinity
         big.write_bytes((self.dir / "strict.jsonl").read_bytes().replace(b"12.0", b"1e400"))
         self.assertEqual(tr.verify_chain(big), (False, ["cannot read the trace: ValueError"]))
 
 
 class KillSwitchTests(_World):
-    """T14."""
+    """The kill switch of C-18."""
 
     def test_the_switch_stops_new_messages_and_a_pending_tool_call(self):
         def switch_on_then_call(messages):
@@ -407,7 +407,7 @@ class KillSwitchTests(_World):
 
 
 class SettingsHeaderLockTests(unittest.TestCase):
-    """T16."""
+    """The settings, the header and the lock of a run with tools on."""
 
     def test_the_settings_validate_and_a_file_without_them_keeps_its_hash(self):
         before = make_settings()
@@ -436,7 +436,7 @@ class SettingsHeaderLockTests(unittest.TestCase):
 
 
 class EngineRunTests(unittest.TestCase):
-    """T16: a signed run with tools on, through spike.execute."""
+    """A signed run with tools on, through spike.execute."""
 
     def test_a_run_with_tools_on_records_the_tools_block_and_the_ledger(self):
         with tempfile.TemporaryDirectory() as t:
