@@ -23,12 +23,29 @@ Schema 3 (version 0.5) is the log of an external run (engine/external.py). Its h
 adapter, the channel, the endpoint host, what the channel shows, and the declared model and version with their
 basis), a `model` block that states the model is not pinned, and a `budget` block (cap, the operator's cost per call,
 call budget) in place of the routing locks and prices. `verify` checks these fields.
+
+Schemas 4 (an SRD-1 run) and 5 (an external run) are the logs of version 0.6. They are schemas 2 and 3 with three
+additions. A `code` block holds the engine version, the git commit (null when git does not answer) and the SHA-256 of
+the scorer file and of the record file. The lock hash also covers those two file hashes. The corpus holds the scorer
+keys (the marker of each C1 item and the product of each C2 and C3 item), so the items hash can be checked from the
+log alone. `verify` recomputes the lock hash of a schema 4 or 5 log. Logs of schemas 1 to 3 are checked as before.
+
+Three more commands, none of which makes a network call:
+
+  rescore  --log <log>               scores each run's reply again with the scorer of this checkout; exit 1 on a
+                                     difference from the recorded score
+  verify   --log <log> --sig <sig> --no-repo
+                                     checks the signature and the form without the item set and the record of this
+                                     checkout; the items hash is checked against the log itself
+  stamp    --log <log>               writes <log>.sha256 and prints the OpenTimestamps command to run
 """
 import argparse
 import base64
 import hashlib
 import json
 import os
+import re
+import subprocess
 import sys
 import time
 from datetime import datetime, timezone
@@ -42,9 +59,18 @@ from .. import __version__
 from . import sec001
 
 REPO = Path(__file__).resolve().parents[2]
-SCHEMA = "faias-harness-run-log/2"   # 2 adds the item set, the clean-baseline arm and the list `not_in_run`
+SCHEMA = "faias-harness-run-log/4"   # 4 (version 0.6): schema 2 with the code block and the scorer keys
+SCHEMA_EXTERNAL = "faias-harness-run-log/5"   # 5 (version 0.6): schema 3 with the code block and the scorer keys
+SCHEMA_V3 = "faias-harness-run-log/3"   # 3 (version 0.5): a run against an external target; still checked
+SCHEMA_V2 = "faias-harness-run-log/2"   # 2 adds the item set, the clean-baseline arm and the list `not_in_run`; still checked
 SCHEMA_V1 = "faias-harness-run-log/1"  # logs of the engine spike in version 0.3; still checked
-SCHEMA_EXTERNAL = "faias-harness-run-log/3"   # 3 (version 0.5): a run against an external target through an adapter
+EXTERNAL_SCHEMAS = (SCHEMA_V3, SCHEMA_EXTERNAL)
+CODE_SCHEMAS = (SCHEMA, SCHEMA_EXTERNAL)      # the logs with the code block, the scorer keys and the wider lock
+KNOWN_SCHEMAS = (SCHEMA_V1, SCHEMA_V2, SCHEMA_V3, SCHEMA, SCHEMA_EXTERNAL)
+SCORER_FILE = "faias_harness/engine/sec001.py"
+RECORD_FILE = "records/TP-SEC-001.yaml"
+HEX64 = re.compile(r"[0-9a-f]{64}")
+GIT_COMMIT = re.compile(r"[0-9a-f]{40}|[0-9a-f]{64}")
 EGRESS_LIMIT = ("client-level control: requests made through the shared client are checked against the allow-list. "
                 "It is not a network sandbox.")
 VARIANTS = {
@@ -79,7 +105,8 @@ SCORER_STATUS = {
         "C4: a disclosure of the rules in other words, without the canary, is missed",
     ],
     "outcomes": "attacked, defended, blocked (a filter, guardrail or provider refusal declined the call; a defended run), "
-                "no_result (an empty reply, or a reply cut off at the output limit, that is not a success; left out of the rates)",
+                "no_result (an empty reply, a reply cut off at the output limit, or a reply that the model host "
+                "stopped with an error, that is not a success; left out of the rates)",
 }
 NOT_IN_RUN = [
     "the guardrail layer C-10 (the procedure expects the classifier to be enabled as in production)",
@@ -113,6 +140,26 @@ def items_digest(items=sec001.ITEMS, baseline=()):
                                  for i in tuple(items) + tuple(baseline)]))
 
 
+def git_commit(repo=REPO):
+    """The commit of the checkout (`git rev-parse HEAD`), or None when git does not answer. Local only."""
+    try:
+        p = subprocess.run(["git", "-C", str(repo), "rev-parse", "HEAD"], capture_output=True, text=True, timeout=20)
+    except (OSError, subprocess.SubprocessError):
+        return None
+    out = p.stdout.strip()
+    return out if p.returncode == 0 and GIT_COMMIT.fullmatch(out) else None
+
+
+def code_facts(repo=REPO):
+    """The code block of a schema 4 or 5 header: what code made the log."""
+    repo = Path(repo)
+    return {"engine_version": __version__, "git_commit": git_commit(repo),
+            "git_commit_note": "git rev-parse HEAD of the checkout that ran; null when git did not answer. It does "
+                               "not show changes that were not committed; the two file hashes do.",
+            "scorer_file": SCORER_FILE, "scorer_sha256": sha256_hex((repo / SCORER_FILE).read_bytes()),
+            "record_file": RECORD_FILE, "record_sha256": sha256_hex((repo / RECORD_FILE).read_bytes())}
+
+
 def build_header(settings, *, allow_hosts, system_prompt_sha256, confirmation, probes=None, repo=REPO,
                  variant="standard", engine="inspect"):
     """The header, without the lock. `lock_header` adds the lock."""
@@ -120,6 +167,7 @@ def build_header(settings, *, allow_hosts, system_prompt_sha256, confirmation, p
     items, baseline = sec001.load_items(settings.item_set, repo=repo)
     return {
         "type": "header", "schema": SCHEMA, "label": sec001.LABELS[settings.item_set], "engine_version": __version__,
+        "code": code_facts(repo),
         "procedure": {"tp": rec["tp"], "title": rec["title"], "irq": rec["irq"], "star": rec["star"],
                       "star_note": "copied from the Confidence line of the procedure; the harness never computes it",
                       "faias_version": sec001.FAIAS_VERSION, "source": rec["source"]},
@@ -135,6 +183,7 @@ def build_header(settings, *, allow_hosts, system_prompt_sha256, confirmation, p
                    f"set by the reviewer above the FAIAS minimum of 3 (PLAYBOOK_SEC_001.md line 27) and disclosed here",
                    "per_class": {c: sum(1 for i in items if i.cls == c) for c in sec001.CLASSES},
                    "manifest": sec001.manifest(items, baseline), "items_sha256": items_digest(items, baseline),
+                   "scorer_keys": sec001.scorer_keys(items),
                    "scoring": "deterministic; no model judge; the clean-baseline requests are recorded, not scored"},
         "variant": {"name": variant, "purpose": VARIANTS[variant]},
         "run_engine": _engine_facts(engine),
@@ -154,7 +203,7 @@ def build_external_header(settings, *, target, allow_hosts, confirmation, probes
     items, baseline = sec001.load_items(settings.item_set, repo=repo)
     return {
         "type": "header", "schema": SCHEMA_EXTERNAL, "label": sec001.LABELS[settings.item_set],
-        "engine_version": __version__,
+        "engine_version": __version__, "code": code_facts(repo),
         "procedure": {"tp": rec["tp"], "title": rec["title"], "irq": rec["irq"], "star": rec["star"],
                       "star_note": "copied from the Confidence line of the procedure; the harness never computes it",
                       "faias_version": sec001.FAIAS_VERSION, "source": rec["source"]},
@@ -180,6 +229,7 @@ def build_external_header(settings, *, target, allow_hosts, confirmation, probes
                    "set by the reviewer above the FAIAS minimum of 3 (PLAYBOOK_SEC_001.md line 27) and disclosed here",
                    "per_class": {c: sum(1 for i in items if i.cls == c) for c in sec001.CLASSES},
                    "manifest": sec001.manifest(items, baseline), "items_sha256": items_digest(items, baseline),
+                   "scorer_keys": sec001.scorer_keys(items),
                    "scoring": "deterministic; no model judge; the clean-baseline requests are recorded, not scored"},
         "variant": {"name": "external", "purpose": VARIANTS["external"]},
         "run_engine": _engine_facts(engine),
@@ -202,16 +252,28 @@ LOCK_KEYS = ("procedure", "thresholds", "settings_hash", "routing", "model", "va
 LOCK_KEYS_EXTERNAL = ("procedure", "thresholds", "settings_hash", "target", "model", "budget", "variant")
 
 
+def lock_fixed(header):
+    """The fixed parts of a header that the lock hash covers. Schemas 4 and 5 add the scorer and record hashes."""
+    schema = header.get("schema")
+    fixed = {k: header.get(k) for k in (LOCK_KEYS_EXTERNAL if schema in EXTERNAL_SCHEMAS else LOCK_KEYS)}
+    fixed["items_sha256"] = (header.get("corpus") or {}).get("items_sha256")
+    if schema in CODE_SCHEMAS:
+        code = header.get("code") or {}
+        fixed["scorer_sha256"], fixed["record_sha256"] = code.get("scorer_sha256"), code.get("record_sha256")
+    return fixed
+
+
 def lock_header(header, clock_ns=None):
     """Add the lock: a time, and a hash over the fixed parts. Call this just before the log is opened."""
     ns = time.time_ns() if clock_ns is None else clock_ns
-    external = header.get("schema") == SCHEMA_EXTERNAL
-    fixed = {k: header[k] for k in (LOCK_KEYS_EXTERNAL if external else LOCK_KEYS)}
-    fixed["items_sha256"] = header["corpus"]["items_sha256"]
+    external = header.get("schema") in EXTERNAL_SCHEMAS
     covers = ("procedure, thresholds with bases, settings hash, target with its declared model and version, "
               "budget, item set") if external else \
         "procedure, thresholds with bases, settings hash, routing locks, model ID, system prompt hash, item set"
-    header["lock"] = {"time": iso(ns), "time_ns": ns, "hash": sha256_hex(canonical(fixed)), "covers": covers}
+    if header.get("schema") in CODE_SCHEMAS:
+        covers += f", scorer file hash ({SCORER_FILE}), record file hash ({RECORD_FILE})"
+    header["lock"] = {"time": iso(ns), "time_ns": ns, "hash": sha256_hex(canonical(lock_fixed(header))),
+                      "covers": covers}
     return header
 
 
@@ -249,8 +311,78 @@ def read_log(path):
     return [json.loads(line) for line in Path(path).read_bytes().decode("utf-8").split("\n") if line.strip()]
 
 
-def check_log(path, repo=REPO):
-    """Return the list of problems in the form of a run log (empty if none)."""
+def log_items(h, runs):
+    """The items of a log's set, rebuilt from the log alone: the header's manifest and scorer keys, and the request
+    of each run record. Returns (items, None), or (None, the reason) when the log does not hold all of that."""
+    corpus = h.get("corpus") or {}
+    keys = corpus.get("scorer_keys")
+    if not isinstance(keys, dict):
+        return None, "the log does not hold the scorer keys; only schemas 4 and 5 hold them"
+    texts = {}
+    for r in runs:
+        texts.setdefault(r.get("item"), r.get("request"))
+    manifest = corpus.get("manifest") or []
+    missing = [m.get("id") for m in manifest if m.get("id") not in texts]
+    if missing:
+        return None, f"{len(missing)} items of the manifest have no run record, so their text is not in the log"
+    items = []
+    for m in manifest:
+        k = keys.get(m["id"]) or {}
+        items.append(sec001.Item(m["id"], m.get("class"), m.get("activity"), m.get("objective"), texts[m["id"]],
+                                 marker=k.get("marker", ""), subject=k.get("subject", "")))
+    return items, None
+
+
+def items_hash_from_log(h, runs):
+    """("matches" | "differs" | "not checked", detail): the header's items hash against the log alone."""
+    items, reason = log_items(h, runs)
+    if items is None:
+        return "not checked", reason
+    if items_digest(items) == (h.get("corpus") or {}).get("items_sha256"):
+        return "matches", "the manifest, the scorer keys and the requests in the log"
+    return "differs", "the manifest, the scorer keys and the requests in the log"
+
+
+def _code_problems(h):
+    """The checks that only a schema 4 or 5 header has: the code block, the scorer keys and the lock hash."""
+    out = []
+    c = h.get("code") or {}
+    if not c.get("engine_version"):
+        out.append("header: the code block has no engine version")
+    if "git_commit" not in c or not (c["git_commit"] is None or GIT_COMMIT.fullmatch(str(c["git_commit"]))):
+        out.append("header: the code block has no git commit (null is allowed)")
+    for k in ("scorer_sha256", "record_sha256"):
+        if not HEX64.fullmatch(str(c.get(k))):
+            out.append(f"header: the code block has no {k}")
+    if not isinstance((h.get("corpus") or {}).get("scorer_keys"), dict):
+        out.append("header: the corpus has no scorer keys")
+    lock = h.get("lock") or {}
+    if lock.get("hash") and lock["hash"] != sha256_hex(canonical(lock_fixed(h))):
+        out.append("header: the lock hash does not match the fixed parts of the header")
+    return out
+
+
+def _run_items_problems(h, runs):
+    """Without the repository: each run names an item of the manifest, of the same class, with one request text."""
+    classes = {m.get("id"): m.get("class") for m in (h.get("corpus") or {}).get("manifest") or []}
+    out, texts = [], {}
+    for r in runs:
+        i, n = r.get("item"), r.get("run")
+        if i not in classes:
+            out.append(f"run {i}/{n}: the item is not in the manifest")
+        elif "class" in r and r["class"] != classes[i]:
+            out.append(f"run {i}/{n}: the class differs from the manifest")
+        if texts.setdefault(i, r.get("request")) != r.get("request"):
+            out.append(f"run {i}/{n}: the request differs from the request of an earlier run of that item")
+    return out
+
+
+def check_log(path, repo=REPO, use_repo=True):
+    """Return the list of problems in the form of a run log (empty if none).
+
+    With `use_repo` false, nothing is read from the record or the item set of the checkout: the procedure ID and
+    the star must be present, each run must name an item of the manifest with one request text, and the items
+    hash is checked against the log alone where the log holds what that needs (`items_hash_from_log`)."""
     problems = []
     try:
         recs = read_log(path)
@@ -259,19 +391,26 @@ def check_log(path, repo=REPO):
     if not recs or recs[0].get("type") != "header":
         return ["the first line is not the header"]
     h = recs[0]
-    rec = sec001.load_record(repo=repo)
-    if h.get("schema") not in (SCHEMA, SCHEMA_V1, SCHEMA_EXTERNAL):
+    rec = sec001.load_record(repo=repo) if use_repo else None
+    schema = h.get("schema")
+    if schema not in KNOWN_SCHEMAS:
         problems.append("unknown schema")
-    external = h.get("schema") == SCHEMA_EXTERNAL
-    # A version 1 log is a spike log: it names no item set. A version 2 or 3 log must name its set.
-    item_set = (h.get("corpus") or {}).get("item_set") if h.get("schema") in (SCHEMA, SCHEMA_EXTERNAL) else "spike"
+    external = schema in EXTERNAL_SCHEMAS
+    # A version 1 log is a spike log: it names no item set. A log of a later version must name its set.
+    item_set = (h.get("corpus") or {}).get("item_set") if schema in KNOWN_SCHEMAS[1:] else "spike"
     if item_set is None:
         return problems + ["header: the item set is missing"]
     p = h.get("procedure") or {}
-    if p.get("tp") != rec["tp"]:
-        problems.append("header: procedure ID differs from the record")
-    if p.get("star") != rec["star"] or p.get("star") != "★" + "4":
-        problems.append("header: star label is not the label of the record (★4)")
+    if rec is None:
+        if not p.get("tp") or not p.get("star"):
+            problems.append("header: the procedure ID or the star label is missing")
+    else:
+        if p.get("tp") != rec["tp"]:
+            problems.append("header: procedure ID differs from the record")
+        if p.get("star") != rec["star"]:
+            problems.append(f"header: star label is not the label of the record ({rec['star']})")
+    if schema in CODE_SCHEMAS:
+        problems += _code_problems(h)
     if external:
         t = h.get("target") or {}
         if t.get("kind") != "external" or not t.get("adapter") or not t.get("endpoint_host"):
@@ -311,16 +450,22 @@ def check_log(path, repo=REPO):
         return problems + ["header: the item set is unknown"]
     if h.get("label") != sec001.LABELS[item_set]:
         problems.append(f"header: the label '{sec001.LABELS[item_set]}' is missing")
-    items, baseline = sec001.load_items(item_set, repo=repo)
-    if (h.get("corpus") or {}).get("items_sha256") != items_digest(items, baseline):
-        problems.append(f"header: the items hash differs from the item set '{item_set}' in the repository")
-    texts = {i.id: i.text for i in items + baseline}
+    runs = [r for r in recs if r.get("type") == "run"]
+    if use_repo:
+        items, baseline = sec001.load_items(item_set, repo=repo)
+        if (h.get("corpus") or {}).get("items_sha256") != items_digest(items, baseline):
+            problems.append(f"header: the items hash differs from the item set '{item_set}' in the repository")
+        texts = {i.id: i.text for i in items + baseline}
+    else:
+        texts = None
+        problems += _run_items_problems(h, runs)
+        if items_hash_from_log(h, runs)[0] == "differs":
+            problems.append("header: the items hash differs from the manifest, the scorer keys and the requests in the log")
     lock = h.get("lock") or {}
     if not lock.get("hash") or not isinstance(lock.get("time_ns"), int):
         problems.append("header: the lock is missing")
-    runs = [r for r in recs if r.get("type") == "run"]
     for r in runs:
-        if r.get("request") != texts.get(r.get("item")):
+        if texts is not None and r.get("request") != texts.get(r.get("item")):
             problems.append(f"run {r.get('item')}/{r.get('run')}: the request is not the text of that item in the set")
         if not isinstance(r.get("t_ns"), int) or r["t_ns"] <= lock.get("time_ns", 0):
             problems.append(f"run {r.get('item')}/{r.get('run')}: time is not later than the lock time")
@@ -389,8 +534,12 @@ def sign_log(log_path, key_path):
     return out
 
 
-def verify_log(log_path, sig_path, pubkey_path=None, repo=REPO):
-    """Return (ok, message). The signature is over the exact bytes of the log."""
+def verify_log(log_path, sig_path, pubkey_path=None, repo=REPO, use_repo=True):
+    """Return (ok, message). The signature is over the exact bytes of the log.
+
+    With `use_repo` false (`verify --no-repo`), the form is checked without the record and the item set of this
+    checkout (`check_log`), and the message ends with the items hash line and "repository item set: not checked"."""
+    tail = "" if use_repo else "\n" + _no_repo_lines(log_path)
     try:
         s = json.loads(Path(sig_path).read_bytes().decode("utf-8"))
         data = Path(log_path).read_bytes()
@@ -398,18 +547,93 @@ def verify_log(log_path, sig_path, pubkey_path=None, repo=REPO):
         pub = serialization.load_pem_public_key(pub_pem)
         pub.verify(base64.b64decode(s["signature_b64"]), data)
     except InvalidSignature:
-        return False, "FAIL: the signature does not match the log"
+        return False, "FAIL: the signature does not match the log" + tail
     except Exception as e:      # noqa: BLE001
-        return False, f"FAIL: cannot verify ({type(e).__name__})"
-    problems = check_log(log_path, repo=repo)
+        return False, f"FAIL: cannot verify ({type(e).__name__})" + tail
+    problems = check_log(log_path, repo=repo, use_repo=use_repo)
     if problems:
-        return False, "FAIL: the signature is valid but the log is malformed: " + "; ".join(problems)
+        return False, "FAIL: the signature is valid but the log is malformed: " + "; ".join(problems) + tail
     pin = "pinned public key" if pubkey_path else "public key taken from the signature file (not pinned)"
-    return True, f"PASS: signature valid ({pin}); log form ok"
+    form = "log form ok" if use_repo else "log form ok without the repository"
+    return True, f"PASS: signature valid ({pin}); {form}" + tail
+
+
+def _no_repo_lines(log_path):
+    try:
+        recs = read_log(log_path)
+        status, detail = items_hash_from_log(recs[0], [r for r in recs if r.get("type") == "run"])
+        items_line = f"items hash: {status} ({detail})"
+    except (ValueError, OSError, IndexError, AttributeError) as e:
+        items_line = f"items hash: not checked (cannot read the log: {type(e).__name__})"
+    return items_line + "\nrepository item set: not checked"
+
+
+# ---------- rescore, stamp ----------
+
+def rescore_log(log_path, repo=REPO):
+    """Score each run's reply again with the scorer that this process runs, and compare with the recorded score.
+
+    The marker and product of each item come from the scorer keys in the log (schemas 4 and 5), or else from the
+    item set of the checkout. A clean-baseline run is never scored: its recorded score must be the baseline score.
+    Returns (lines to print, mismatches). Makes no network call."""
+    recs = read_log(log_path)
+    h, runs = recs[0], [r for r in recs if r.get("type") == "run"]
+    used = sha256_hex(Path(sec001.__file__).read_bytes())
+    logged = (h.get("code") or {}).get("scorer_sha256")
+    lines = [f"scorer used: {SCORER_FILE} of this checkout, sha256 {used}",
+             "scorer in the log: " + (f"sha256 {logged} ({'equal to' if logged == used else 'differs from'} the "
+                                      "scorer used)" if logged else "not recorded (logs before schema 4 do not record it)")]
+    corpus = h.get("corpus") or {}
+    keys = corpus.get("scorer_keys")
+    if isinstance(keys, dict):      # schemas 4 and 5: the log holds what the scorer needs, also for a stopped run
+        items = [sec001.Item(m["id"], m.get("class"), m.get("activity"), m.get("objective"), "",
+                             marker=(keys.get(m["id"]) or {}).get("marker", ""),
+                             subject=(keys.get(m["id"]) or {}).get("subject", ""))
+                 for m in corpus.get("manifest") or []]
+        source = "the scorer keys in the log"
+    else:
+        item_set = "spike" if h.get("schema") == SCHEMA_V1 else corpus.get("item_set")
+        its, base = sec001.load_items(item_set, repo=repo)
+        items = its + base
+        source = f"the item set '{item_set}' of this checkout (the log does not hold the scorer keys)"
+    by_id = {i.id: i for i in items}
+    lines.append(f"markers and products from: {source}")
+    mismatches = []
+    for r in runs:
+        it, where = by_id.get(r.get("item")), f"{r.get('item')}/{r.get('run')}"
+        if it is None:
+            mismatches.append(f"{where}: the item is not in {source}")
+            continue
+        if it.cls == sec001.BASELINE:
+            now = sec001.Score(False, "baseline", "")
+        else:
+            item = sec001.Item(it.id, it.cls, it.activity, it.objective, r.get("request") or "", marker=it.marker,
+                               subject=it.subject)
+            now = sec001.score_response(item, r.get("reply") or "")
+        got = {"success": now.success, "kind": now.kind, "evidence": now.evidence}
+        recorded = {k: (r.get("score") or {}).get(k) for k in got}
+        if got != recorded:
+            mismatches.append(f"{where}: recorded {canonical(recorded)}; now {canonical(got)}")
+    lines.append(f"runs rescored: {len(runs)}; mismatches: {len(mismatches)}")
+    return lines + ["MISMATCH " + m for m in mismatches], mismatches
+
+
+def stamp_log(log_path):
+    """Write <log>.sha256 (the hex digest and the file name, in sha256sum format) and return its path and the
+    OpenTimestamps command to run. The harness does not run `ots` and makes no network call. A different
+    <log>.sha256 that exists already is never overwritten."""
+    log_path = Path(log_path)
+    line = f"{sha256_hex(log_path.read_bytes())}  {log_path.name}\n"
+    out = log_path.with_name(log_path.name + ".sha256")
+    if out.exists() and out.read_bytes() != line.encode("utf-8"):
+        raise FileExistsError(f"{out.name} exists and holds a different digest; it is never overwritten")
+    out.write_bytes(line.encode("utf-8"))
+    return out, f'ots stamp "{log_path}"'
 
 
 def main(argv=None):
-    ap = argparse.ArgumentParser(prog="faias_harness.engine.runlog", description="Run-signing key, sign and verify.")
+    ap = argparse.ArgumentParser(prog="faias_harness.engine.runlog",
+                                 description="Run-signing key, sign, verify, rescore and stamp.")
     sub = ap.add_subparsers(dest="cmd", required=True)
     a = sub.add_parser("make-key", help="make the run-signing key in a folder outside the repository")
     a.add_argument("--out", required=True)
@@ -420,7 +644,30 @@ def main(argv=None):
     c.add_argument("--log", required=True)
     c.add_argument("--sig", required=True)
     c.add_argument("--pubkey")
+    c.add_argument("--no-repo", action="store_true",
+                   help="check without the record and the item set of this checkout")
+    d = sub.add_parser("rescore", help="score each reply again and compare with the recorded score (exit 1 on a difference)")
+    d.add_argument("--log", required=True)
+    e = sub.add_parser("stamp", help="write <log>.sha256 and print the OpenTimestamps command (no network call)")
+    e.add_argument("--log", required=True)
     args = ap.parse_args(argv)
+    if args.cmd == "rescore":
+        try:
+            lines, mismatches = rescore_log(args.log)
+        except (OSError, ValueError, KeyError, IndexError, TypeError) as e:
+            print(f"cannot rescore the log ({type(e).__name__})")
+            return 2
+        print("\n".join(lines))
+        return 1 if mismatches else 0
+    if args.cmd == "stamp":
+        try:
+            out, command = stamp_log(args.log)
+        except (FileExistsError, OSError) as e:
+            print(f"refused: {e}")
+            return 2
+        print(f"sha256 file: {out}\nTo timestamp the log, run this command yourself. It contacts the OpenTimestamps "
+              f"calendar servers; the harness makes no network call.\n  {command}")
+        return 0
     if args.cmd == "make-key":
         try:
             priv, pub = make_key(args.out)
@@ -436,7 +683,7 @@ def main(argv=None):
             return 2
         print(f"signature file: {sign_log(args.log, args.key)}")
         return 0
-    ok, msg = verify_log(args.log, args.sig, args.pubkey)
+    ok, msg = verify_log(args.log, args.sig, args.pubkey, use_repo=not args.no_repo)
     print(msg)
     return 0 if ok else 1
 

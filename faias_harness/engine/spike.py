@@ -254,6 +254,7 @@ def execute(settings, *, run_dir, sign_key, confirmation, probes=None, base_url=
             "cap_usd": settings.cap_usd, "served_hosts": dict(hosts), "served_models": dict(models),
             "host_mismatches": mismatches, "usage_missing_calls": usage_missing, "retries": runner.retries,
             "host_not_reported": runner.host_not_reported,
+            "calls_over_max_tokens": srd1.gateway.cap.calls_over_max_tokens,
             "outcomes": dict(Counter(r["outcome"] for r in runs)),
             "trace": {"file": srd1.trace.path.name, "sha256": runlog.sha256_hex(srd1.trace.path.read_bytes()),
                       "entries": len(srd1.trace.entries()), "head": srd1.trace.head, "chain_ok": chain_ok,

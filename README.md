@@ -1,8 +1,8 @@
 # FAIAS harness
 
-An open-source test harness for FAIAS, the Financial AI Independent Assurance Standard. The harness is planned to run the FAIAS test procedures against an AI system in a test environment. A firm describes its own system in a target profile. The harness reaches that system through one target interface. This repository holds version 0.5. It has the design, the procedure records, a record checker and a preflight. It also has a run engine for one procedure with its full item set (see "Engine" below). Channel adapters let that engine reach a deployed staging agent (see "External runs"). The last part is an MCP tool emulator (see "Tool emulator").
+An open-source test harness for FAIAS, the Financial AI Independent Assurance Standard. The harness is planned to run the FAIAS test procedures against an AI system in a test environment. A firm describes its own system in a target profile. The harness reaches that system through one target interface. This repository holds version 0.6 (in development). It has the design, the procedure records, a record checker and a preflight. It also has a run engine for one procedure with its full item set (see "Engine" below). Channel adapters let that engine reach a deployed staging agent (see "External runs"). The last part is an MCP tool emulator (see "Tool emulator").
 
-## Status: version 0.5
+## Status: version 0.6 (in development)
 
 **What works now**
 
@@ -87,6 +87,15 @@ Version 0.3 added a first run engine, and version 0.4 adds its full item set. It
 
 **Item set (0.4.0).** By default, the engine runs the item set in `items/TP-SEC-001.json`. It has 131 items (C1 40, C2 25, C3 26, C4 40) and a clean-baseline arm of 25 requests. Each runs k times (468 calls at k = 3). The baseline requests are recorded with an outcome (answered, blocked or no result) and are not scored. Whether a reply refuses is for a human label. A run on this set is labelled "uncalibrated scorer, not a finding". The setting `item_set: spike` runs the 20 spike items. The full set has run live on 22 October 2026, in six runs. Those run logs are not in the repository.
 
+**Evidence frame (0.6.0).** New run logs use schema 4 (SRD-1 runs) and schema 5 (external runs). Their header has a `code` block. It holds the engine version, the git commit, and the SHA-256 of the scorer file and of the record file. The git commit is null when git does not answer. The lock hash covers the two file hashes. The header also holds the marker or the product that the scorer needs for each item. Logs of schemas 1 to 3 verify as before.
+
+- M1, M2 and M3 each give `upper95`, a one-sided 95% upper bound on the item rate, and its method. For example, 0 successes in 25 items is consistent with a true rate of up to 0.1129.
+- M4 states that at k = 3 a per-item interval is wide. Such an interval is not evidence alone.
+- A reply with the finish reason `error` is no result, as a cut-off reply is. The SRD-1 gateway retries it and counts it against the cap at its worst case.
+- The gateway's worst case uses `max_tokens`, or the most completion tokens that a call has used if that is more. The summary counts the calls above `max_tokens`.
+- The summary of an external run counts channel errors by class. A class is the HTTP status, or the error kind where there is no status.
+- `rescore`, `verify --no-repo` and `stamp` are below.
+
 **What it does not do.**
 
 - The spike set (`item_set: spike`) uses 20 items and has no baseline arm. The full set above meets the procedure's sizes.
@@ -129,9 +138,27 @@ Verify a signed log:
 py -3.14 -X utf8 -m faias_harness.engine.runlog verify --log <run_log.jsonl> --sig <run_log.jsonl.sig> --pubkey <public key file>
 ```
 
+Score each reply of a log again with the scorer of this checkout. The command prints each difference from the recorded score and exits with 1 if it finds one. It also says if this scorer has the hash that the log records:
+
+```
+py -3.14 -X utf8 -m faias_harness.engine.runlog rescore --log <run_log.jsonl>
+```
+
+Verify a log without the item set and the record of this checkout, for example with a later checkout. The command checks the signature and the form. For a log of schema 4 or 5, it also checks the items hash against the log itself. It prints "repository item set: not checked":
+
+```
+py -3.14 -X utf8 -m faias_harness.engine.runlog verify --log <run_log.jsonl> --sig <run_log.jsonl.sig> --no-repo
+```
+
+Write `<run_log.jsonl>.sha256` and print the OpenTimestamps command to run. The harness does not run `ots` and makes no network call:
+
+```
+py -3.14 -X utf8 -m faias_harness.engine.runlog stamp --log <run_log.jsonl>
+```
+
 ## External runs
 
-Version 0.5 adds a second run path. The SRD-1 engine builds SRD-1 minimal in the same process. It reads the model, the host, the tokens and the cost from SRD-1's gateway. A deployed agent offers none of that to an outside client. An external run sends the same items through the agent's channel. It scores the replies with the same scorer and computes M1 to M4 with the same formulas. The run log (schema 3) states what the channel showed for each call. It records the model and version as declared by the operator, not observed. It also states that the model is not pinned.
+Version 0.5 adds a second run path. The SRD-1 engine builds SRD-1 minimal in the same process. It reads the model, the host, the tokens and the cost from SRD-1's gateway. A deployed agent offers none of that to an outside client. An external run sends the same items through the agent's channel. It scores the replies with the same scorer and computes M1 to M4 with the same formulas. The run log (schema 3) states what the channel showed for each call. It records the model and version as declared by the operator, not observed. It also states that the model is not pinned. Since version 0.6.0 it is schema 5.
 
 | Adapter | Channel | The channel names a model | The channel names a block |
 |---|---|---|---|

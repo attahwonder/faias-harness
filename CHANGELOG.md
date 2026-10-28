@@ -1,5 +1,26 @@
 # Changelog
 
+## 0.6.0 (unreleased)
+
+The evidence frame. A run log now states more about the code that made it. A third party can check more of it without a matching checkout. The scorer patterns, the item set and the thresholds do not change.
+
+- M1 (overall and for each class), M2 and M3 give `upper95`, a one-sided 95% upper bound on the item rate. `upper95_method` names the method. For 0 successes in n items it is `clopper_pearson_exact_zero`, 1 - 0.05^(1/n). Otherwise it is `clopper_pearson_exact`, computed without SciPy (`faias_harness/engine/sec001.py`).
+- `M4.per_item_note` states that at k = 3 a per-item interval is wide. Such an interval is not evidence alone.
+- New run logs use schemas 4 (SRD-1 runs) and 5 (external runs), in `faias_harness/engine/runlog.py`. The header has a `code` block. It holds the engine version, the git commit or null, and the SHA-256 of the scorer and record files.
+- The lock hash also covers the two file hashes. `verify` recomputes the lock hash of a schema 4 or 5 log.
+- The corpus holds `scorer_keys`, the marker or product of each item. So a log can be checked without the item set.
+- Logs of schemas 1 to 3 verify as before. The signed logs of the live runs of 20 to 22 October 2026 pass `verify`, also with `--no-repo`.
+- `runlog rescore --log` scores each run's reply again. It prints each difference from the recorded score and exits with 1 on a difference. It says if the scorer hash equals the hash in the log. It finds no difference in the six full-set logs of 22 October 2026.
+- `runlog verify --no-repo` checks the signature and the form without the record and the item set of the checkout. For a schema 4 or 5 log, it checks the items hash against the log itself. It prints "repository item set: not checked".
+- `runlog stamp --log` writes `<log>.sha256` in `sha256sum` format and prints the `ots stamp` command. The harness does not run `ots` and makes no network call.
+- `check_log` compares the header star with the record's star only. Before, it also required ★4, so it worked for one procedure only.
+- A reply with the finish reason `error` is now no_result, as a cut-off reply is. The SRD-1 gateway retries it within the retry limit, with the reason `body_finish_error`. It counts each such attempt against the cap at its worst case.
+- The gateway's worst case uses the most completion tokens that a call has used, if that is more than `max_tokens`. The run summary counts `calls_over_max_tokens`.
+- The summary of an external run counts channel errors by class (`channel_errors_by_class`). A class is the HTTP status, or the kind where the error has no status. The rates do not change.
+- `AGENTS.md` rule 14 now agrees with `items/README.md`. Text from a third-party set is used only when its licence allows it, with credit and an inert objective.
+- `tests/test_evidence_frame.py` holds the new tests. Two of them read the signed live logs, which are not in the repository. Set `FAIAS_HARNESS_RUNS` to their folder, or these two tests check nothing.
+- `__version__` is "0.6.0.dev0".
+
 ## 0.5.0 (28 October 2026)
 
 External targets. The engine can now run TP-SEC-001 against a deployed staging agent. It uses the channel that the agent's own front end uses. The harness also has a tool emulator for `tool_routing`. Each adapter is tested against a local stand-in. One live run has used an external target, on 22 October 2026. That run sent 60 calls of the spike set to openai/gpt-oss-120b, through `generic-http` and the OpenRouter chat completions endpoint. It tested the channel and the engine only. The adapter sends no system prompt. The harness asked OpenRouter for the routing lock. It cannot see if OpenRouter applied the lock. The other four adapters are untested against the platform they are written for. The harness supports no platform.

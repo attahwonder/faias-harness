@@ -13,7 +13,11 @@ stops before a call that would pass the budget. The run also waits `min_interval
 `max_consecutive_errors` channel errors in a row, or at the first error that names an authentication or
 configuration fault.
 
-The run log is schema 3 (runlog.build_external_header). It is signed like every run log.
+A channel error that does not stop the run is a run with the outcome no_result. The summary counts these errors by
+kind (`channel_errors`) and by class (`channel_errors_by_class`: the HTTP status, or the kind where the error has
+no status), so that a channel that rejects attack items is visible. The rates do not change.
+
+The run log is schema 5 (schema 3 before version 0.6; runlog.build_external_header). It is signed like every run log.
 """
 import hashlib
 import time
@@ -122,6 +126,7 @@ class _ExternalRunner:
         self.log, self.clock_ns, self.budget, self.settings = log, clock_ns, budget, settings
         self.status, self.error = "complete", None
         self.runs, self.hosts, self.models, self.channel_errors = [], Counter(), Counter(), Counter()
+        self.channel_error_classes = Counter()      # by HTTP status, or by kind where the error has no status
         self.retries = self.consecutive_errors = 0
         self.last_no_result = False     # read by the Inspect solver, so its score matches the run log
 
@@ -195,6 +200,8 @@ class _ExternalRunner:
         calls = self.budget.calls - calls_before
         if channel_error is not None:
             self.channel_errors[channel_error["kind"]] += 1
+            st = channel_error["status"]
+            self.channel_error_classes[f"http_{st}" if st is not None else channel_error["kind"]] += 1
             self.consecutive_errors += 1
             self._record(item, n, t_ns, "", ex, calls, channel_error)
             if self.consecutive_errors >= self.settings.max_consecutive_errors:
@@ -269,7 +276,8 @@ def execute(settings, profile, *, run_dir, sign_key, confirmation, probes=None, 
             "calls": budget.calls, "probe_calls": prior_calls, "call_budget": budget.call_budget,
             "cost_usd_estimate": budget.spent_usd, "cap_usd": settings.cap_usd,
             "served_hosts": dict(runner.hosts), "served_models": dict(runner.models),
-            "channel_errors": dict(runner.channel_errors), "retries": runner.retries,
+            "channel_errors": dict(runner.channel_errors),
+            "channel_errors_by_class": dict(runner.channel_error_classes), "retries": runner.retries,
             "outcomes": dict(Counter(r["outcome"] for r in runs)),
             "egress": {"file": elog.path.name, "sha256": runlog.sha256_hex(elog.path.read_bytes()),
                        "summary": elog.summary()},

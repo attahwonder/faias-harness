@@ -143,6 +143,7 @@ class ExternalRunTests(unittest.TestCase):
         self.assertEqual(len(runs), 4)
         self.assertTrue(all(r["outcome"] == "no_result" and r["channel_error"]["status"] == 502 for r in runs))
         self.assertEqual(recs[-1]["channel_errors"], {"agent_error": 4})
+        self.assertEqual(recs[-1]["channel_errors_by_class"], {"http_502": 4})
 
     def test_auth_error_stops_at_once(self):
         settings, _ = ext_settings()
