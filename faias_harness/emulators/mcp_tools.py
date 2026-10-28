@@ -12,12 +12,14 @@ store by a fixed rule (handlers.py). No tool acts on any system.
 Tool fields (since 0.6): a tool may also give `title`, `annotations` and `output_schema`. tools/list sends them as the
 MCP fields `title`, `annotations` (`readOnlyHint`, `destructiveHint`, `idempotentHint`, `openWorldHint`) and
 `outputSchema`. The result of a handler tool carries the object in `structuredContent` and as JSON text in `content`.
-Source of the field names: the MCP specification, the tools page of version 2025-11-25
-(https://modelcontextprotocol.io/specification/2025-11-25/server/tools) and the schema of version 2026-07-28, as read
-on 16 October 2026 for the SRD-1 specification (targets/srd1/SPEC.md, section 8). The 0.6 build made no network call
-and did not read them again. That record lists title, annotations, the four hints and outputSchema; it does not list
-`structuredContent`, which is named from memory and is not confirmed at the source. The annotations are hints only: a
-client must not rely on them, so SRD-1 enforces its controls in its orchestrator.
+Source of the field names: the MCP specification, version 2025-06-18, the tools page
+(https://modelcontextprotocol.io/specification/2025-06-18/server/tools) and the schema
+(https://modelcontextprotocol.io/specification/2025-06-18/schema), read 28 Oct 2026. In the schema, Tool has `title`,
+`outputSchema` and `annotations` (ToolAnnotations: `readOnlyHint`, `destructiveHint`, `idempotentHint`,
+`openWorldHint`), and CallToolResult has `content`, `structuredContent` and `isError`. The tools page says that a tool
+that returns structured content should also return the serialized JSON in a text content block. The schema says that
+all annotations are hints, and that a client should not decide on tool use from the annotations of an untrusted
+server. So SRD-1 enforces its controls in its orchestrator.
 
 What it does:
 - It serves one MCP endpoint (POST) on the local machine only (127.0.0.1). A platform in the cloud reaches it only

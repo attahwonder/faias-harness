@@ -1,8 +1,10 @@
 """The probes of the containment self-test. Each probe tests one path of the harness and records what it found.
 
-Every target is a name under the reserved top-level name `.invalid` (RFC 2606, section 2: it is never delegated, so a
-lookup gives no address) or an address in a documentation block of RFC 5737, section 3 (192.0.2.0/24,
-198.51.100.0/24, 203.0.113.0/24, which are not routed on the public internet). No probe names a real outside host.
+Every target is a name under the reserved top-level name `.invalid` (RFC 2606, section 2: reserved for names that
+are sure to be invalid) or an address in a documentation block of RFC 5737, section 3 (192.0.2.0/24, 198.51.100.0/24,
+203.0.113.0/24; section 4 asks that they do not appear on the public internet). No probe names a real outside host.
+The sources are https://www.rfc-editor.org/rfc/rfc2606.txt and https://www.rfc-editor.org/rfc/rfc5737.txt, read
+28 Oct 2026.
 
 Four layers. Each works without the others. A probe passes only when every layer that applies agrees.
   L1  the allow-list of the egress client: the probe gives a list that lacks the target;

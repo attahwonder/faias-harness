@@ -19,9 +19,9 @@ calls (a tool-call probe and a reasoning-text probe; the judge-family check is n
 has no model judge), shows the result, and starts the run only after the owner types `yes`. With --probes it makes
 the two probe calls and starts nothing. For a TP-SEC-006 run, the preflight verifies the signature of the M4 baseline
 log against the key that `m4_baseline_pubkey` names, and refuses a key inside the repository or a log that fails. In
-evidence mode the preflight and --start also refuse a baseline log whose model ID, variant, system prompt hash or
-routing locks (`only`, `quantizations`) differ from the run, and name each field that differs, or a baseline log that
-is not in evidence mode.
+evidence mode the preflight and --start also refuse a baseline log whose model ID, variant, system prompt hash,
+routing locks (`only`, `quantizations`) or tool definitions hash differ from the run, and name each field that
+differs, or a baseline log that is not in evidence mode.
 With a settings file of SRD-1 it also prints one line on the containment self-test (faias_harness/selftest): the result,
 time and commit of the newest self-test log (--selftest-log, or the folders of FAIAS_HARNESS_RUNS, or runs/), and
 whether its code manifest matches this checkout. For TP-AGT-012 and TP-DAT-009, --start refuses without a verified,
@@ -157,18 +157,13 @@ def start_problems(profile, settings=None):
 
 
 def tools_problems(settings):
-    """With tools on (since 0.6): the refund gate needs its declared values, and TP-SEC-006 with tools on is not
-    built yet. With tools off: none."""
+    """With tools on (since 0.6): the refund gate needs its declared values. With tools off: none."""
     if not getattr(settings, "tools_enabled", False):
         return []
     from .engine import spike
     spike._srd1()
     from targets.srd1.app import gate
-    problems = [f"{p} (targets/srd1/risk_appetite.yaml): SRD-1 does not enable its tool"
-                for p in gate.declared_problems()]
-    if settings.procedure == SEC006:
-        problems.append("TP-SEC-006 with tools on is not built yet: its engine does not start the tool emulator")
-    return problems
+    return [f"{p} (targets/srd1/risk_appetite.yaml): SRD-1 does not enable its tool" for p in gate.declared_problems()]
 
 
 def report(profile, needs, records_dir=RECORDS_DIR):
@@ -402,7 +397,8 @@ def _default_executor(**kw):
 def sec006_baseline(settings, variant="standard"):
     """The check of the M4 baseline log of a TP-SEC-006 run: (run label, lines to print, problems). A log that cannot
     be read, a public key file inside the repository, and a signature that does not verify are problems. In evidence
-    mode, a log whose model ID, variant, system prompt hash or routing locks differ from the run is a problem too:
+    mode, a log whose model ID, variant, system prompt hash, routing locks or tool definitions hash (from the tools
+    file, with tools on) differ from the run is a problem too:
     each field that differs is named, with both values. So is a log that is not in evidence mode. In explore mode a
     difference is allowed and printed, and the run label adds "baseline from another target". A baseline on the spike
     set is labelled in both modes."""
@@ -418,14 +414,15 @@ def sec006_baseline(settings, variant="standard"):
              else f"M4 baseline signature: not checked ({sig['reason']})",
              f"M4 baseline mode: {base['mode']}; item set: {base['item_set']}"]
     base["differs_from_run"] = sec006_log.baseline_differences(base, sec006_log.run_facts(
-        settings.model_id, variant, run_sec006.prompt_sha256(variant), settings.routing()))
+        settings.model_id, variant, run_sec006.prompt_sha256(variant), settings.routing(),
+        run_sec006.tool_definitions_sha256(settings)))
     match = not base["differs_from_run"]
     label = sec006_log.run_label(match, base)
     if base.get("item_set") != sec006_log.FULL_SET:
         lines.append(f"  The baseline is not on the full TP-SEC-001 set. The run label adds '{sec006_log.ON_SPIKE}'.")
     if match:
-        lines.append("M4 baseline match: yes (the same model ID, variant, system prompt hash and routing locks as the "
-                     "run)")
+        lines.append("M4 baseline match: yes (the same model ID, variant, system prompt hash, routing locks and tool "
+                     "definitions hash as the run)")
     else:
         lines += ["M4 baseline match: no"] + [f"  - {p}" for p in
                                               sec006_log.difference_problems(base["differs_from_run"])]
@@ -440,8 +437,8 @@ def sec006_baseline(settings, variant="standard"):
 def sec006_start_problems(settings, variant="standard"):
     """What a TP-SEC-006 run needs besides the TP-SEC-001 conditions: the M3 and M4 values with their reasons (verify
     refuses a log without them), and a readable M4 baseline log where one is named, with a signature that verifies
-    where a key is named. In evidence mode, the baseline log must be of the same model, variant, system prompt and
-    routing locks as the run, and in evidence mode itself (sec006_baseline)."""
+    where a key is named. In evidence mode, the baseline log must be of the same model, variant, system prompt,
+    routing locks and tool definitions as the run, and in evidence mode itself (sec006_baseline)."""
     problems = [f"reviewer_values.{m} needs a value and a reason before a run (verify refuses a log without them)"
                 for m, v, r in (("M3", settings.m3_value, settings.m3_reason), ("M4", settings.m4_value, settings.m4_reason))
                 if v is None or not r]

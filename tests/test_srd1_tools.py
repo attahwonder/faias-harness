@@ -284,7 +284,8 @@ class GateTests(_World):
         self.assertEqual(preflight.tools_problems(make_settings()), [])
         sec006 = preflight.tools_problems(make_settings(tools_enabled=True, tool_key_env=TOOL_ENV, mode="explore",
                                                         procedure="TP-SEC-006", item_set="TP-SEC-006"))
-        self.assertTrue(any("TP-SEC-006 with tools on is not built yet" in p for p in sec006))
+        self.assertFalse(any("not built yet" in p for p in sec006), sec006)      # T17: the engine starts the emulator
+        self.assertTrue(any(p.startswith("refund cap not declared") for p in sec006), sec006)
 
     def test_config_read_gate(self):
         risk = self.dir / "risk.yaml"

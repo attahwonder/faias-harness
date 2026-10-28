@@ -15,7 +15,7 @@ import yaml
 
 from faias_harness import preflight
 from faias_harness.egress import EgressClient
-from faias_harness.engine import runlog, sec001, sec006, sec006_log, spike
+from faias_harness.engine import run_sec006, runlog, sec001, sec006, sec006_log, spike
 from targets.srd1.app import trace as tr
 from targets.srd1.app.gateway import Gateway
 from targets.srd1.app.orchestrator import PROMPT_VARIANTS, load_system_prompt
@@ -123,9 +123,10 @@ class SpikeRunTests(unittest.TestCase):
         self.assertEqual((summary["model_calls"], summary["host_mismatches"]), (60, 0))
         # the trace is a valid chain, and its head is the one that the log recorded
         self.assertTrue(summary["trace"]["chain_ok"])
-        ok_chain, problems = tr.verify_chain(res.run_dir / "srd1_trace.jsonl", expected_head=summary["trace"]["head"])
+        trace = res.run_dir / "target" / "srd1_trace.jsonl"
+        ok_chain, problems = tr.verify_chain(trace, expected_head=summary["trace"]["head"])
         self.assertTrue(ok_chain, problems)
-        self.assertEqual(len([e for e in tr.read_entries(res.run_dir / "srd1_trace.jsonl") if e["kind"] == "turn"]), 60)
+        self.assertEqual(len([e for e in tr.read_entries(trace) if e["kind"] == "turn"]), 60)
         # egress: only the stand-in host and SRD-1 itself, nothing refused
         eg = summary["egress"]["summary"]
         self.assertEqual(eg["refused"], {})
@@ -176,14 +177,69 @@ class SpikeRunTests(unittest.TestCase):
             doc = json.loads(p.read_text(encoding="utf-8"))
             self.assertEqual([s for s in sec006_log._strings(doc) if holds_mark(s)], [], p.name)
             self.assertFalse(any(v.encode() in p.read_bytes() for v in (CREDENTIAL, ENDPOINT, PREFIX)), p.name)
-        # SRD-1's own trace store holds the reply as the model gave it (the target's record)
-        self.assertIn(CREDENTIAL.encode(), (res.run_dir / "srd1_trace.jsonl").read_bytes())
+        # SRD-1's own trace store holds the reply as the model gave it (the target's record). It is in the folder
+        # target/, with the README of TP-SEC-006 (I11 "found, not changed" 1). No other file holds a value.
+        target = res.run_dir / "target"
+        self.assertIn(CREDENTIAL.encode(), (target / "srd1_trace.jsonl").read_bytes())
+        self.assertEqual(sorted(p.name for p in target.iterdir()), ["README.txt", "srd1_trace.jsonl"])
+        self.assertEqual((target / "README.txt").read_text(encoding="utf-8"), run_sec006.TARGET_README)
+        self.assertFalse((res.run_dir / "srd1_trace.jsonl").exists())
+        self.assertEqual(recs[-1]["trace"]["file"], "target/srd1_trace.jsonl")
+        for p in (q for q in res.run_dir.rglob("*") if q.is_file() and q.parent != target):
+            self.assertFalse(any(v.encode() in p.read_bytes() for v in (CREDENTIAL, ENDPOINT, PREFIX)), p.name)
         # the log verifies, also without the repository, and rescore finds no difference
         for use_repo in (True, False):
             ok_sig, msg = runlog.verify_log(res.log_path, res.sig_path, self.pub, use_repo=use_repo)
             self.assertTrue(ok_sig, msg)
         lines, mismatches = runlog.rescore_log(res.log_path)
         self.assertEqual(mismatches, [], lines)
+
+    def copy_with(self, recs, change, name):
+        """A copy of a log with `change` applied to its records (no new lock, no signature)."""
+        rs = json.loads(json.dumps(recs))
+        change(rs)
+        copy = self.dir / name
+        copy.write_bytes(b"".join(runlog.canonical(r).encode("utf-8") + b"\n" for r in rs))
+        return copy
+
+    def test_the_form_check_fails_a_schema_4_log_that_holds_a_placeholder_marking(self):
+        # I11 "found, not changed" 2: as the TP-SEC-006 check does, `check_log` fails a schema 4 log in which a string
+        # holds the marking of a placeholder. The engine's own log passes by construction.
+        with StandInModelHost(respond) as host:
+            res = self.run_spike(host, make_settings(cap_usd=10.0))
+        recs = runlog.read_log(res.log_path)
+        self.assertEqual(recs[0]["schema"], runlog.SCHEMA)
+        self.assertEqual(runlog.check_log(res.log_path), [])
+        first = next(i for i, r in enumerate(recs) if r["type"] == "run")
+        for n, value in enumerate((CREDENTIAL, ENDPOINT, PREFIX)):
+            copy = self.copy_with(recs, lambda rs: rs[first].update(reply=rs[first]["reply"] + " " + value), f"m{n}.jsonl")
+            self.assertIn("the log holds a placeholder value", runlog.check_log(copy), n)
+        copy = self.copy_with(recs, lambda rs: rs[first].update({PREFIX: 1}), "key.jsonl")      # a key is a string too
+        self.assertIn("the log holds a placeholder value", runlog.check_log(copy))
+        copy = self.copy_with(recs, lambda rs: rs[first].update(reply=rs[first]["reply"] + "\n.invalid is reserved"),
+                              "word.jsonl")
+        self.assertEqual(runlog.check_log(copy), [])
+
+    def test_the_code_block_hashes_the_redaction_file_and_the_lock_covers_it(self):
+        # I11 "found, not changed" 4: the code block hashes the file that holds the redaction, as it hashes the scorer
+        # and the record, and the lock covers that hash.
+        with StandInModelHost(respond) as host:
+            res = self.run_spike(host, make_settings(cap_usd=10.0))
+        recs = runlog.read_log(res.log_path)
+        code = recs[0]["code"]
+        self.assertEqual(code["redaction_file"], "faias_harness/engine/sec006.py")
+        self.assertEqual(code["redaction_sha256"], runlog.sha256_hex((REPO / code["redaction_file"]).read_bytes()))
+        self.assertIn("redaction file hash (faias_harness/engine/sec006.py)", recs[0]["lock"]["covers"])
+        self.assertEqual(runlog.lock_fixed(recs[0])["redaction_sha256"], code["redaction_sha256"])
+        copy = self.copy_with(recs, lambda rs: rs[0]["code"].update(redaction_sha256="0" * 64), "edited.jsonl")
+        self.assertIn("header: the lock hash does not match the fixed parts of the header", runlog.check_log(copy))
+        copy = self.copy_with(recs, lambda rs: [rs[0]["code"].pop(k) for k in ("redaction_file", "redaction_sha256")],
+                              "removed.jsonl")
+        found = runlog.check_log(copy)
+        self.assertIn("header: the code block has no redaction_sha256 of faias_harness/engine/sec006.py", found)
+        self.assertIn("header: the lock hash does not match the fixed parts of the header", found)
+        for use_repo in (True, False):
+            self.assertTrue(runlog.verify_log(res.log_path, res.sig_path, self.pub, use_repo=use_repo)[0])
 
     def test_the_run_stops_at_the_cap_and_is_still_signed(self):
         # 2000 tokens at 1 USD per million is 0.002 USD a call; the cap leaves room for three calls, not four.

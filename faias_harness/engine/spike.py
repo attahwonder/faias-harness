@@ -11,7 +11,8 @@ SRD-1's system prompts hold two staged placeholders (a credential and an endpoin
 finds them in the prompt that it gives SRD-1. It redacts each request and each reply with `sec006.redact` before it
 scores and stores them, so the run log and the Inspect log hold the redacted text. Each run record holds the counts
 in `placeholders`. The redaction misses the forms that REDACTION_NOTE names. SRD-1's own trace store
-(`srd1_trace.jsonl`) is not redacted: it is the target's record.
+(`srd1_trace.jsonl`) is not redacted: it is the target's record. It goes in the folder `target/` of the run folder,
+with a README, as for TP-SEC-006 (TARGET_DIR, TARGET_README).
 """
 import sys
 import time
@@ -27,6 +28,12 @@ from . import runlog, sec001, sec006, toolrun
 
 REPO = Path(__file__).resolve().parents[2]
 LOCAL_MARGIN_S = 30.0
+# The folder of the run folder that holds SRD-1's own trace store, and its README. TP-SEC-001 and TP-SEC-006
+# (run_sec006.py) use the same folder and README.
+TARGET_DIR = "target"
+TARGET_README = ("This folder holds SRD-1's own trace store: each reply as the model gave it, with the staged "
+                 "placeholder values. It is the target's record, not the harness log. Do not put it in the working "
+                 "papers.\n")
 # The header line of a TP-SEC-001 log on SRD-1 about the redaction. It names no placeholder value and no marking.
 REDACTION_NOTE = ("SRD-1's system prompts hold two staged placeholders, a credential and an endpoint. Each request "
                   "and reply is redacted with sec006.redact before it is scored and stored. Each run record holds the "
@@ -253,10 +260,14 @@ def execute(settings, *, run_dir, sign_key, confirmation, probes=None, base_url=
         gate = gate or build.RefundGate.from_file()     # null values: "refund cap not declared", before any file
     elog = EgressLog(run_dir / "egress.jsonl")
     egress = EgressClient([_host_entry(base_url)], log=elog)
+    # SRD-1's own trace store holds each reply as the model gave it, so it can hold the staged placeholders. It goes
+    # in its own folder, with a README, so that it is not taken into the working papers with the run log.
+    (run_dir / TARGET_DIR).mkdir(parents=True, exist_ok=True)
+    (run_dir / TARGET_DIR / "README.txt").write_text(TARGET_README, encoding="utf-8")
     tool_run = toolrun.ToolRun(settings, run_dir, egress).start() if tools_on else None
     try:
-        srd1 = build.build_srd1(settings, egress, run_dir / "srd1_trace.jsonl", base_url=base_url, env=env,
-                                system_prompt=system_prompt, tools_url=tool_run.url if tool_run else None,
+        srd1 = build.build_srd1(settings, egress, run_dir / TARGET_DIR / "srd1_trace.jsonl", base_url=base_url,
+                                env=env, system_prompt=system_prompt, tools_url=tool_run.url if tool_run else None,
                                 tool_env=tool_run.env if tool_run else None, gate=gate)
     except BaseException:
         if tool_run:
@@ -309,7 +320,8 @@ def execute(settings, *, run_dir, sign_key, confirmation, probes=None, base_url=
             "host_not_reported": runner.host_not_reported,
             "calls_over_max_tokens": srd1.gateway.cap.calls_over_max_tokens,
             "outcomes": dict(Counter(r["outcome"] for r in runs)),
-            "trace": {"file": srd1.trace.path.name, "sha256": runlog.sha256_hex(srd1.trace.path.read_bytes()),
+            "trace": {"file": f"{TARGET_DIR}/{srd1.trace.path.name}",
+                      "sha256": runlog.sha256_hex(srd1.trace.path.read_bytes()),
                       "entries": len(srd1.trace.entries()), "head": srd1.trace.head, "chain_ok": chain_ok,
                       "problems": chain_problems},
             "egress": {"file": elog.path.name, "sha256": runlog.sha256_hex(elog.path.read_bytes()),

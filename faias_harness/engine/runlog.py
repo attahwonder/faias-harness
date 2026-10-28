@@ -80,6 +80,9 @@ CODE_SCHEMAS = (SCHEMA, SCHEMA_EXTERNAL, SCHEMA_SEC006)   # the logs with the co
 KNOWN_SCHEMAS = (SCHEMA_V1, SCHEMA_V2, SCHEMA_V3, SCHEMA, SCHEMA_EXTERNAL)    # the TP-SEC-001 schemas
 SCORER_FILE = "faias_harness/engine/sec001.py"
 RECORD_FILE = "records/TP-SEC-001.yaml"
+# The file that holds the redaction of a TP-SEC-001 run on SRD-1 (sec006.redact; spike.py). The code block of a
+# schema 4 header hashes it too, and the lock covers that hash.
+REDACTION_FILE = "faias_harness/engine/sec006.py"
 HEX64 = re.compile(r"[0-9a-f]{64}")
 GIT_COMMIT = re.compile(r"[0-9a-f]{40}|[0-9a-f]{64}")
 EGRESS_LIMIT = ("client-level control: requests made through the shared client are checked against the allow-list. "
@@ -169,16 +172,20 @@ def git_commit(repo=REPO):
     return out if out and GIT_COMMIT.fullmatch(out) else None
 
 
-def code_facts(repo=REPO, scorer_file=SCORER_FILE, record_file=RECORD_FILE):
+def code_facts(repo=REPO, scorer_file=SCORER_FILE, record_file=RECORD_FILE, redaction_file=None):
     """The code block of a schema 4, 5 or 6 header: what code made the log. The scorer and record files are those
-    of the procedure (TP-SEC-001 by default)."""
+    of the procedure (TP-SEC-001 by default). `redaction_file`: the file that holds the redaction, for a schema 4
+    log (REDACTION_FILE)."""
     repo = Path(repo)
-    return {"engine_version": __version__, "git_commit": git_commit(repo),
-            "git_commit_note": "git rev-parse HEAD of the checkout that ran; null when git did not answer, or when "
-                               "the folder that ran is not the top of a git checkout. It does not show changes that "
-                               "were not committed; the two file hashes do.",
-            "scorer_file": scorer_file, "scorer_sha256": sha256_hex((repo / scorer_file).read_bytes()),
-            "record_file": record_file, "record_sha256": sha256_hex((repo / record_file).read_bytes())}
+    out = {"engine_version": __version__, "git_commit": git_commit(repo),
+           "git_commit_note": "git rev-parse HEAD of the checkout that ran; null when git did not answer, or when "
+                              "the folder that ran is not the top of a git checkout. It does not show changes that "
+                              "were not committed; the two file hashes do.",
+           "scorer_file": scorer_file, "scorer_sha256": sha256_hex((repo / scorer_file).read_bytes()),
+           "record_file": record_file, "record_sha256": sha256_hex((repo / record_file).read_bytes())}
+    if redaction_file:
+        out.update(redaction_file=redaction_file, redaction_sha256=sha256_hex((repo / redaction_file).read_bytes()))
+    return out
 
 
 def build_header(settings, *, allow_hosts, system_prompt_sha256, confirmation, probes=None, repo=REPO,
@@ -189,7 +196,7 @@ def build_header(settings, *, allow_hosts, system_prompt_sha256, confirmation, p
     items, baseline = sec001.load_items(settings.item_set, repo=repo)
     header = {
         "type": "header", "schema": SCHEMA, "label": sec001.LABELS[settings.item_set], "engine_version": __version__,
-        "code": code_facts(repo),
+        "code": code_facts(repo, redaction_file=REDACTION_FILE),
         "procedure": {"tp": rec["tp"], "title": rec["title"], "irq": rec["irq"], "star": rec["star"],
                       "star_note": "copied from the Confidence line of the procedure; the harness never computes it",
                       "faias_version": sec001.FAIAS_VERSION, "source": rec["source"]},
@@ -285,6 +292,8 @@ def lock_fixed(header):
     if schema in CODE_SCHEMAS:
         code = header.get("code") or {}
         fixed["scorer_sha256"], fixed["record_sha256"] = code.get("scorer_sha256"), code.get("record_sha256")
+        if "redaction_sha256" in code:      # since 0.6, schema 4: the file that holds the redaction (REDACTION_FILE)
+            fixed["redaction_sha256"] = code["redaction_sha256"]
     if schema == SCHEMA_SEC006:
         from . import sec006_log
         fixed.update(sec006_log.lock_extra(header))
@@ -307,6 +316,8 @@ def lock_header(header, clock_ns=None):
         code = header.get("code") or {}
         covers += (f", scorer file hash ({code.get('scorer_file', SCORER_FILE)}), record file hash "
                    f"({code.get('record_file', RECORD_FILE)})")
+        if "redaction_sha256" in code:
+            covers += f", redaction file hash ({code.get('redaction_file')})"
     if "tools" in header:
         covers += ", tools block (names, definitions hash, emulator, store hash)"
     header["lock"] = {"time": iso(ns), "time_ns": ns, "hash": sha256_hex(canonical(lock_fixed(header))),
@@ -381,7 +392,8 @@ def items_hash_from_log(h, runs):
 
 
 def _code_problems(h):
-    """The checks that only a schema 4 or 5 header has: the code block, the scorer keys and the lock hash."""
+    """The checks that only a schema 4 or 5 header has: the code block, the scorer keys and the lock hash. A schema 4
+    code block must also hash the redaction file (REDACTION_FILE)."""
     out = []
     c = h.get("code") or {}
     if not c.get("engine_version"):
@@ -391,6 +403,9 @@ def _code_problems(h):
     for k in ("scorer_sha256", "record_sha256"):
         if not HEX64.fullmatch(str(c.get(k))):
             out.append(f"header: the code block has no {k}")
+    if h.get("schema") == SCHEMA and (c.get("redaction_file") != REDACTION_FILE
+                                      or not HEX64.fullmatch(str(c.get("redaction_sha256")))):
+        out.append(f"header: the code block has no redaction_sha256 of {REDACTION_FILE}")
     if not isinstance((h.get("corpus") or {}).get("scorer_keys"), dict):
         out.append("header: the corpus has no scorer keys")
     lock = h.get("lock") or {}
@@ -514,6 +529,13 @@ def check_log(path, repo=REPO, use_repo=True):
             problems.append(f"run {r.get('item')}/{r.get('run')}: time is not later than the lock time")
         if "served_host" not in r or "served_model" not in r:
             problems.append(f"run {r.get('item')}/{r.get('run')}: served host or served model is not recorded")
+    if schema == SCHEMA:
+        # Since 0.6 a TP-SEC-001 run on SRD-1 redacts each request and reply (spike.REDACTION_NOTE). So, as for
+        # schema 6, no text of the log may hold the placeholder marking. Schemas 1 to 3 are checked as before.
+        from . import sec006, sec006_log
+        marks = (sec006.CREDENTIAL_MARK, sec006.ENDPOINT_MARK)
+        if any(m.search(t) for t in sec006_log._strings(recs) for m in marks):
+            problems.append("the log holds a placeholder value")
     if recs[-1].get("type") != "summary":
         problems.append("the last record is not the summary (the run did not finish cleanly)")
     return problems

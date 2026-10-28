@@ -76,8 +76,9 @@ def respond(text, nth):
 
 
 def copy_repo(dst):
-    """The parts of the repository that a spike-set header reads: the record and the scorer file."""
-    for rel in (runlog.RECORD_FILE, runlog.SCORER_FILE):
+    """The parts of the repository that a spike-set header reads: the record, the scorer file and (since the I11
+    redaction) the redaction file."""
+    for rel in (runlog.RECORD_FILE, runlog.SCORER_FILE, runlog.REDACTION_FILE):
         (dst / rel).parent.mkdir(parents=True, exist_ok=True)
         shutil.copyfile(REPO / rel, dst / rel)
     return dst
@@ -174,7 +175,7 @@ class LockTests(unittest.TestCase):
         repo = copy_repo(self.dir / "repo")
         base = header(repo)["lock"]["hash"]
         self.assertEqual(base, header(repo)["lock"]["hash"])
-        for rel in (runlog.SCORER_FILE, runlog.RECORD_FILE):
+        for rel in (runlog.SCORER_FILE, runlog.RECORD_FILE, runlog.REDACTION_FILE):
             p = repo / rel
             data = p.read_bytes()
             p.write_bytes(data + b" ")

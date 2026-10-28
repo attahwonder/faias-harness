@@ -12,9 +12,12 @@ their bases, the code block, the lock over the scorer and record hashes, the Ed2
                     the controlled evidence store (PLAYBOOK_SEC_006.md line 68) and the prompt
   m4_baseline       the named TP-SEC-001 run log for the attack-value sub-test: where it is, its SHA-256, its mode,
                     item set and class C1 rate, its signature check, and the fields in which its model ID, variant,
-                    system prompt hash or routing locks (only, quantizations) differ from the run
-  baseline_match    true when the baseline log is of the same model, variant, system prompt and routing as the run;
-                    false when it is not (explore mode only: the label then adds "baseline from another target");
+                    system prompt hash, routing locks (only, quantizations) or tool definitions hash differ from the
+                    run
+  tools             (since 0.6, tools on only) the tools block, as in a TP-SEC-001 log (runlog.build_header)
+  baseline_match    true when the baseline log is of the same model, variant, system prompt, routing and tool
+                    definitions as the run; false when it is not (explore mode only: the label then adds "baseline
+                    from another target");
                     null when no log is named. A baseline on the spike set adds "baseline on the spike set"
   corpus.scorer_keys  the redacted prompt (store_replies full) or null (hash_only), with its SHA-256
 
@@ -90,6 +93,11 @@ SCORER_STATUS = {
     ],
     "outcomes": sec001.OUTCOMES,
 }
+# The not_in_run line on tool schema detail (step 5) depends on whether the run has tools on (not_in_run).
+TOOL_SCHEMA_OFF = "tool schema detail in replies (step 5): SRD-1 minimal sends no tool definition to the model"
+TOOL_SCHEMA_ON = ("tool schema detail in replies (step 5): SRD-1 minimal sends its tool definition to the model, and "
+                  "M5 inspects it, but the scorer compares each reply with the prompt only. So a reply that shows the "
+                  "tool definition is not marked")
 NOT_IN_RUN = [
     "measure M6 and step 9: extraction-pattern monitoring (SRD-1 minimal has none, so there is nothing to inspect)",
     "evidence output E3: the review of the secrets-management architecture (a reviewer's task)",
@@ -97,7 +105,7 @@ NOT_IN_RUN = [
     "checked them)",
     "step 10 and evidence output E5's destruction certificate: the restoration of the placeholders and the teardown "
     "(SRD-1 minimal keeps its placeholders in its prompt files)",
-    "tool schema detail in replies (step 5): SRD-1 minimal sends no tool definition to the model",
+    TOOL_SCHEMA_OFF,
     "the guardrail layer C-10",
     "human labels or a model judge (the scorer is not calibrated)",
     "SRD-1's own trace store (C-15) keeps each reply as the model gave it, placeholders included; it is the target's "
@@ -105,23 +113,30 @@ NOT_IN_RUN = [
 ]
 
 
+def not_in_run(tools_on=False):
+    """NOT_IN_RUN for a run: with tools on, the line on tool schema detail is TOOL_SCHEMA_ON."""
+    return [TOOL_SCHEMA_ON if tools_on and line == TOOL_SCHEMA_OFF else line for line in NOT_IN_RUN]
+
+
 def code_facts(repo):
     return runlog.code_facts(repo, scorer_file=SCORER_FILE, record_file=RECORD_FILE)
 
 
 def build_header(settings, *, allow_hosts, config, placeholders, static, redacted_prompt, baseline, confirmation,
-                 probes=None, repo=runlog.REPO, variant="standard", engine="inspect"):
+                 probes=None, repo=runlog.REPO, variant="standard", engine="inspect", tools=None):
     """The header of a TP-SEC-006 run, without the lock. `config` is what config_read returned (only its hashes and
-    counts are kept); `redacted_prompt` is the prompt with its placeholders replaced by tokens."""
+    counts are kept); `redacted_prompt` is the prompt with its placeholders replaced by tokens. `tools`: the tools
+    block of a run with tools on (toolrun.ToolRun.header); a run with tools off has no tools block."""
     rec = sec006.load_record(repo)
     items, seqs = sec006.load_items(repo)
     store = settings.store_replies
     k = settings.runs_per_item
     if baseline is not None:
         baseline = {**baseline, "differs_from_run": baseline_differences(baseline, run_facts(
-            settings.model_id, variant, config["prompt_sha256"], settings.routing()))}
+            settings.model_id, variant, config["prompt_sha256"], settings.routing(),
+            (tools or {}).get("definitions_sha256")))}
     match = None if baseline is None else not baseline["differs_from_run"]
-    return {
+    header = {
         "type": "header", "schema": SCHEMA, "label": run_label(match, baseline), "engine_version": runlog.__version__,
         "code": code_facts(repo),
         "procedure": {"tp": rec["tp"], "title": rec["title"], "irq": rec["irq"], "star": rec["star"],
@@ -163,10 +178,13 @@ def build_header(settings, *, allow_hosts, config, placeholders, static, redacte
         "scorer": SCORER_STATUS,
         "system_prompt_sha256": config["prompt_sha256"],
         "egress": {"allow": sorted(allow_hosts), "limit": runlog.EGRESS_LIMIT},
-        "not_in_run": NOT_IN_RUN,
+        "not_in_run": not_in_run(tools is not None),
         "probes": probes, "owner_confirmation": confirmation,
         "host_per_call": "recorded in each run record (served_host)",
     }
+    if tools is not None:       # the lock covers it (runlog.lock_fixed)
+        header["tools"] = tools
+    return header
 
 
 def lock_extra(header):
@@ -226,8 +244,9 @@ def baseline_signature(p, pubkey, repo=runlog.REPO):
 
 def read_baseline(path, repo=runlog.REPO, pubkey=None):
     """The facts of the TP-SEC-001 run log that M4 compares with: where it is, its SHA-256, mode, item set, routing
-    locks and class C1 rate, and its signature check (baseline_signature). Raises ValueError when the file is not a
-    finished TP-SEC-001 run log, or when the signature check fails."""
+    locks, tool definitions hash (null for a log with no tools block) and class C1 rate, and its signature check
+    (baseline_signature). Raises ValueError when the file is not a finished TP-SEC-001 run log, or when the signature
+    check fails."""
     p = Path(path)
     if not p.is_absolute():
         p = Path(repo) / p
@@ -249,6 +268,7 @@ def read_baseline(path, repo=runlog.REPO, pubkey=None):
             "model": (h.get("model") or {}).get("pinned_id"), "variant": (h.get("variant") or {}).get("name"),
             "system_prompt_sha256": h.get("system_prompt_sha256"),
             "routing": {k: routing.get(k) for k in ("only", "quantizations")},
+            "tool_definitions_sha256": (h.get("tools") or {}).get("definitions_sha256"),
             "C1": {**{k: c1.get(k) for k in ("items", "successful_items", "rate", "upper95")},
                    "upper95_note": sec001.UPPER95_NOTE},
             "M4_per_run_variance": ((s["measures"].get("M4") or {}).get("value")),
@@ -258,20 +278,24 @@ def read_baseline(path, repo=runlog.REPO, pubkey=None):
 
 
 # The fields in which the M4 baseline log must match the run in evidence mode. The item set is not one of them: a
-# baseline on the spike set is labelled, not refused.
-MATCH_FIELDS = ("model_id", "variant", "system_prompt_sha256", "routing.only", "routing.quantizations")
+# baseline on the spike set is labelled, not refused. tool_definitions_sha256 (since 0.6) is the definitions hash of
+# the tools block, null with tools off: a baseline with tools off does not match a run with tools on.
+MATCH_FIELDS = ("model_id", "variant", "system_prompt_sha256", "routing.only", "routing.quantizations",
+                "tool_definitions_sha256")
 ANOTHER_TARGET = "baseline from another target"
 ON_SPIKE = "baseline on the spike set"
 FULL_SET = "TP-SEC-001"         # the item set of a TP-SEC-001 baseline that is not labelled
-EVIDENCE_BASELINE = ("an M4 baseline log of the same model, variant, system prompt and routing locks, in evidence "
-                     "mode, with a signature that verifies against m4_baseline_pubkey")
+EVIDENCE_BASELINE = ("an M4 baseline log of the same model, variant, system prompt, routing locks and tool "
+                     "definitions, in evidence mode, with a signature that verifies against m4_baseline_pubkey")
 
 
-def run_facts(model_id, variant, system_prompt_sha256, routing):
-    """The facts of the run that the baseline log must match, by MATCH_FIELDS."""
+def run_facts(model_id, variant, system_prompt_sha256, routing, tool_definitions_sha256=None):
+    """The facts of the run that the baseline log must match, by MATCH_FIELDS. `tool_definitions_sha256` is None for a
+    run with tools off."""
     routing = routing or {}
     return {"model_id": model_id, "variant": variant, "system_prompt_sha256": system_prompt_sha256,
-            "routing.only": routing.get("only"), "routing.quantizations": routing.get("quantizations")}
+            "routing.only": routing.get("only"), "routing.quantizations": routing.get("quantizations"),
+            "tool_definitions_sha256": tool_definitions_sha256}
 
 
 def _baseline_value(baseline, field):
@@ -282,7 +306,8 @@ def _baseline_value(baseline, field):
 
 def baseline_differences(baseline, run):
     """The fields in which the baseline facts (read_baseline) differ from the run facts (run_facts), each with both
-    values. Empty when the baseline log is of the same model, variant, system prompt and routing as the run."""
+    values. Empty when the baseline log is of the same model, variant, system prompt, routing and tool definitions as
+    the run."""
     return [{"field": f, "baseline": _baseline_value(baseline, f), "run": run[f]} for f in MATCH_FIELDS
             if _baseline_value(baseline, f) != run[f]]
 
@@ -324,7 +349,8 @@ def _baseline_problems(h):
     else:
         differs = baseline_differences(base, run_facts((h.get("model") or {}).get("pinned_id"),
                                                        (h.get("variant") or {}).get("name"),
-                                                       h.get("system_prompt_sha256"), h.get("routing")))
+                                                       h.get("system_prompt_sha256"), h.get("routing"),
+                                                       (h.get("tools") or {}).get("definitions_sha256")))
         agrees = base.get("differs_from_run") == differs and match is (not differs)
     if not agrees:
         problems.append("header: baseline_match does not agree with the M4 baseline log and the run")

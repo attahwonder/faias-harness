@@ -12,6 +12,11 @@ types `yes` (settings `procedure: TP-SEC-006`). It refuses an M4 baseline log wh
 the key that `m4_baseline_pubkey` names. In evidence mode it also refuses, before the lock, a baseline log whose model
 ID, variant, system prompt hash or routing locks (`only`, `quantizations`) differ from the run, or that is not in
 evidence mode. SRD-1's trace store goes in the folder `target/` of the run folder, with a README.
+
+With `tools_enabled` (since 0.6) the run serves SRD-1's tool through the emulator (toolrun.ToolRun), as spike.execute
+does. config_read then returns the tool definition, so the placeholder search and the static inspection (M5) read it.
+The header gets the tools block, and the summary gets the tool ledger. The M4 baseline log must also match the hash of
+the tool definitions (sec006_log.MATCH_FIELDS).
 """
 import dataclasses
 import time
@@ -21,13 +26,10 @@ from pathlib import Path
 from ..adapters.srd1_http import Srd1ChatTarget
 from ..egress import EgressClient, EgressLog
 from ..errors import CapReached
-from . import runlog, sec001, sec006, sec006_log, spike
+from . import runlog, sec001, sec006, sec006_log, spike, toolrun
 
 REPO = Path(__file__).resolve().parents[2]
-TARGET_DIR = "target"
-TARGET_README = ("This folder holds SRD-1's own trace store: each reply as the model gave it, with the staged "
-                 "placeholder values. It is the target's record, not the harness log. Do not put it in the working "
-                 "papers.\n")
+TARGET_DIR, TARGET_README = spike.TARGET_DIR, spike.TARGET_README     # the same folder and README as TP-SEC-001
 
 
 def run_items(repo=REPO):
@@ -43,33 +45,59 @@ def prompt_sha256(variant="standard"):
     return runlog.sha256_hex(orch.load_system_prompt(orch.PROMPT_VARIANTS[variant]))
 
 
+def _tools(settings):
+    """With tools on: the tool definitions that SRD-1 sends to the model (built from its tools file, as its MCP client
+    builds them from tools/list), and the most model calls of one turn (1 + MAX_TOOL_ROUNDS). With tools off: None
+    and 1."""
+    if not getattr(settings, "tools_enabled", False):
+        return None, 1
+    _, _, orch, _ = spike._srd1()
+    from targets.srd1.app.mcp_client import function_definitions
+    return function_definitions(toolrun.mcp_tools.load_tools(toolrun.SRD1_TOOLS)["tools"]), 1 + orch.MAX_TOOL_ROUNDS
+
+
+def tool_definitions_sha256(settings):
+    """The SHA-256 of the tool definitions that SRD-1 sends to the model, from its tools file, or None with tools off.
+    SRD-1 minimal states the same hash through config_read. The preflight compares it with the M4 baseline log."""
+    definitions, _ = _tools(settings)
+    return None if not definitions else runlog.sha256_hex(runlog.canonical(definitions))
+
+
 def planned_calls(settings, repo=REPO):
-    """The most model calls that a run makes: each item, each sequence turn and each follow-on item, k times."""
+    """The most model calls that a run makes: each item, each sequence turn and each follow-on item, k times. With
+    tools on, each of them counts at 1 + MAX_TOOL_ROUNDS calls, the most that one turn can make."""
     items, seqs = sec006.load_items(repo)
-    return (len(items) + sum(len(s.turns) for s in seqs) + sec006.FOLLOWON_SIZE) * settings.runs_per_item
+    _, per_turn = _tools(settings)
+    return (len(items) + sum(len(s.turns) for s in seqs) + sec006.FOLLOWON_SIZE) * settings.runs_per_item * per_turn
 
 
 def estimate(settings, repo=REPO):
     """The worst-case cost of the whole run, in USD, or None if the prices are not set. Every call is counted at the
     output limit; a sequence turn also counts the earlier replies of its conversation at the output limit. The
-    estimate takes the prompt's size from the prompt file; the run reads the prompt through config_read."""
+    estimate takes the prompt's size from the prompt file; the run reads the prompt through config_read.
+
+    With tools on, each call also carries the tool definitions, and each turn counts at 1 + MAX_TOOL_ROUNDS calls, as
+    in spike.estimate. The estimate does not count the tool calls and the tool results that a turn adds to the
+    messages. The gateway checks the cap before each call."""
     if settings.price_in_per_m is None or settings.price_out_per_m is None:
         return None
     _, gw, orch, _ = spike._srd1()
+    tools, per_turn = _tools(settings)
     system = [{"role": "system", "content": orch.load_system_prompt()}]
     items, seqs = sec006.load_items(repo)
-    tokens = sum(gw.estimate_tokens(system + [{"role": "user", "content": i.text}]) for i in items)
+    tokens = sum(gw.estimate_tokens(system + [{"role": "user", "content": i.text}], tools) for i in items)
     calls = len(items)
     for s in seqs:
         users = []
         for j, t in enumerate(s.turns):
             users.append({"role": "user", "content": t})
-            tokens += gw.estimate_tokens(system + users) + j * settings.max_tokens
+            tokens += gw.estimate_tokens(system + users, tools) + j * settings.max_tokens
             calls += 1
     longest = max(sec006.FOLLOWON_TEMPLATES, key=len).format(fragment="w" * 12 * sec006.MAX_FRAGMENT_WORDS,
                                                              a="W" * 12, b="0000")
-    tokens += gw.estimate_tokens(system + [{"role": "user", "content": longest}]) * sec006.FOLLOWON_SIZE
+    tokens += gw.estimate_tokens(system + [{"role": "user", "content": longest}], tools) * sec006.FOLLOWON_SIZE
     calls += sec006.FOLLOWON_SIZE
+    tokens, calls = tokens * per_turn, calls * per_turn
     k = settings.runs_per_item
     return (tokens * k * settings.price_in_per_m + calls * k * settings.max_tokens * settings.price_out_per_m) / 1_000_000
 
@@ -220,11 +248,15 @@ def _followon(runner, index, settings, clock_ns, repo):
 
 
 def execute(settings, *, run_dir, sign_key, confirmation, probes=None, base_url=None, env=None,
-            clock_ns=time.time_ns, repo=REPO, prior_spent_usd=0.0, variant="standard", engine="inspect"):
+            clock_ns=time.time_ns, repo=REPO, prior_spent_usd=0.0, variant="standard", engine="inspect", gate=None,
+            tools_file=None):
     """Run TP-SEC-006 on SRD-1 minimal. Return a spike.RunResult. `base_url` and `env` are for tests.
 
     `variant` is "standard" or "positive_control" (the weakened system prompt, which tells the model to show its
-    instructions). `engine` is "inspect" (the default) or "direct" (a plain loop, for tests without Inspect)."""
+    instructions). `engine` is "inspect" (the default) or "direct" (a plain loop, for tests without Inspect).
+    With `tools_enabled` (since 0.6) the run serves SRD-1's tool through the emulator. `gate` and `tools_file` are for
+    tests: a RefundGate with the test's own values in place of the risk-appetite file, and a tools file in place of
+    targets/srd1/tools.yaml."""
     build, gw, orch_mod, trace_mod = spike._srd1()
     if settings.procedure != sec006.TP:
         raise ValueError("the settings do not name the procedure TP-SEC-006")
@@ -238,6 +270,9 @@ def execute(settings, *, run_dir, sign_key, confirmation, probes=None, base_url=
                 if settings.m4_baseline_log else None)
     prompt_file = orch_mod.PROMPT_VARIANTS[variant]
     base_url = base_url or gw.OPENROUTER_BASE
+    tools_on = bool(getattr(settings, "tools_enabled", False))
+    if tools_on:
+        gate = gate or build.RefundGate.from_file()     # null values: "refund cap not declared", before any file
     run_dir = Path(run_dir)
     run_dir.mkdir(parents=True, exist_ok=True)
     elog = EgressLog(run_dir / "egress.jsonl")
@@ -246,11 +281,22 @@ def execute(settings, *, run_dir, sign_key, confirmation, probes=None, base_url=
     # with a README, so that it is not taken into the working papers with the run log (PLAYBOOK_SEC_006.md line 11).
     (run_dir / TARGET_DIR).mkdir(parents=True, exist_ok=True)
     (run_dir / TARGET_DIR / "README.txt").write_text(TARGET_README, encoding="utf-8")
-    srd1 = build.build_srd1(settings, egress, run_dir / TARGET_DIR / "srd1_trace.jsonl", base_url=base_url, env=env,
-                            system_prompt=orch_mod.load_system_prompt(prompt_file), prompt_source=prompt_file.name)
+    tool_run = (toolrun.ToolRun(settings, run_dir, egress, tools_file=tools_file or toolrun.SRD1_TOOLS).start()
+                if tools_on else None)
+    try:
+        srd1 = build.build_srd1(settings, egress, run_dir / TARGET_DIR / "srd1_trace.jsonl", base_url=base_url,
+                                env=env, system_prompt=orch_mod.load_system_prompt(prompt_file),
+                                prompt_source=prompt_file.name, tools_url=tool_run.url if tool_run else None,
+                                tool_env=tool_run.env if tool_run else None, gate=gate)
+    except BaseException:
+        if tool_run:
+            tool_run.stop()
+        raise
     egress.add_allow(f"127.0.0.1:{srd1.server.port}")
     srd1.gateway.cap.spent_usd = prior_spent_usd
-    target = Srd1ChatTarget(srd1.server.url, egress, timeout=gw.max_call_seconds(egress.timeout) + spike.LOCAL_MARGIN_S)
+    target = Srd1ChatTarget(srd1.server.url, egress, timeout=gw.max_call_seconds(egress.timeout) + spike.LOCAL_MARGIN_S,
+                            tools_url=tool_run.url if tool_run else None,
+                            ledger_path=tool_run.emulator.ledger.path if tool_run else None)
     log_path = run_dir / "run_log.jsonl"
     k = settings.runs_per_item
     srd1.server.start()
@@ -258,6 +304,12 @@ def execute(settings, *, run_dir, sign_key, confirmation, probes=None, base_url=
         config = target.read_config("prompt")       # through the interface; the harness reads no prompt in process
         if runlog.sha256_hex(config["prompt"]) != config["prompt_sha256"]:
             raise ValueError("config_read returned a prompt whose SHA-256 is not the one that it states")
+        # The hash of the tool definitions that config_read returned (None with tools off). The M4 baseline log must
+        # match it, and the tools block of the header holds it.
+        definitions = config.get("tool_definitions") or []
+        definitions_sha256 = runlog.sha256_hex(runlog.canonical(definitions)) if definitions else None
+        if tool_run and target.read_config("tools").get("definitions_sha256") != definitions_sha256:
+            raise ValueError("config_read returned tool definitions whose SHA-256 is not the one that it states")
         sources = sec006.config_sources(config)
         placeholders = sec006.find_placeholders(t for _, t in sources)
         redacted_prompt, _ = sec006.redact(config["prompt"], placeholders)
@@ -266,7 +318,8 @@ def execute(settings, *, run_dir, sign_key, confirmation, probes=None, base_url=
         header = sec006_log.build_header(
             settings, allow_hosts=egress.allow_text, config=config, placeholders=sec006.placeholder_record(sources),
             static=static, redacted_prompt=redacted_prompt, baseline=baseline, confirmation=confirmation,
-            probes=probes, repo=repo, variant=variant, engine=engine)
+            probes=probes, repo=repo, variant=variant, engine=engine,
+            tools=tool_run.header(definitions_sha256) if tool_run else None)
         if settings.mode == "evidence" and header["m4_baseline"] is not None:
             refused = sec006_log.evidence_problems(header["m4_baseline"])
             if refused:
@@ -291,6 +344,12 @@ def execute(settings, *, run_dir, sign_key, confirmation, probes=None, base_url=
             raise
     finally:
         srd1.server.stop()
+        if tool_run:
+            try:
+                srd1.mcp.close()
+            except Exception:       # noqa: BLE001 - the ledger, not the close, is the record
+                pass
+            tool_run.stop()
     try:
         runs = runner.runs
         chain_ok, chain_problems = trace_mod.verify_chain(srd1.trace.path, expected_head=srd1.trace.head)
@@ -318,6 +377,8 @@ def execute(settings, *, run_dir, sign_key, confirmation, probes=None, base_url=
             "run_engine": engine_facts,
             "finished": runlog.iso(),
         }
+        if tool_run:
+            summary["tool_ledger"] = tool_run.summary()
         log.write(summary)
     finally:
         log.close()
