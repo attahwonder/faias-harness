@@ -30,10 +30,16 @@ the scorer file and of the record file. The lock hash also covers those two file
 keys (the marker of each C1 item and the product of each C2 and C3 item), so the items hash can be checked from the
 log alone. `verify` recomputes the lock hash of a schema 4 or 5 log. Logs of schemas 1 to 3 are checked as before.
 
+Schema 6 (version 0.6) is the log of a TP-SEC-006 run on SRD-1 minimal (engine/sec006_log.py). It has the frame of
+schema 4, with the scorer and record of TP-SEC-006 in the `code` block, and the blocks `config`, `placeholders`,
+`static_inspection`, `store_replies` and `m4_baseline`, which the lock also covers. It never holds a placeholder
+value. `check_log`, `rescore` and `verify --no-repo` hand a schema 6 log to engine/sec006_log.py.
+
 Three more commands, none of which makes a network call:
 
   rescore  --log <log>               scores each run's reply again with the scorer of this checkout; exit 1 on a
-                                     difference from the recorded score
+                                     difference from the recorded score; exit 2 for a log that holds the reply
+                                     hashes only (store_replies: hash_only)
   verify   --log <log> --sig <sig> --no-repo
                                      checks the signature and the form without the item set and the record of this
                                      checkout; the items hash is checked against the log itself
@@ -64,9 +70,10 @@ SCHEMA_EXTERNAL = "faias-harness-run-log/5"   # 5 (version 0.6): schema 3 with t
 SCHEMA_V3 = "faias-harness-run-log/3"   # 3 (version 0.5): a run against an external target; still checked
 SCHEMA_V2 = "faias-harness-run-log/2"   # 2 adds the item set, the clean-baseline arm and the list `not_in_run`; still checked
 SCHEMA_V1 = "faias-harness-run-log/1"  # logs of the engine spike in version 0.3; still checked
+SCHEMA_SEC006 = "faias-harness-run-log/6"   # 6 (version 0.6): TP-SEC-006 on SRD-1 minimal (sec006_log.py)
 EXTERNAL_SCHEMAS = (SCHEMA_V3, SCHEMA_EXTERNAL)
-CODE_SCHEMAS = (SCHEMA, SCHEMA_EXTERNAL)      # the logs with the code block, the scorer keys and the wider lock
-KNOWN_SCHEMAS = (SCHEMA_V1, SCHEMA_V2, SCHEMA_V3, SCHEMA, SCHEMA_EXTERNAL)
+CODE_SCHEMAS = (SCHEMA, SCHEMA_EXTERNAL, SCHEMA_SEC006)   # the logs with the code block, the scorer keys and the wider lock
+KNOWN_SCHEMAS = (SCHEMA_V1, SCHEMA_V2, SCHEMA_V3, SCHEMA, SCHEMA_EXTERNAL)    # the TP-SEC-001 schemas
 SCORER_FILE = "faias_harness/engine/sec001.py"
 RECORD_FILE = "records/TP-SEC-001.yaml"
 HEX64 = re.compile(r"[0-9a-f]{64}")
@@ -112,7 +119,7 @@ NOT_IN_RUN = [
     "the guardrail layer C-10 (the procedure expects the classifier to be enabled as in production)",
     "procedure steps 2 and 6 to 9 (code inspection, consequence assessments, action-gate review, release records, teardown)",
     "measures M5 to M7 (findings, not scored by the engine)",
-    "the capability config_read (SRD-1 minimal does not offer it, so no prompt or configuration is read through the interface; only M1 to M4 are scored)",
+    "the capability config_read (the TP-SEC-001 engine reads no prompt or configuration through the interface; only M1 to M4 are scored)",
     "human labels or a model judge (the scorer is not calibrated; items that only a judge can mark are not in the set)",
 ]
 NOT_IN_SPIKE = ["the clean-baseline arm of 25 requests"] + NOT_IN_RUN[:4] + ["a corpus of 100 or more items (the spike has 20)"]
@@ -150,14 +157,15 @@ def git_commit(repo=REPO):
     return out if p.returncode == 0 and GIT_COMMIT.fullmatch(out) else None
 
 
-def code_facts(repo=REPO):
-    """The code block of a schema 4 or 5 header: what code made the log."""
+def code_facts(repo=REPO, scorer_file=SCORER_FILE, record_file=RECORD_FILE):
+    """The code block of a schema 4, 5 or 6 header: what code made the log. The scorer and record files are those
+    of the procedure (TP-SEC-001 by default)."""
     repo = Path(repo)
     return {"engine_version": __version__, "git_commit": git_commit(repo),
             "git_commit_note": "git rev-parse HEAD of the checkout that ran; null when git did not answer. It does "
                                "not show changes that were not committed; the two file hashes do.",
-            "scorer_file": SCORER_FILE, "scorer_sha256": sha256_hex((repo / SCORER_FILE).read_bytes()),
-            "record_file": RECORD_FILE, "record_sha256": sha256_hex((repo / RECORD_FILE).read_bytes())}
+            "scorer_file": scorer_file, "scorer_sha256": sha256_hex((repo / scorer_file).read_bytes()),
+            "record_file": record_file, "record_sha256": sha256_hex((repo / record_file).read_bytes())}
 
 
 def build_header(settings, *, allow_hosts, system_prompt_sha256, confirmation, probes=None, repo=REPO,
@@ -260,6 +268,9 @@ def lock_fixed(header):
     if schema in CODE_SCHEMAS:
         code = header.get("code") or {}
         fixed["scorer_sha256"], fixed["record_sha256"] = code.get("scorer_sha256"), code.get("record_sha256")
+    if schema == SCHEMA_SEC006:
+        from . import sec006_log
+        fixed.update(sec006_log.lock_extra(header))
     return fixed
 
 
@@ -270,8 +281,13 @@ def lock_header(header, clock_ns=None):
     covers = ("procedure, thresholds with bases, settings hash, target with its declared model and version, "
               "budget, item set") if external else \
         "procedure, thresholds with bases, settings hash, routing locks, model ID, system prompt hash, item set"
+    if header.get("schema") == SCHEMA_SEC006:
+        from . import sec006_log
+        covers = sec006_log.LOCK_COVERS
     if header.get("schema") in CODE_SCHEMAS:
-        covers += f", scorer file hash ({SCORER_FILE}), record file hash ({RECORD_FILE})"
+        code = header.get("code") or {}
+        covers += (f", scorer file hash ({code.get('scorer_file', SCORER_FILE)}), record file hash "
+                   f"({code.get('record_file', RECORD_FILE)})")
     header["lock"] = {"time": iso(ns), "time_ns": ns, "hash": sha256_hex(canonical(lock_fixed(header))),
                       "covers": covers}
     return header
@@ -380,6 +396,9 @@ def check_log(path, repo=REPO, use_repo=True):
     if not recs or recs[0].get("type") != "header":
         return ["the first line is not the header"]
     h = recs[0]
+    if h.get("schema") == SCHEMA_SEC006:       # each procedure has its own form check
+        from . import sec006_log
+        return sec006_log.check(path, recs, repo=repo, use_repo=use_repo)
     rec = sec001.load_record(repo=repo) if use_repo else None
     schema = h.get("schema")
     if schema not in KNOWN_SCHEMAS:
@@ -550,8 +569,12 @@ def verify_log(log_path, sig_path, pubkey_path=None, repo=REPO, use_repo=True):
 def _no_repo_lines(log_path):
     try:
         recs = read_log(log_path)
-        status, detail = items_hash_from_log(recs[0], [r for r in recs if r.get("type") == "run"])
-        items_line = f"items hash: {status} ({detail})"
+        if recs[0].get("schema") == SCHEMA_SEC006:
+            from . import sec006_log
+            items_line = sec006_log.summary_line(recs)
+        else:
+            status, detail = items_hash_from_log(recs[0], [r for r in recs if r.get("type") == "run"])
+            items_line = f"items hash: {status} ({detail})"
     except (ValueError, OSError, IndexError, AttributeError) as e:
         items_line = f"items hash: not checked (cannot read the log: {type(e).__name__})"
     return items_line + "\nrepository item set: not checked"
@@ -564,8 +587,12 @@ def rescore_log(log_path, repo=REPO):
 
     The marker and product of each item come from the scorer keys in the log (schemas 4 and 5), or else from the
     item set of the checkout. A clean-baseline run is never scored: its recorded score must be the baseline score.
-    Returns (lines to print, mismatches). Makes no network call."""
+    Returns (lines to print, mismatches). Makes no network call. A TP-SEC-006 log (schema 6) is rescored by
+    sec006_log.rescore; mismatches is None when that log holds the reply hashes only."""
     recs = read_log(log_path)
+    if recs[0].get("schema") == SCHEMA_SEC006:
+        from . import sec006_log
+        return sec006_log.rescore(recs, repo=repo)
     h, runs = recs[0], [r for r in recs if r.get("type") == "run"]
     used = sha256_hex(Path(sec001.__file__).read_bytes())
     logged = (h.get("code") or {}).get("scorer_sha256")
@@ -647,6 +674,8 @@ def main(argv=None):
             print(f"cannot rescore the log ({type(e).__name__})")
             return 2
         print("\n".join(lines))
+        if mismatches is None:      # a log that does not hold the replies: nothing was rescored
+            return 2
         return 1 if mismatches else 0
     if args.cmd == "stamp":
         try:

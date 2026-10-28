@@ -18,6 +18,11 @@ routing locks, because the harness does not make the agent's model calls. Its bu
 operator's estimate of the cost of one call; the run stops before a call that would pass floor(cap / cost), or
 `max_calls` if that is lower. In evidence mode it must declare the model and the version of the target, and the
 M4 value with its reason. The declared values are recorded as declared, not observed.
+
+The setting `procedure` (version 0.6) chooses the procedure of an SRD-1 run: TP-SEC-001 (the default) or
+TP-SEC-006 (docs/ARCHITECTURE.md, section 15). Only TP-SEC-006 takes `store_replies` (full or hash_only),
+`m4_baseline_log` and `reviewer_values.M3`. In evidence mode it needs the baseline log and the M3 and M4 values
+with their reasons. A TP-SEC-001 file keeps its settings hash.
 """
 import hashlib
 import json
@@ -30,10 +35,15 @@ import yaml
 
 TOP_REQUIRED = ["provider", "model_id", "mode", "routing", "price_in_per_m", "price_out_per_m", "cap_usd",
                 "api_key_env"]
-TOP_OPTIONAL = ["max_tokens", "reviewer_values", "temperature", "seed", "runs_per_item", "item_set", "kind"]
+TOP_OPTIONAL = ["max_tokens", "reviewer_values", "temperature", "seed", "runs_per_item", "item_set", "kind",
+                "procedure", "store_replies", "m4_baseline_log"]
 RUNS_MIN, RUNS_MAX, RUNS_DEFAULT = 3, 20, 3     # three is the FAIAS minimum (PLAYBOOK_SEC_001.md line 27)
 # The item set of a run: the full set in items/TP-SEC-001.json (the default), or the 20 items of the engine spike.
 ITEM_SETS, ITEM_SET_DEFAULT = ("TP-SEC-001", "spike"), "TP-SEC-001"
+# The procedure of an SRD-1 run (version 0.6). TP-SEC-006 runs its own item set, and only it takes store_replies,
+# m4_baseline_log and a reviewer value for M3.
+PROCEDURES, PROCEDURE_DEFAULT, SEC006 = ("TP-SEC-001", "TP-SEC-006"), "TP-SEC-001", "TP-SEC-006"
+STORE_REPLIES = ("full", "hash_only")
 ROUTING_KEYS = ["only", "allow_fallbacks", "zdr", "data_collection", "quantizations"]
 FORBIDDEN = {"api_key", "key", "secret", "token", "password"}
 MODES = ("explore", "evidence")
@@ -68,6 +78,11 @@ class Settings:
     seed: object = None
     runs_per_item: int = RUNS_DEFAULT
     item_set: str = ITEM_SET_DEFAULT
+    procedure: str = PROCEDURE_DEFAULT
+    store_replies: str = "full"
+    m4_baseline_log: object = None
+    m3_value: object = None
+    m3_reason: object = None
     kind = "srd1"           # a class attribute: not in the canonical content, so the settings hash is unchanged
 
     def routing(self):
@@ -86,8 +101,9 @@ class Settings:
         return r
 
     def canonical(self):
-        """The validated content as one dict. Its hash is the settings hash."""
-        return {
+        """The validated content as one dict. Its hash is the settings hash. The TP-SEC-006 fields are in it only
+        for a TP-SEC-006 run, so the settings hash of a TP-SEC-001 run is unchanged."""
+        out = {
             "provider": self.provider, "model_id": self.model_id, "mode": self.mode,
             "routing": self.routing(), "price_in_per_m": self.price_in_per_m,
             "price_out_per_m": self.price_out_per_m, "cap_usd": self.cap_usd,
@@ -96,6 +112,10 @@ class Settings:
             "item_set": self.item_set,
             "reviewer_values": {"M4": {"value": self.m4_value, "reason": self.m4_reason}},
         }
+        if self.procedure == SEC006:
+            out.update(procedure=self.procedure, store_replies=self.store_replies, m4_baseline_log=self.m4_baseline_log)
+            out["reviewer_values"]["M3"] = {"value": self.m3_value, "reason": self.m3_reason}
+        return out
 
     def digest(self):
         blob = json.dumps(self.canonical(), sort_keys=True, ensure_ascii=False, separators=(",", ":"))
@@ -147,8 +167,24 @@ def validate(raw):
     k = raw.get("runs_per_item")
     if "runs_per_item" in raw and not (isinstance(k, int) and not isinstance(k, bool) and RUNS_MIN <= k <= RUNS_MAX):
         problems.append(f"runs_per_item must be a whole number from {RUNS_MIN} (the FAIAS minimum) to {RUNS_MAX}")
-    if "item_set" in raw and raw["item_set"] not in ITEM_SETS:
-        problems.append(f"item_set must be one of {', '.join(ITEM_SETS)}")
+    proc = raw.get("procedure", PROCEDURE_DEFAULT)
+    if proc not in PROCEDURES:
+        problems.append(f"procedure must be one of {', '.join(PROCEDURES)}")
+    sec006 = proc == SEC006
+    if sec006:
+        if "item_set" in raw and raw["item_set"] != SEC006:
+            problems.append("item_set must be TP-SEC-006 for the procedure TP-SEC-006")
+        if "store_replies" in raw and raw["store_replies"] not in STORE_REPLIES:
+            problems.append(f"store_replies must be one of {', '.join(STORE_REPLIES)}")
+        bl = raw.get("m4_baseline_log")
+        if bl is not None and not (isinstance(bl, str) and bl.strip()):
+            problems.append("m4_baseline_log must be the path of a TP-SEC-001 run log, or null")
+    else:
+        if "item_set" in raw and raw["item_set"] not in ITEM_SETS:
+            problems.append(f"item_set must be one of {', '.join(ITEM_SETS)}")
+        for k in ("store_replies", "m4_baseline_log"):
+            if k in raw:
+                problems.append(f"{k} applies to the procedure TP-SEC-006 only")
     t = raw.get("temperature")
     if t is not None and not (_num(t) and 0 <= t <= 2):
         problems.append("temperature must be a number from 0 to 2 or null")
@@ -182,21 +218,29 @@ def validate(raw):
         routing = {}
 
     rv = raw.get("reviewer_values")
-    m4 = None
+    m4 = m3 = None
+    allowed = {"M3", "M4"} if sec006 else {"M4"}
     if "reviewer_values" in raw and rv is not None:
-        if not isinstance(rv, dict) or set(rv) - {"M4"}:
-            problems.append("reviewer_values may hold M4 only")
+        if not isinstance(rv, dict) or set(rv) - allowed:
+            problems.append("reviewer_values may hold M3 and M4 only" if sec006 else "reviewer_values may hold M4 only")
         else:
-            m4 = rv.get("M4")
-            if m4 is not None:
-                if not isinstance(m4, dict) or set(m4) - {"value", "reason"}:
-                    problems.append("reviewer_values.M4 must hold 'value' and 'reason'")
+            m4, m3 = rv.get("M4"), rv.get("M3")
+            for name, m in (("M3", m3), ("M4", m4)):
+                if m is None:
+                    continue
+                if not isinstance(m, dict) or set(m) - {"value", "reason"}:
+                    problems.append(f"reviewer_values.{name} must hold 'value' and 'reason'")
                 else:
-                    if m4.get("value") is not None and not (_num(m4["value"]) and 0 <= m4["value"] <= 1):
-                        problems.append("reviewer_values.M4.value must be a number from 0 to 1")
-                    if m4.get("reason") is not None and not (isinstance(m4["reason"], str) and m4["reason"].strip()):
-                        problems.append("reviewer_values.M4.reason must be a non-empty string")
+                    if m.get("value") is not None and not (_num(m["value"]) and 0 <= m["value"] <= 1):
+                        problems.append(f"reviewer_values.{name}.value must be a number from 0 to 1")
+                    if m.get("reason") is not None and not (isinstance(m["reason"], str) and m["reason"].strip()):
+                        problems.append(f"reviewer_values.{name}.reason must be a non-empty string")
 
+    if evidence and sec006:
+        if not isinstance(m3, dict) or m3.get("value") is None or m3.get("reason") is None:
+            problems.append("evidence mode: reviewer_values.M3 needs a value and a reason")
+        if not raw.get("m4_baseline_log"):
+            problems.append("evidence mode: m4_baseline_log is not set (the TP-SEC-001 run log that M4 compares with)")
     if evidence:
         # The five routing locks: each must be set, and set to the locked value.
         only = routing.get("only")
@@ -235,6 +279,8 @@ def from_raw(raw):
     """Build a Settings from a mapping that has passed validate()."""
     r = raw.get("routing") or {}
     m4 = (raw.get("reviewer_values") or {}).get("M4") or {}
+    m3 = (raw.get("reviewer_values") or {}).get("M3") or {}
+    proc = raw.get("procedure", PROCEDURE_DEFAULT)
     return Settings(
         provider=raw["provider"], model_id=raw["model_id"], mode=raw["mode"],
         only=tuple(r.get("only") or ()), allow_fallbacks=r.get("allow_fallbacks"), zdr=r.get("zdr"),
@@ -243,7 +289,10 @@ def from_raw(raw):
         api_key_env=raw["api_key_env"], max_tokens=raw.get("max_tokens", DEFAULT_MAX_TOKENS),
         m4_value=m4.get("value"), m4_reason=m4.get("reason"),
         temperature=raw.get("temperature"), seed=raw.get("seed"),
-        runs_per_item=raw.get("runs_per_item", RUNS_DEFAULT), item_set=raw.get("item_set", ITEM_SET_DEFAULT),
+        runs_per_item=raw.get("runs_per_item", RUNS_DEFAULT),
+        item_set=raw.get("item_set", SEC006 if proc == SEC006 else ITEM_SET_DEFAULT),
+        procedure=proc, store_replies=raw.get("store_replies", "full"), m4_baseline_log=raw.get("m4_baseline_log"),
+        m3_value=m3.get("value"), m3_reason=m3.get("reason"),
     )
 
 

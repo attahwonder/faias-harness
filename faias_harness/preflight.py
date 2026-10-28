@@ -39,7 +39,7 @@ from pathlib import Path
 import yaml
 
 from .profile import REPO, ProfileError, load_profile
-from .settings import SettingsError, load_settings
+from .settings import SEC006, SettingsError, load_settings
 
 NEEDS_FILE = REPO / "records" / "capability_needs.yaml"
 RECORDS_DIR = REPO / "records"
@@ -183,7 +183,7 @@ def report(profile, needs, records_dir=RECORDS_DIR):
 def settings_report(settings, estimate_usd):
     """Print the settings block of the preflight. It never prints the value of the key."""
     r = settings.routing()
-    print(f"Engine run: TP-SEC-001 on SRD-1 minimal, item set {settings.item_set}")
+    print(f"Engine run: {settings.procedure} on SRD-1 minimal, item set {settings.item_set}")
     print(f"Mode: {settings.mode}")
     print(f"Settings hash: {settings.digest()}")
     print(f"Provider: {settings.provider}")
@@ -198,7 +198,14 @@ def settings_report(settings, estimate_usd):
     print(f"Decoding: temperature {temp}, seed {seed}, max_tokens {settings.max_tokens}")
     print(f"Runs per item: {settings.runs_per_item} (FAIAS minimum 3)")
     m4 = "not set" if settings.m4_value is None else settings.m4_value
-    print(f"M4 bar: {m4}; reason: {settings.m4_reason or 'not set'}")
+    if settings.procedure == SEC006:
+        m3 = "not set" if settings.m3_value is None else settings.m3_value
+        print(f"M3 bar (reconstruction share): {m3}; reason: {settings.m3_reason or 'not set'}")
+        print(f"M4 bar (material uplift): {m4}; reason: {settings.m4_reason or 'not set'}")
+        print(f"M4 baseline (a TP-SEC-001 run log): {settings.m4_baseline_log or 'not named'}")
+        print(f"Replies in the log: {settings.store_replies}")
+    else:
+        print(f"M4 bar: {m4}; reason: {settings.m4_reason or 'not set'}")
     pin, pout = settings.price_in_per_m, settings.price_out_per_m
     print(f"Prices (USD per million tokens): in {pin if pin is not None else 'not set'}, "
           f"out {pout if pout is not None else 'not set'}")
@@ -355,8 +362,26 @@ def _default_gateway(settings):
 
 
 def _default_executor(**kw):
+    if kw["settings"].procedure == SEC006:
+        from .engine import run_sec006
+        return run_sec006.execute(**kw)
     from .engine import spike
     return spike.execute(**kw)
+
+
+def sec006_start_problems(settings):
+    """What a TP-SEC-006 run needs besides the TP-SEC-001 conditions: the M3 and M4 values with their reasons (verify
+    refuses a log without them), and a readable M4 baseline log where one is named."""
+    from .engine import sec006_log
+    problems = [f"reviewer_values.{m} needs a value and a reason before a run (verify refuses a log without them)"
+                for m, v, r in (("M3", settings.m3_value, settings.m3_reason), ("M4", settings.m4_value, settings.m4_reason))
+                if v is None or not r]
+    if settings.m4_baseline_log:
+        try:
+            sec006_log.read_baseline(settings.m4_baseline_log)
+        except ValueError as e:
+            problems.append(str(e))
+    return problems
 
 
 def _inspect_missing():
@@ -404,8 +429,8 @@ def main(argv=None, *, input_fn=input, gateway_factory=_default_gateway, executo
     est = None
     if settings is not None:
         print()
-        from .engine import spike
-        est = spike.estimate(settings)
+        from .engine import run_sec006, spike
+        est = run_sec006.estimate(settings) if settings.procedure == SEC006 else spike.estimate(settings)
         settings_report(settings, est)
     if not a.start and not a.probes:
         if settings is not None:
@@ -419,6 +444,8 @@ def main(argv=None, *, input_fn=input, gateway_factory=_default_gateway, executo
         missing = inspect_check()
         if missing:
             problems.append(missing)
+        if settings.procedure == SEC006:
+            problems += sec006_start_problems(settings)
     if a.probes and not a.start:
         problems = [p for p in problems if "attestation" not in p and "signing" not in p]
     if problems:
@@ -440,9 +467,13 @@ def main(argv=None, *, input_fn=input, gateway_factory=_default_gateway, executo
         return 0
     print()
     print("Start conditions are met.")
-    calls = len(spike.run_items(settings)) * settings.runs_per_item
+    if settings.procedure == SEC006:
+        from .engine import run_sec006
+        calls, label = f"at most {run_sec006.planned_calls(settings)}", run_sec006.sec006.LABEL
+    else:
+        calls, label = len(spike.run_items(settings)) * settings.runs_per_item, spike.sec001.LABELS[settings.item_set]
     print(f"Item set {settings.item_set}. This run sends {calls} model calls ({settings.runs_per_item} runs per item) to {settings.model_id} on {', '.join(settings.only) or 'any host'}. "
-          f"Worst-case cost USD {est:.4f}; cap USD {settings.cap_usd}. The result is labelled '{spike.sec001.LABELS[settings.item_set]}'.")
+          f"Worst-case cost USD {est:.4f}; cap USD {settings.cap_usd}. The result is labelled '{label}'.")
     if a.positive_control:
         print("Variant: positive control (the weakened system prompt, no rules). The harness must find successes.")
     answer = input_fn("Type yes to start the run (anything else cancels): ").strip()
