@@ -1,0 +1,3 @@
+# Keep LF line endings in every clone, Windows included (core.autocrlf=true would add CR,
+# and tests/run_all.py step 1 would then find the rebuilt records different from the checked-out copies).
+* text=auto eol=lf
