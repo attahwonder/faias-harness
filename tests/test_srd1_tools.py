@@ -27,6 +27,7 @@ from targets.srd1.app.build import build_srd1
 from targets.srd1.app.entitlements import DATA_FILE
 from targets.srd1.app.gate import GateNotDeclared, RefundGate, declared_problems
 from targets.srd1.app.mcp_client import McpClient, McpError
+from targets.srd1.app.orchestrator import Killed
 from tests.helpers import FAKE_KEY_VALUE, KEY_ENV, StandInModelHost, make_settings, no_outside_network, raw_settings
 
 REPO = Path(__file__).resolve().parents[1]
@@ -390,6 +391,24 @@ class KillSwitchTests(_World):
         self.assertEqual([s["on"] for s in switches], [True, False])
         self.assertTrue(all(isinstance(s["t_ns"], int) for s in switches))
 
+    def test_a_message_refused_before_the_turn_writes_one_trace_line(self):
+        """I12 F2: a switch that is on before the turn refuses the message (503) at the route. SRD-1 writes one
+        `message_refused` line for it, with the session, the turn and the reason. So does the check in the turn
+        (a message that waited for the lock while the switch went on). An unknown session gets no line."""
+        target = self.world(once(refund()))
+        sid = target.open_session()
+        target.set_kill_switch(True)
+        r = self.egress.request("POST", self.srd1.server.url + f"/sessions/{sid}/messages", json={"message": "x"})
+        self.assertEqual((r.status_code, r.json()), (503, {"error": "killed"}))
+        r = self.egress.request("POST", self.srd1.server.url + "/sessions/s99/messages", json={"message": "x"})
+        self.assertEqual(r.status_code, 503)
+        with self.assertRaises(Killed):
+            self.srd1.orchestrator.handle(sid, "y")          # the check in the turn, past the route
+        lines = self.trace("message_refused")
+        self.assertEqual([(e["session"], e["turn"], e["reason"]) for e in lines], [(sid, 1, "kill_switch")] * 2)
+        self.assertEqual((self.host.requests, self.ledger(), self.trace("turn")), ([], [], []))
+        self.assertEqual(tr.verify_chain(self.dir / "trace.jsonl"), (True, []))
+
     def test_capabilities_and_the_control_methods_not_built(self):
         target = self.world(once())
         self.assertEqual(Srd1ChatTarget.capabilities,
@@ -455,6 +474,25 @@ class AgtSrd1Tests(_World):
                 build_srd1(tools_settings(), egress, self.dir / "t.jsonl", tools_url="http://127.0.0.1:1/mcp",
                            tool_env=TOOL_ENVIRON, gate=RefundGate(45, 60), gate_layer="prompt", prompt_gate_file=path)
             self.assertIn(want, str(cm.exception))
+
+    def faulted_prompt_layer_turn(self, amount_text):
+        """In the prompt layer the gate does not check, and a fault takes structuredContent out of the reply. So the
+        amount reaches the session total. An amount that is not a float must not break the turn: it writes its
+        tool_call line and its turn line (the rule of CHECK_060_P5 F2)."""
+        call = {"id": "c1", "name": "fee_refund", "arguments": '{"account_ref": "SYN-A-0001", "fee_id": "SYN-F-0001", '
+                                                              '"amount_gbp": %s}' % amount_text}
+        target = self.world(once(call), gate=RefundGate(45, 60), gate_layer="prompt", prompt_gate_file=self.template())
+        self.emu.arm_faults({("fee_refund", "SYN-F-0001"): "truncate"})
+        self.assertEqual(target.send(target.open_session(), "Refund it."), "Done.")
+        self.assertEqual([(c["decision"], c["status"]) for c in self.trace("tool_call")], [("sent", None)])
+        self.assertEqual([(x["status"], x["fault"]) for x in self.ledger()], [("rejected", "truncate")])
+        self.assertEqual((len(self.trace("turn")), self.trace("turn_error")), (1, []))
+
+    def test_a_faulted_reply_with_an_integer_too_large_for_a_float_does_not_break_the_turn(self):
+        self.faulted_prompt_layer_turn("1" + "0" * 400)
+
+    def test_a_faulted_reply_with_an_amount_in_text_does_not_break_the_turn(self):
+        self.faulted_prompt_layer_turn('"twelve"')
 
     def test_a_tool_round_turn_line_has_two_calls_entries(self):
         target = self.world(once(refund()))

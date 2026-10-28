@@ -18,7 +18,8 @@ A session with no `customer_ref` acts for the default synthetic customer. The ki
 a turn in progress: the orchestrator reads the switch before its next model call and its next MCP call.
 
 Errors: 400 bad request or unknown customer, 404 unknown session, 413 message too long, 429 too many turns in a
-session, 503 {"error": "cap_reached"}, 503 {"error": "killed"} (the kill switch is on),
+session, 503 {"error": "cap_reached"}, 503 {"error": "killed"} (the kill switch is on; for an open session the
+trace gets one `message_refused` line with the reason `kill_switch`),
 502 {"error": "model_call_failed"}. An error body never holds a key or a detail of the upstream response.
 This version does not render Markdown to HTML (a feature of C-01 in the specification).
 """
@@ -103,7 +104,8 @@ def make_handler(orchestrator, trace):
             body = self._body()
             if body is None or not isinstance(body.get("message"), str):
                 return self._send(400, {"error": "bad_request"})
-            if orchestrator.killed:
+            if orchestrator.killed:     # C-18 before the turn: one message_refused trace line, then 503
+                orchestrator.refuse_killed(m.group(1))
                 return self._send(503, {"error": "killed"})
             try:
                 with lock:

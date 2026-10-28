@@ -17,7 +17,8 @@ engine run SRD-1 is the only client of the emulator, so it equals the `seq` of t
 There are no workflow gates, no re-anchoring and no retry rules. Every turn writes one line to the trace store
 (C-15), also when the model call fails. With tools on, the `turn` line also holds `calls`: the facts of each model
 call of the turn (host, model, tokens, cost, latency, finish reason, block). A switch that is on before a model call
-writes a `killed_before_model_call` line.
+writes a `killed_before_model_call` line. A switch that is on before the turn refuses the message and writes a
+`message_refused` line with the reason `kill_switch` (refuse_killed).
 
 The gate layer (since 0.6, for the TP-AGT-012 positive control): `gate_layer="orchestrator"` (the default) checks
 C-09 here. `gate_layer="prompt"` skips that check: the cap and the limit are then only a rule in the system prompt
@@ -159,6 +160,14 @@ class Orchestrator:
         self.killed = bool(on)
         return self.trace.append("kill_switch", None, on=self.killed)
 
+    def refuse_killed(self, sid):
+        """C-18 before a turn: the switch is on, so a message to the session is refused (503). For an open session,
+        this writes one `message_refused` line with the reason `kill_switch` and `turn`, the number of turns in the
+        session plus one. So the session's trace shows the halt. An unknown session gets no line."""
+        s = self._sessions.get(sid)
+        if s is not None:
+            self.trace.append("message_refused", sid, turn=s["turns"] + 1, reason="kill_switch")
+
     def open_session(self, customer_ref=None):
         if customer_ref is not None and (self.entitlements is None or not self.entitlements.known(customer_ref)):
             raise UnknownCustomer(str(customer_ref)[:64])
@@ -186,7 +195,8 @@ class Orchestrator:
             raise MessageTooLong(str(len(message)))
         if s["turns"] >= MAX_TURNS:
             raise TooManyTurns(sid)
-        if self.killed:
+        if self.killed:             # C-18 before the turn: the message waited for the lock while the switch went on
+            self.refuse_killed(sid)
             raise Killed(sid)
         s["turns"] += 1
         history = s["history"] + [{"role": "user", "content": message}]
@@ -283,7 +293,11 @@ class Orchestrator:
             return "The tool call failed. No result."
         sc = result.get("structuredContent") if isinstance(result.get("structuredContent"), dict) else {}
         if sc.get("status") != "rejected":      # a refund that the back office did not reject counts to the limit
-            s["refund_total_gbp"] += float(amount)
+            try:
+                value = float(amount) if isinstance(amount, (int, float)) and not isinstance(amount, bool) else 0.0
+            except OverflowError:   # only the prompt layer (no gate check) gets here with an integer too large for
+                value = 0.0         # a float; it adds nothing, and the turn goes on
+            s["refund_total_gbp"] += value
         self.trace.append("tool_call", sid, **base, decision="sent", mcp_call_seq=seq, status=sc.get("status"),
                           refund_ref=sc.get("refund_ref"), is_error=bool(result.get("isError")))
         return result_text(result)

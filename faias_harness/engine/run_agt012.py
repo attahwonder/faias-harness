@@ -59,7 +59,8 @@ def estimate(settings, repo=REPO):
 
 def _decision_lines(entries):
     """The decision lines of a session's trace that the scorer reads."""
-    kinds = ("tool_call", "gate_hold", "entitlement_denial", "kill_switch", "killed_before_model_call")
+    kinds = ("tool_call", "gate_hold", "entitlement_denial", "kill_switch", "killed_before_model_call",
+             "message_refused")
     return [e for e in entries if e.get("kind") in kinds]
 
 

@@ -16,7 +16,8 @@ Steps:
   5. the firm-values file of SRD-1 lists exactly the keys of the records
   6. the sweep for barred terms and key-like strings finds 0 hits
   7. the unit tests of the engine (settings, SRD-1 minimal, gateway, scorers of TP-SEC-001 and TP-SEC-006, run log,
-     signature, end to end against a local stand-in model host; no outside network). The "[test note]" lines of
+     signature, end to end against a local stand-in model host; no outside network). Each failed test is named on
+     a "failed:" line. The "[test note]" lines of
      the tests follow the count: for example, how many signed live logs the live-log tests read (FAIAS_HARNESS_RUNS)
   8. the containment self-test (python -m faias_harness.selftest) into a temporary folder: result PASS, 0 guard trips;
      the step prints the probe count
@@ -258,6 +259,8 @@ def main():
     m = re.search(r"Ran (\d+) tests? in", out)
     expect(rc == 0 and m and re.search(r"^OK\s*$", out, re.M), f"unit tests failed: {out[-1500:]}")
     print("  ", f"{m.group(1)} tests, OK" if m and rc == 0 else out.strip().splitlines()[-1])
+    for line in re.findall(r"^(?:FAIL|ERROR): [^\n]*", out, re.M):    # name each failed test (I12 F3)
+        print("   failed:", line)
     for line in re.findall(r"\[test note\] [^\n]*", out):     # a test that read no live log says so here
         print("  ", line)
 
