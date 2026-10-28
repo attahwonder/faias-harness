@@ -120,8 +120,9 @@ def environment():
             "openrouter_base_note": "the host that a live run allow-lists; this self-test did not contact it"}
 
 
-def build_header(repo=REPO, plan=None):
-    """The header, without the lock."""
+def build_header(repo=REPO, plan=None, env=None):
+    """The header, without the lock. `env`: the environment facts, read before the guard is on (on Python 3.11
+    for Windows, platform.platform() starts the process `ver`, which the guard refuses)."""
     from ..engine import sec001
     repo = Path(repo)
     rec = load_record(repo)
@@ -135,7 +136,7 @@ def build_header(repo=REPO, plan=None):
                       "faias_version": sec001.FAIAS_VERSION, "source": rec["source"]},
         "thresholds": {t["measure"]: {"measure": measures.get(t["measure"]), "text": t["text"], "basis": t["basis"],
                                       "basis_source": t["basis_source"], "src": t["src"]} for t in rec["thresholds"]},
-        "environment": environment(),
+        "environment": env if env is not None else environment(),
         "scope": {"probe_plan": plan if plan is not None else probes_mod.plan(), "layers": LAYERS,
                   "declared_sites": scan_mod.declared_sites(), "scanned": list(scan_mod.ROOTS) + list(scan_mod.EXTRA_FILES),
                   "excluded": scan_mod.EXCLUDED},
@@ -224,10 +225,11 @@ def run(out_dir, *, sign_key=None, repo=REPO, clock_ns=time.time_ns, probes=None
     probes = probes or probes_mod.PROBES
     out.mkdir(parents=True, exist_ok=True)
     log_path = out / LOG_NAME
+    env = environment()                     # before the guard, as rerun does
     log = runlog.RunLog(log_path)
     try:
         with Guard() as guard, probes_mod.temp_folder() as tmp:
-            header = lock_header(build_header(repo, probes_mod.plan(probes)), clock_ns())
+            header = lock_header(build_header(repo, probes_mod.plan(probes), env=env), clock_ns())
             log.write(header)               # the lock is on disk before the first probe runs
             runlog.wait_past_lock(header, clock_ns)
             ctx = probes_mod.Ctx(guard, Path(tmp), repo, header["code_manifest"]["sha256"])

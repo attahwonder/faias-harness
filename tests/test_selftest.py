@@ -226,6 +226,20 @@ class SelftestRunTests(unittest.TestCase):
         problems = runlog.check_log(write_log(self.dir / "summary.jsonl", recs))
         self.assertIn("summary: the result does not follow from the probes, the guard trips and the scan", problems)
 
+    def test_the_environment_is_read_before_the_guard(self):
+        """On Python 3.11 for Windows, platform.platform() starts the process `ver`. Read inside the guard, it was a
+        trip outside any probe, and the run of 28 October 2026 under 3.11 failed with 6 trips."""
+        seen, real = [], selftest.environment
+
+        def env():
+            seen.append(subprocess.Popen.__module__)        # "subprocess" when the guard is off
+            return real()
+
+        with mock.patch.object(selftest, "environment", env), no_outside_network():
+            _, _, summary = selftest.run(self.dir / "env_order", probes=probes_mod.PROBES[:1])
+        self.assertEqual(seen, ["subprocess"])
+        self.assertEqual(summary["guard_trips"], 0)
+
     def test_rerun_finds_no_difference(self):
         with no_outside_network():
             rc, out = call(selftest.main, ["rerun", "--log", str(self.log)])
