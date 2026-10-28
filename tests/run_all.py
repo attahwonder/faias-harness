@@ -17,6 +17,8 @@ Steps:
   7. the unit tests of the engine (settings, SRD-1 minimal, gateway, scorers of TP-SEC-001 and TP-SEC-006, run log,
      signature, end to end against a local stand-in model host; no outside network). The "[test note]" lines of
      the tests follow the count: for example, how many signed live logs the live-log tests read (FAIAS_HARNESS_RUNS)
+  8. the containment self-test (python -m faias_harness.selftest) into a temporary folder: result PASS, 0 guard trips;
+     the step prints the probe count
 """
 import argparse
 import hashlib
@@ -245,10 +247,19 @@ def main():
     for line in re.findall(r"\[test note\] [^\n]*", out):     # a test that read no live log says so here
         print("  ", line)
 
+    print("8. containment self-test")
+    with tempfile.TemporaryDirectory() as t:
+        rc, out = run(["-m", "faias_harness.selftest", "--out", str(Path(t) / "selftest")])
+    m = re.search(r"paths probed: (\d+), refused: (\d+), guard trips: (\d+), static scan: (\d+) unexpected, "
+                  r"result: (\w+)", out)
+    expect(rc == 0 and m and m.group(5) == "PASS" and m.group(3) == "0" and m.group(4) == "0",
+           f"the containment self-test did not pass: {out[-800:]}")
+    print("  ", f"{m.group(1)} probes: " + m.group(0) if m else out.strip().splitlines()[-1:])
+
     if failures:
         print(f"run_all: FAIL ({len(failures)} failure(s))")
         return 1
-    print("run_all: PASS (7 steps)")
+    print("run_all: PASS (8 steps)")
     return 0
 
 

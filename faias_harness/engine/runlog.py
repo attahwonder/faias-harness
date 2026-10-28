@@ -71,6 +71,7 @@ SCHEMA_V3 = "faias-harness-run-log/3"   # 3 (version 0.5): a run against an exte
 SCHEMA_V2 = "faias-harness-run-log/2"   # 2 adds the item set, the clean-baseline arm and the list `not_in_run`; still checked
 SCHEMA_V1 = "faias-harness-run-log/1"  # logs of the engine spike in version 0.3; still checked
 SCHEMA_SEC006 = "faias-harness-run-log/6"   # 6 (version 0.6): TP-SEC-006 on SRD-1 minimal (sec006_log.py)
+SCHEMA_SELFTEST = "faias-harness-selftest-log/1"    # the containment self-test of the harness (selftest/__init__.py)
 EXTERNAL_SCHEMAS = (SCHEMA_V3, SCHEMA_EXTERNAL)
 CODE_SCHEMAS = (SCHEMA, SCHEMA_EXTERNAL, SCHEMA_SEC006)   # the logs with the code block, the scorer keys and the wider lock
 KNOWN_SCHEMAS = (SCHEMA_V1, SCHEMA_V2, SCHEMA_V3, SCHEMA, SCHEMA_EXTERNAL)    # the TP-SEC-001 schemas
@@ -419,6 +420,9 @@ def check_log(path, repo=REPO, use_repo=True):
     if h.get("schema") == SCHEMA_SEC006:       # each procedure has its own form check
         from . import sec006_log
         return sec006_log.check(path, recs, repo=repo, use_repo=use_repo)
+    if h.get("schema") == SCHEMA_SELFTEST:
+        from .. import selftest
+        return selftest.check(path, recs, repo=repo, use_repo=use_repo)
     rec = sec001.load_record(repo=repo) if use_repo else None
     schema = h.get("schema")
     if schema not in KNOWN_SCHEMAS:
@@ -592,6 +596,8 @@ def _no_repo_lines(log_path):
         if recs[0].get("schema") == SCHEMA_SEC006:
             from . import sec006_log
             items_line = sec006_log.summary_line(recs)
+        elif recs[0].get("schema") == SCHEMA_SELFTEST:
+            items_line = f"probe records: {sum(1 for r in recs if r.get('type') == 'probe')} (a self-test log has no item set)"
         else:
             status, detail = items_hash_from_log(recs[0], [r for r in recs if r.get("type") == "run"])
             items_line = f"items hash: {status} ({detail})"
@@ -613,6 +619,8 @@ def rescore_log(log_path, repo=REPO):
     if recs[0].get("schema") == SCHEMA_SEC006:
         from . import sec006_log
         return sec006_log.rescore(recs, repo=repo)
+    if recs[0].get("schema") == SCHEMA_SELFTEST:
+        return ["a self-test log has no replies to score; run `python -m faias_harness.selftest rerun --log <log>`"], None
     h, runs = recs[0], [r for r in recs if r.get("type") == "run"]
     used = sha256_hex(Path(sec001.__file__).read_bytes())
     logged = (h.get("code") or {}).get("scorer_sha256")

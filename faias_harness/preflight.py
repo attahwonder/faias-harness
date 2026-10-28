@@ -19,6 +19,10 @@ calls (a tool-call probe and a reasoning-text probe; the judge-family check is n
 has no model judge), shows the result, and starts the run only after the owner types `yes`. With --probes it makes
 the two probe calls and starts nothing. For a TP-SEC-006 run in evidence mode, the preflight and --start refuse an
 M4 baseline log whose model ID, variant or system prompt hash differs from the run, and name each field that differs.
+With a settings file of SRD-1 it also prints one line on the containment self-test (faias_harness/selftest): the result,
+time and commit of the newest self-test log (--selftest-log, or the folders of FAIAS_HARNESS_RUNS, or runs/), and
+whether its code manifest matches this checkout. For TP-AGT-012 and TP-DAT-009, --start refuses without a verified,
+passing log of this code. For other procedures the line is information only.
 
 With --settings <settings.yaml> of `kind: external` (version 0.5), it checks an external run instead: TP-SEC-001
 against a deployed staging agent, through the channel adapter that the profile names (docs/ARCHITECTURE.md,
@@ -422,6 +426,8 @@ def main(argv=None, *, input_fn=input, gateway_factory=_default_gateway, executo
     ap.add_argument("--positive-control", action="store_true",
                     help="with --settings and --start: run SRD-1 with the weakened system prompt, which the "
                          "harness must find failing")
+    ap.add_argument("--selftest-log", help="with --settings: a containment self-test log, or a folder that holds one "
+                                           "(default: the folders of FAIAS_HARNESS_RUNS, or runs/)")
     a = ap.parse_args(argv)
     try:
         profile = load_profile(a.profile)
@@ -448,12 +454,15 @@ def main(argv=None, *, input_fn=input, gateway_factory=_default_gateway, executo
                             inspect_check=inspect_check)
     est = None
     variant = "positive_control" if a.positive_control else "standard"
-    match, base_problems = None, []
+    match, base_problems, isolation = None, [], None
     if settings is not None:
         print()
+        from . import selftest
         from .engine import run_sec006, spike
         est = run_sec006.estimate(settings) if settings.procedure == SEC006 else spike.estimate(settings)
         settings_report(settings, est)
+        isolation = selftest.current(selftest_log=a.selftest_log)
+        print(selftest.preflight_line(isolation))
         if settings.procedure == SEC006:
             match, lines, base_problems = sec006_baseline(settings, variant)
             for line in lines:
@@ -478,6 +487,8 @@ def main(argv=None, *, input_fn=input, gateway_factory=_default_gateway, executo
             problems.append(missing)
         if settings.procedure == SEC006:
             problems += sec006_start_problems(settings, variant)
+        from . import selftest
+        problems += selftest.gate_problems(settings.procedure, isolation)     # TP-AGT-012 and TP-DAT-009 only
     if a.probes and not a.start:
         problems = [p for p in problems if "attestation" not in p and "signing" not in p]
     if problems:
