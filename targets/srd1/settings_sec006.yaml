@@ -1,8 +1,8 @@
-# Settings for a TP-SEC-006 run on SRD-1 minimal. See docs/ARCHITECTURE.md, section 12.
+# Settings for a TP-SEC-006 run on SRD-1 minimal. See docs/ARCHITECTURE.md, section 15.
 # This file holds no key. The key is the environment variable named in api_key_env.
 # This copy is in explore mode with the model, host, precision, prices, cap and reviewer values not yet chosen.
 # An evidence-mode copy must set all five routing locks, the model, the prices, the cap, temperature, seed,
-# reviewer_values.M3 and M4, and m4_baseline_log, or the preflight refuses it.
+# reviewer_values.M3 and M4, m4_baseline_log and m4_baseline_pubkey, or the preflight refuses it.
 procedure: TP-SEC-006
 provider: openrouter
 model_id: null            # the pinned model ID, for example "vendor/model-name"
@@ -21,7 +21,10 @@ max_tokens: 400
 runs_per_item: 3          # k: at least 3 (the reviewer-set design minimum of the procedure), at most 20
 item_set: TP-SEC-006      # items/TP-SEC-006.json: 60 items and 8 X4 sequences
 store_replies: full       # full | hash_only (a firm's target: the log holds the SHA-256 of each reply, not its text)
-m4_baseline_log: null     # the path of a TP-SEC-001 run log; M4 compares the follow-on rate with its class C1 rate
+m4_baseline_log: null     # a TP-SEC-001 run log; in evidence mode, a log of the same model, variant, prompt and routing
+                          # locks, made in evidence mode. M4 compares the follow-on rate with its class C1 rate
+m4_baseline_pubkey: null  # the public key file that verifies the signature of that log (<log>.sig); keep it outside
+                          # the repository; must be set in evidence mode
 temperature: null         # the model card's setting; must be set in evidence mode
 seed: null                # base seed; each call sends seed + call number; must be set in evidence mode
 reviewer_values:          # M3 and M4 have no established threshold in FAIAS; the reviewer sets them before the first item

@@ -32,8 +32,9 @@ log alone. `verify` recomputes the lock hash of a schema 4 or 5 log. Logs of sch
 
 Schema 6 (version 0.6) is the log of a TP-SEC-006 run on SRD-1 minimal (engine/sec006_log.py). It has the frame of
 schema 4, with the scorer and record of TP-SEC-006 in the `code` block, and the blocks `config`, `placeholders`,
-`static_inspection`, `store_replies` and `m4_baseline`, which the lock also covers. It never holds a placeholder
-value. `check_log`, `rescore` and `verify --no-repo` hand a schema 6 log to engine/sec006_log.py.
+`static_inspection`, `store_replies` and `m4_baseline`, which the lock also covers. Its replies are redacted;
+sec006_log.LOG_HOLDS states what the redaction misses. `check_log`, `rescore` and `verify --no-repo` hand a schema 6
+log to engine/sec006_log.py.
 
 Three more commands, none of which makes a network call:
 
@@ -398,7 +399,7 @@ def check_log(path, repo=REPO, use_repo=True):
     h = recs[0]
     if h.get("schema") == SCHEMA_SEC006:       # each procedure has its own form check
         from . import sec006_log
-        return sec006_log.check(path, recs, repo=repo, use_repo=use_repo)
+        return sec006_log.check(recs, repo=repo, use_repo=use_repo)
     rec = sec001.load_record(repo=repo) if use_repo else None
     schema = h.get("schema")
     if schema not in KNOWN_SCHEMAS:
@@ -662,7 +663,9 @@ def main(argv=None):
     c.add_argument("--pubkey")
     c.add_argument("--no-repo", action="store_true",
                    help="check without the record and the item set of this checkout")
-    d = sub.add_parser("rescore", help="score each reply again and compare with the recorded score (exit 1 on a difference)")
+    d = sub.add_parser("rescore", help="score each reply again and compare with the recorded score (exit 1 on a "
+                                       "difference; exit 2 for a TP-SEC-006 log with store_replies hash_only, which "
+                                       "holds no reply: the harness has no command to rescore it)")
     d.add_argument("--log", required=True)
     e = sub.add_parser("stamp", help="write <log>.sha256 and print the OpenTimestamps command (no network call)")
     e.add_argument("--log", required=True)

@@ -8,8 +8,10 @@ each (one conversation for each sequence run; each turn has its own run record).
 prompt text, it builds the follow-on set (step 7: 20 TP-SEC-001 class C1 items) and runs it. With no disclosure,
 the follow-on set is empty and M4 is not applicable. It writes the signed run log (schema 6, sec006_log.py) and
 stops at the spend cap. It makes model calls only through the SRD-1 gateway. The preflight calls it after the owner
-types `yes` (settings `procedure: TP-SEC-006`). In evidence mode it refuses, before the lock, an M4 baseline log whose
-model ID, variant or system prompt hash differs from the run.
+types `yes` (settings `procedure: TP-SEC-006`). It refuses an M4 baseline log whose signature does not verify against
+the key that `m4_baseline_pubkey` names. In evidence mode it also refuses, before the lock, a baseline log whose model
+ID, variant, system prompt hash or routing locks (`only`, `quantizations`) differ from the run, or that is not in
+evidence mode. SRD-1's trace store goes in the folder `target/` of the run folder, with a README.
 """
 import dataclasses
 import time
@@ -22,6 +24,10 @@ from ..errors import CapReached
 from . import runlog, sec001, sec006, sec006_log, spike
 
 REPO = Path(__file__).resolve().parents[2]
+TARGET_DIR = "target"
+TARGET_README = ("This folder holds SRD-1's own trace store: each reply as the model gave it, with the staged "
+                 "placeholder values. It is the target's record, not the harness log. Do not put it in the working "
+                 "papers.\n")
 
 
 def run_items(repo=REPO):
@@ -69,8 +75,9 @@ def estimate(settings, repo=REPO):
 
 
 class _Runner:
-    """One run of one item or one sequence: send each turn in one conversation, read its trace, redact and score the
-    reply, write its record. Both engines call `one`. After a stop, `one` sends nothing and returns None.
+    """One run of one item or one sequence: send each turn in one conversation, read its trace, redact the reply (a
+    sequence turn with the earlier replies of its conversation) and score it, write its record. Both engines call
+    `one`. After a stop, `one` sends nothing and returns None.
 
     `lookup` maps an item ID to the item to send, so that the Inspect log can show a follow-on item without its text
     (store_replies hash_only)."""
@@ -115,7 +122,7 @@ class _Runner:
         except Exception as e:      # noqa: BLE001
             self._fail(item, n, t_ns, e)
             return None
-        done = []
+        done, received = [], []         # received: the replies of this conversation as received, for the redaction
         for t, text in enumerate(turns, 1):
             turn = t if item.turns else None
             t_ns = self.clock_ns()
@@ -125,7 +132,8 @@ class _Runner:
             except Exception as e:      # noqa: BLE001
                 self._fail(item, n, t_ns, e, turn)
                 return None
-            done.append(self._record(item, n, t_ns, text, reply, tr, turn, len(turns)))
+            done.append(self._record(item, n, t_ns, text, reply, tr, turn, len(turns), earlier=tuple(received)))
+            received.append(reply or "")
             if self.stopped:
                 return None
         try:
@@ -139,8 +147,8 @@ class _Runner:
         self.last_no_result = all(d["outcome"] == "no_result" for d in done)
         return done[-1]["shown"]
 
-    def _record(self, item, n, t_ns, request, reply, tr, turn, n_turns):
-        redacted, counts = sec006.redact(reply, self.placeholders)
+    def _record(self, item, n, t_ns, request, reply, tr, turn, n_turns, earlier=()):
+        redacted, counts = sec006.redact(reply, self.placeholders, earlier)
         if item.cls == sec006.FOLLOW_ON:
             sc = sec006.score_followon(item, redacted)
             score, evidence = {"success": sc.success, "kind": sc.kind, "evidence": sc.evidence}, "marker"
@@ -226,14 +234,19 @@ def execute(settings, *, run_dir, sign_key, confirmation, probes=None, base_url=
         raise ValueError(f"unknown engine: {engine}")
     if engine == "inspect" and not spike.inspect_available():
         raise RuntimeError("the run engine inspect_ai is not installed")
-    baseline = sec006_log.read_baseline(settings.m4_baseline_log, repo) if settings.m4_baseline_log else None
+    baseline = (sec006_log.read_baseline(settings.m4_baseline_log, repo, pubkey=settings.m4_baseline_pubkey)
+                if settings.m4_baseline_log else None)
     prompt_file = orch_mod.PROMPT_VARIANTS[variant]
     base_url = base_url or gw.OPENROUTER_BASE
     run_dir = Path(run_dir)
     run_dir.mkdir(parents=True, exist_ok=True)
     elog = EgressLog(run_dir / "egress.jsonl")
     egress = EgressClient([spike._host_entry(base_url)], log=elog)
-    srd1 = build.build_srd1(settings, egress, run_dir / "srd1_trace.jsonl", base_url=base_url, env=env,
+    # SRD-1's own trace store holds each reply as the model gave it, with the placeholders. It goes in its own folder,
+    # with a README, so that it is not taken into the working papers with the run log (PLAYBOOK_SEC_006.md line 11).
+    (run_dir / TARGET_DIR).mkdir(parents=True, exist_ok=True)
+    (run_dir / TARGET_DIR / "README.txt").write_text(TARGET_README, encoding="utf-8")
+    srd1 = build.build_srd1(settings, egress, run_dir / TARGET_DIR / "srd1_trace.jsonl", base_url=base_url, env=env,
                             system_prompt=orch_mod.load_system_prompt(prompt_file), prompt_source=prompt_file.name)
     egress.add_allow(f"127.0.0.1:{srd1.server.port}")
     srd1.gateway.cap.spent_usd = prior_spent_usd
@@ -254,9 +267,10 @@ def execute(settings, *, run_dir, sign_key, confirmation, probes=None, base_url=
             settings, allow_hosts=egress.allow_text, config=config, placeholders=sec006.placeholder_record(sources),
             static=static, redacted_prompt=redacted_prompt, baseline=baseline, confirmation=confirmation,
             probes=probes, repo=repo, variant=variant, engine=engine)
-        if settings.mode == "evidence" and header["baseline_match"] is False:
-            raise ValueError("evidence mode needs an M4 baseline log of the same model, variant and system prompt: "
-                             + "; ".join(sec006_log.difference_problems(header["m4_baseline"]["differs_from_run"])))
+        if settings.mode == "evidence" and header["m4_baseline"] is not None:
+            refused = sec006_log.evidence_problems(header["m4_baseline"])
+            if refused:
+                raise ValueError(f"evidence mode needs {sec006_log.EVIDENCE_BASELINE}: " + "; ".join(refused))
         runlog.lock_header(header, clock_ns())
         log = runlog.RunLog(log_path)
         try:
@@ -298,7 +312,8 @@ def execute(settings, *, run_dir, sign_key, confirmation, probes=None, base_url=
             "retries": runner.retries, "host_not_reported": runner.host_not_reported,
             "calls_over_max_tokens": srd1.gateway.cap.calls_over_max_tokens,
             "outcomes": dict(Counter(r["outcome"] for r in runs)),
-            "trace": {"file": srd1.trace.path.name, "sha256": runlog.sha256_hex(srd1.trace.path.read_bytes()),
+            "trace": {"file": f"{TARGET_DIR}/{srd1.trace.path.name}",
+                      "sha256": runlog.sha256_hex(srd1.trace.path.read_bytes()),
                       "entries": len(srd1.trace.entries()), "head": srd1.trace.head, "chain_ok": chain_ok,
                       "problems": chain_problems},
             "egress": {"file": elog.path.name, "sha256": runlog.sha256_hex(elog.path.read_bytes()),

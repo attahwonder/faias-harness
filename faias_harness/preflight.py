@@ -17,8 +17,11 @@ estimate against the cap, and whether the key variable is present (never its val
 file that lacks any of the five routing locks is refused. With --start it checks the signing key, makes two probe
 calls (a tool-call probe and a reasoning-text probe; the judge-family check is not applicable because the engine
 has no model judge), shows the result, and starts the run only after the owner types `yes`. With --probes it makes
-the two probe calls and starts nothing. For a TP-SEC-006 run in evidence mode, the preflight and --start refuse an
-M4 baseline log whose model ID, variant or system prompt hash differs from the run, and name each field that differs.
+the two probe calls and starts nothing. For a TP-SEC-006 run, the preflight verifies the signature of the M4 baseline
+log against the key that `m4_baseline_pubkey` names, and refuses a key inside the repository or a log that fails. In
+evidence mode the preflight and --start also refuse a baseline log whose model ID, variant, system prompt hash or
+routing locks (`only`, `quantizations`) differ from the run, and name each field that differs, or a baseline log that
+is not in evidence mode.
 
 With --settings <settings.yaml> of `kind: external` (version 0.5), it checks an external run instead: TP-SEC-001
 against a deployed staging agent, through the channel adapter that the profile names (docs/ARCHITECTURE.md,
@@ -204,6 +207,7 @@ def settings_report(settings, estimate_usd):
         print(f"M3 bar (reconstruction share): {m3}; reason: {settings.m3_reason or 'not set'}")
         print(f"M4 bar (material uplift): {m4}; reason: {settings.m4_reason or 'not set'}")
         print(f"M4 baseline (a TP-SEC-001 run log): {settings.m4_baseline_log or 'not named'}")
+        print(f"M4 baseline public key: {settings.m4_baseline_pubkey or 'not named'}")
         print(f"Replies in the log: {settings.store_replies}")
     else:
         print(f"M4 bar: {m4}; reason: {settings.m4_reason or 'not set'}")
@@ -371,33 +375,48 @@ def _default_executor(**kw):
 
 
 def sec006_baseline(settings, variant="standard"):
-    """The check of the M4 baseline log of a TP-SEC-006 run: (match, lines to print, problems). `match` is True or
-    False, or None when no log is named or the log cannot be read. A log that cannot be read is a problem. In evidence
-    mode, a log whose model ID, variant or system prompt hash differs from the run is a problem too: each field that
-    differs is named, with both values. In explore mode the difference is allowed and printed, and the run label adds
-    "baseline from another target"."""
+    """The check of the M4 baseline log of a TP-SEC-006 run: (run label, lines to print, problems). A log that cannot
+    be read, a public key file inside the repository, and a signature that does not verify are problems. In evidence
+    mode, a log whose model ID, variant, system prompt hash or routing locks differ from the run is a problem too:
+    each field that differs is named, with both values. So is a log that is not in evidence mode. In explore mode a
+    difference is allowed and printed, and the run label adds "baseline from another target". A baseline on the spike
+    set is labelled in both modes."""
     from .engine import run_sec006, sec006_log
     if not settings.m4_baseline_log:
-        return None, [], []
+        return sec006_log.run_label(None), [], []
     try:
-        base = sec006_log.read_baseline(settings.m4_baseline_log)
+        base = sec006_log.read_baseline(settings.m4_baseline_log, pubkey=settings.m4_baseline_pubkey)
     except ValueError as e:
-        return None, [f"M4 baseline check: {e}"], [str(e)]
-    differs = sec006_log.baseline_differences(base, model_id=settings.model_id, variant=variant,
-                                              system_prompt_sha256=run_sec006.prompt_sha256(variant))
-    if not differs:
-        return True, ["M4 baseline match: yes (the same model ID, variant and system prompt hash as the run)"], []
-    lines = ["M4 baseline match: no"] + [f"  - {p}" for p in sec006_log.difference_problems(differs)]
+        return sec006_log.run_label(None), [f"M4 baseline check: {e}"], [str(e)]
+    sig = base["signature"]
+    lines = [f"M4 baseline signature: verified (public key SHA-256 {sig['public_key_sha256']})" if sig["verified"]
+             else f"M4 baseline signature: not checked ({sig['reason']})",
+             f"M4 baseline mode: {base['mode']}; item set: {base['item_set']}"]
+    base["differs_from_run"] = sec006_log.baseline_differences(base, sec006_log.run_facts(
+        settings.model_id, variant, run_sec006.prompt_sha256(variant), settings.routing()))
+    match = not base["differs_from_run"]
+    label = sec006_log.run_label(match, base)
+    if base.get("item_set") != sec006_log.FULL_SET:
+        lines.append(f"  The baseline is not on the full TP-SEC-001 set. The run label adds '{sec006_log.ON_SPIKE}'.")
+    if match:
+        lines.append("M4 baseline match: yes (the same model ID, variant, system prompt hash and routing locks as the "
+                     "run)")
+    else:
+        lines += ["M4 baseline match: no"] + [f"  - {p}" for p in
+                                              sec006_log.difference_problems(base["differs_from_run"])]
     if settings.mode == "evidence":
-        return False, lines, sec006_log.difference_problems(differs) + [
-            "evidence mode needs an M4 baseline log of the same model, variant and system prompt as the run"]
-    return False, lines + [f"  Explore mode allows this. The run label adds '{sec006_log.ANOTHER_TARGET}'."], []
+        problems = sec006_log.evidence_problems(base)
+        return label, lines, problems + ([f"evidence mode needs {sec006_log.EVIDENCE_BASELINE}"] if problems else [])
+    if not match:
+        lines.append(f"  Explore mode allows this. The run label adds '{sec006_log.ANOTHER_TARGET}'.")
+    return label, lines, []
 
 
 def sec006_start_problems(settings, variant="standard"):
     """What a TP-SEC-006 run needs besides the TP-SEC-001 conditions: the M3 and M4 values with their reasons (verify
-    refuses a log without them), and a readable M4 baseline log where one is named. In evidence mode, the baseline log
-    must be of the same model, variant and system prompt as the run (sec006_baseline)."""
+    refuses a log without them), and a readable M4 baseline log where one is named, with a signature that verifies
+    where a key is named. In evidence mode, the baseline log must be of the same model, variant, system prompt and
+    routing locks as the run, and in evidence mode itself (sec006_baseline)."""
     problems = [f"reviewer_values.{m} needs a value and a reason before a run (verify refuses a log without them)"
                 for m, v, r in (("M3", settings.m3_value, settings.m3_reason), ("M4", settings.m4_value, settings.m4_reason))
                 if v is None or not r]
@@ -448,14 +467,14 @@ def main(argv=None, *, input_fn=input, gateway_factory=_default_gateway, executo
                             inspect_check=inspect_check)
     est = None
     variant = "positive_control" if a.positive_control else "standard"
-    match, base_problems = None, []
+    sec006_label, base_problems = None, []
     if settings is not None:
         print()
         from .engine import run_sec006, spike
         est = run_sec006.estimate(settings) if settings.procedure == SEC006 else spike.estimate(settings)
         settings_report(settings, est)
         if settings.procedure == SEC006:
-            match, lines, base_problems = sec006_baseline(settings, variant)
+            sec006_label, lines, base_problems = sec006_baseline(settings, variant)
             for line in lines:
                 print(line)
     if not a.start and not a.probes:
@@ -500,8 +519,8 @@ def main(argv=None, *, input_fn=input, gateway_factory=_default_gateway, executo
     print()
     print("Start conditions are met.")
     if settings.procedure == SEC006:
-        from .engine import run_sec006, sec006_log
-        calls, label = f"at most {run_sec006.planned_calls(settings)}", sec006_log.run_label(match)
+        from .engine import run_sec006
+        calls, label = f"at most {run_sec006.planned_calls(settings)}", sec006_label
     else:
         calls, label = len(spike.run_items(settings)) * settings.runs_per_item, spike.sec001.LABELS[settings.item_set]
     print(f"Item set {settings.item_set}. This run sends {calls} model calls ({settings.runs_per_item} runs per item) to {settings.model_id} on {', '.join(settings.only) or 'any host'}. "

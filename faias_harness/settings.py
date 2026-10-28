@@ -21,8 +21,9 @@ M4 value with its reason. The declared values are recorded as declared, not obse
 
 The setting `procedure` (version 0.6) chooses the procedure of an SRD-1 run: TP-SEC-001 (the default) or
 TP-SEC-006 (docs/ARCHITECTURE.md, section 15). Only TP-SEC-006 takes `store_replies` (full or hash_only),
-`m4_baseline_log` and `reviewer_values.M3`. In evidence mode it needs the baseline log and the M3 and M4 values
-with their reasons. A TP-SEC-001 file keeps its settings hash.
+`m4_baseline_log`, `m4_baseline_pubkey` (the public key file that verifies the baseline log's signature; keep it
+outside the repository) and `reviewer_values.M3`. In evidence mode it needs the baseline log, its public key and the
+M3 and M4 values with their reasons. A TP-SEC-001 file keeps its settings hash.
 """
 import hashlib
 import json
@@ -36,12 +37,12 @@ import yaml
 TOP_REQUIRED = ["provider", "model_id", "mode", "routing", "price_in_per_m", "price_out_per_m", "cap_usd",
                 "api_key_env"]
 TOP_OPTIONAL = ["max_tokens", "reviewer_values", "temperature", "seed", "runs_per_item", "item_set", "kind",
-                "procedure", "store_replies", "m4_baseline_log"]
+                "procedure", "store_replies", "m4_baseline_log", "m4_baseline_pubkey"]
 RUNS_MIN, RUNS_MAX, RUNS_DEFAULT = 3, 20, 3     # three is the FAIAS minimum (PLAYBOOK_SEC_001.md line 27)
 # The item set of a run: the full set in items/TP-SEC-001.json (the default), or the 20 items of the engine spike.
 ITEM_SETS, ITEM_SET_DEFAULT = ("TP-SEC-001", "spike"), "TP-SEC-001"
 # The procedure of an SRD-1 run (version 0.6). TP-SEC-006 runs its own item set, and only it takes store_replies,
-# m4_baseline_log and a reviewer value for M3.
+# m4_baseline_log, m4_baseline_pubkey and a reviewer value for M3.
 PROCEDURES, PROCEDURE_DEFAULT, SEC006 = ("TP-SEC-001", "TP-SEC-006"), "TP-SEC-001", "TP-SEC-006"
 STORE_REPLIES = ("full", "hash_only")
 ROUTING_KEYS = ["only", "allow_fallbacks", "zdr", "data_collection", "quantizations"]
@@ -81,6 +82,7 @@ class Settings:
     procedure: str = PROCEDURE_DEFAULT
     store_replies: str = "full"
     m4_baseline_log: object = None
+    m4_baseline_pubkey: object = None
     m3_value: object = None
     m3_reason: object = None
     kind = "srd1"           # a class attribute: not in the canonical content, so the settings hash is unchanged
@@ -113,7 +115,8 @@ class Settings:
             "reviewer_values": {"M4": {"value": self.m4_value, "reason": self.m4_reason}},
         }
         if self.procedure == SEC006:
-            out.update(procedure=self.procedure, store_replies=self.store_replies, m4_baseline_log=self.m4_baseline_log)
+            out.update(procedure=self.procedure, store_replies=self.store_replies, m4_baseline_log=self.m4_baseline_log,
+                       m4_baseline_pubkey=self.m4_baseline_pubkey)
             out["reviewer_values"]["M3"] = {"value": self.m3_value, "reason": self.m3_reason}
         return out
 
@@ -179,10 +182,13 @@ def validate(raw):
         bl = raw.get("m4_baseline_log")
         if bl is not None and not (isinstance(bl, str) and bl.strip()):
             problems.append("m4_baseline_log must be the path of a TP-SEC-001 run log, or null")
+        pk = raw.get("m4_baseline_pubkey")
+        if pk is not None and not (isinstance(pk, str) and pk.strip()):
+            problems.append("m4_baseline_pubkey must be the path of a public key file, or null")
     else:
         if "item_set" in raw and raw["item_set"] not in ITEM_SETS:
             problems.append(f"item_set must be one of {', '.join(ITEM_SETS)}")
-        for k in ("store_replies", "m4_baseline_log"):
+        for k in ("store_replies", "m4_baseline_log", "m4_baseline_pubkey"):
             if k in raw:
                 problems.append(f"{k} applies to the procedure TP-SEC-006 only")
     t = raw.get("temperature")
@@ -241,6 +247,9 @@ def validate(raw):
             problems.append("evidence mode: reviewer_values.M3 needs a value and a reason")
         if not raw.get("m4_baseline_log"):
             problems.append("evidence mode: m4_baseline_log is not set (the TP-SEC-001 run log that M4 compares with)")
+        if not raw.get("m4_baseline_pubkey"):
+            problems.append("evidence mode: m4_baseline_pubkey is not set (the public key file that verifies the "
+                            "signature of the M4 baseline log)")
     if evidence:
         # The five routing locks: each must be set, and set to the locked value.
         only = routing.get("only")
@@ -292,7 +301,7 @@ def from_raw(raw):
         runs_per_item=raw.get("runs_per_item", RUNS_DEFAULT),
         item_set=raw.get("item_set", SEC006 if proc == SEC006 else ITEM_SET_DEFAULT),
         procedure=proc, store_replies=raw.get("store_replies", "full"), m4_baseline_log=raw.get("m4_baseline_log"),
-        m3_value=m3.get("value"), m3_reason=m3.get("reason"),
+        m4_baseline_pubkey=raw.get("m4_baseline_pubkey"), m3_value=m3.get("value"), m3_reason=m3.get("reason"),
     )
 
 
