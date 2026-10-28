@@ -1,6 +1,6 @@
 # Changelog
 
-## 0.6.0 (28 October 2026 — date of the push)
+## 0.6.0 (28 October 2026)
 
 The evidence frame, the testability report and a second procedure. A run log now states more about the code that made it. A third party can check more of it without a matching checkout. The TP-SEC-001 scorer patterns, item set and thresholds do not change.
 
