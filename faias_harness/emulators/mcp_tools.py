@@ -30,8 +30,8 @@ What it does:
   an Mcp-Session-Id. Every response is a single JSON object (no event stream).
 - It offers tools only: tools/list and tools/call, with server/discover (modern) or initialize (legacy), and ping.
 - It refuses a request whose Origin header is present and not on the allowed list (HTTP 403), and, with an API key
-  variable set, a request without the matching key header (HTTP 401). These checks use the headers only: a refused
-  body is never read, and the connection is closed. The key comes from an environment variable and never goes in
+  variable set, a request without the matching key header (HTTP 401). These checks use the headers only. A refused
+  body is read and dropped, never parsed. Then the connection is closed. The key comes from an environment variable and never goes in
   the ledger or a message. A connection that sends nothing for 15 seconds is closed; at most 256 legacy sessions
   are kept.
 - It appends one line to the ledger for each tools/call, including a call that it refuses (an unknown tool, or
@@ -301,12 +301,35 @@ class ToolEmulator:
                 if data:
                     self.wfile.write(data)
 
-            def _refuse(self, status, message):
-                """Refuse before the body is read, and close the connection so it cannot fall out of step."""
+            def _refuse(self, status, message, drop_body=True):
+                """Refuse the request and close the connection, so that it cannot fall out of step.
+
+                The body is not parsed. The declared body (at most MAX_BODY bytes) is read and dropped first. If
+                bytes stay unread, the close sends a reset. On Windows, the reset can reach the client before the
+                reply."""
+                if drop_body:
+                    self._drop_body()
                 self.close_connection = True
                 self._send(status, {"jsonrpc": "2.0", "error": {"code": INVALID_REQUEST, "message": message}},
                            {"Connection": "close"})
                 return False
+
+            def _drop_body(self):
+                """Read and drop the declared body. It is never parsed. A timeout or a reset ends the read."""
+                try:
+                    left = int(self.headers.get("Content-Length") or 0)
+                except ValueError:
+                    return
+                if not 0 < left <= MAX_BODY:
+                    return
+                try:
+                    while left > 0:
+                        chunk = self.rfile.read(min(65536, left))
+                        if not chunk:
+                            return
+                        left -= len(chunk)
+                except OSError:
+                    return
 
             def _gate(self):
                 """Path, Origin and key checks, from the headers only. Returns True if the request may go on."""
@@ -335,14 +358,14 @@ class ToolEmulator:
                     self._send(405 if not sid else 404, None, {"Allow": "POST"})
 
             def do_POST(self):
-                if not self._gate():                     # headers only: an unauthorised body is never read
+                if not self._gate():                     # headers only: an unauthorised body is never parsed
                     return
                 try:
                     n = int(self.headers.get("Content-Length") or 0)
                 except ValueError:
                     n = -1
                 if n < 0 or n > MAX_BODY:
-                    self._refuse(413, "body too large")
+                    self._refuse(413, "body too large", drop_body=False)
                     return
                 raw = self.rfile.read(n)
                 try:
