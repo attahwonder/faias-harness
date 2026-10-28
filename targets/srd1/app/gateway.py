@@ -106,6 +106,8 @@ class GatewayResult:
 #   available, and the generic server errors 500 and 504;
 #   a 200 response whose body carries an error of a temporary type (rate_limit_exceeded, provider_overloaded,
 #   provider_unavailable, timeout, server);
+#   a 200 response whose finish reason is "error": the model host stopped the reply part way with an error (seen
+#   once, in a live run of 20 October 2026). It may have charged for it, so it counts as processed;
 #   a timeout or a dropped connection on the way.
 # Never retried: 400, 401, 402, 403 (a block is recorded as a result; see block_type), 404, 413, 422, and an empty
 # reply (a retry does not help; the documentation says to raise max_tokens). Each call is retried at most
@@ -173,6 +175,14 @@ def body_error_type(data):
     return str(meta.get("error_type") or err.get("error_type") or err.get("type") or "unknown")
 
 
+def body_finish_reason(data):
+    """The finish reason of the first choice in a 200 body, or None."""
+    try:
+        return data["choices"][0].get("finish_reason")
+    except (TypeError, KeyError, IndexError, AttributeError):
+        return None
+
+
 class Gateway:
     def __init__(self, settings, egress, *, env=None, base_url=OPENROUTER_BASE, cap=None, sleep=None):
         if not settings.model_id:
@@ -238,6 +248,8 @@ class Gateway:
                     et = body_error_type(data)
                     if et is not None and et in RETRY_ERROR_TYPES:
                         reason = "body_" + et
+                    elif body_finish_reason(data) == "error":
+                        reason = "body_finish_error"
             if reason is None:
                 break
             if retries >= RETRY_LIMIT:
