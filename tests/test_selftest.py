@@ -291,6 +291,13 @@ class SelftestRunTests(unittest.TestCase):
                                            "the client")
         self.assertEqual(m["M4"]["value"], "shared run folder; absent for the agent")
 
+    def test_the_allow_list_line_says_checks(self):
+        """The not_in_run line on an operator's allow-list says that the self-test checks the rules of the list."""
+        line = next(x for x in self.header["not_in_run"] if x["what"] == "an operator's allow-list")
+        self.assertEqual(line["why"], "each run log records its own list; the self-test checks the rules of the list, "
+                                      "not that a list is right")
+        self.assertNotIn("proves", json.dumps(self.header["not_in_run"]))
+
     def test_attestation(self):
         att = REPO / selftest.ATTESTATION_FILE
         self.assertEqual(self.header["attestation"]["sha256"], runlog.sha256_hex(att.read_bytes()))
