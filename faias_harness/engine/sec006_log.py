@@ -10,7 +10,11 @@ their bases, the code block, the lock over the scorer and record hashes, the Ed2
   store_replies     "full": each run record holds the request and the redacted reply. "hash_only": it holds the
                     SHA-256 of the reply as received, and the scorer outcome; a rescore then needs the replies from
                     the controlled evidence store (PLAYBOOK_SEC_006.md line 68)
-  m4_baseline       the named TP-SEC-001 run log for the attack-value sub-test: its SHA-256 and its class C1 rate
+  m4_baseline       the named TP-SEC-001 run log for the attack-value sub-test: its SHA-256, its class C1 rate, and
+                    the fields in which its model ID, variant or system prompt hash differs from the run
+  baseline_match    true when the baseline log is of the same model, variant and system prompt as the run; false when
+                    it is not (explore mode only: the label then adds "baseline from another target"); null when no
+                    log is named
   corpus.scorer_keys  the redacted prompt (store_replies full) or null (hash_only), with its SHA-256
 
 The log holds no placeholder value (PLAYBOOK_SEC_006.md line 11): `check` fails a log in which the placeholder
@@ -90,8 +94,12 @@ def build_header(settings, *, allow_hosts, config, placeholders, static, redacte
     items, seqs = sec006.load_items(repo)
     store = settings.store_replies
     k = settings.runs_per_item
+    if baseline is not None:
+        baseline = {**baseline, "differs_from_run": baseline_differences(
+            baseline, model_id=settings.model_id, variant=variant, system_prompt_sha256=config["prompt_sha256"])}
+    match = None if baseline is None else not baseline["differs_from_run"]
     return {
-        "type": "header", "schema": SCHEMA, "label": sec006.LABEL, "engine_version": runlog.__version__,
+        "type": "header", "schema": SCHEMA, "label": run_label(match), "engine_version": runlog.__version__,
         "code": code_facts(repo),
         "procedure": {"tp": rec["tp"], "title": rec["title"], "irq": rec["irq"], "star": rec["star"],
                       "star_note": "copied from the Confidence line of the procedure; the harness never computes it",
@@ -126,7 +134,7 @@ def build_header(settings, *, allow_hosts, config, placeholders, static, redacte
                    "runtime_templates": len(config.get("runtime_templates") or [])},
         "placeholders": placeholders, "static_inspection": static,
         "store_replies": {"mode": store, "note": STORE_NOTES[store]},
-        "m4_baseline": baseline,
+        "m4_baseline": baseline, "baseline_match": match,
         "variant": {"name": variant, "purpose": runlog.VARIANTS[variant]},
         "run_engine": runlog._engine_facts(engine),
         "scorer": SCORER_STATUS,
@@ -144,12 +152,13 @@ def lock_extra(header):
     return {"prompt_redacted_sha256": (corpus.get("scorer_keys") or {}).get("prompt_redacted_sha256"),
             "followon": corpus.get("followon"), "config": header.get("config"),
             "placeholders": header.get("placeholders"), "static_inspection": header.get("static_inspection"),
-            "store_replies": header.get("store_replies"), "m4_baseline": header.get("m4_baseline")}
+            "store_replies": header.get("store_replies"), "m4_baseline": header.get("m4_baseline"),
+            "baseline_match": header.get("baseline_match")}
 
 
 LOCK_COVERS = ("procedure, thresholds with bases, settings hash, routing locks, model ID, system prompt hash (read "
                "through config_read), item set, redacted prompt hash, follow-on rule, placeholder staging record, "
-               "static inspection, reply storage, M4 baseline log hash")
+               "static inspection, reply storage, M4 baseline log hash and its match with the run (baseline_match)")
 
 
 # ---------- the M4 baseline ----------
@@ -173,11 +182,57 @@ def read_baseline(path, repo=runlog.REPO):
         raise ValueError("the M4 baseline log has no complete summary with a class C1 rate")
     return {"log_file": p.name, "sha256": runlog.sha256_hex(data), "tp": sec001.TP,
             "item_set": (h.get("corpus") or {}).get("item_set"), "model": (h.get("model") or {}).get("pinned_id"),
-            "variant": (h.get("variant") or {}).get("name"),
+            "variant": (h.get("variant") or {}).get("name"), "system_prompt_sha256": h.get("system_prompt_sha256"),
             "C1": {k: c1.get(k) for k in ("items", "successful_items", "rate", "upper95")},
             "M4_per_run_variance": ((s["measures"].get("M4") or {}).get("value")),
             "note": "the class C1 rate is the TP-SEC-001 rate for the same objective (a marker); verify the named "
                     "log with runlog verify"}
+
+
+# The fields in which the M4 baseline log must match the run in evidence mode: (name, key in the baseline facts).
+MATCH_FIELDS = (("model_id", "model"), ("variant", "variant"), ("system_prompt_sha256", "system_prompt_sha256"))
+ANOTHER_TARGET = "baseline from another target"
+
+
+def baseline_differences(baseline, *, model_id, variant, system_prompt_sha256):
+    """The fields in which the baseline facts (read_baseline) differ from the run, each with both values. Empty when
+    the baseline log is of the same model, variant and system prompt as the run."""
+    run = {"model_id": model_id, "variant": variant, "system_prompt_sha256": system_prompt_sha256}
+    return [{"field": f, "baseline": baseline.get(key), "run": run[f]} for f, key in MATCH_FIELDS
+            if baseline.get(key) != run[f]]
+
+
+def difference_problems(differs):
+    """One line for each field that differs, with both values."""
+    return [f"the M4 baseline log differs from the run in {d['field']}: baseline {d['baseline']!r}, run {d['run']!r}"
+            for d in differs]
+
+
+def run_label(baseline_match):
+    """The label of a TP-SEC-006 run. A baseline log from another target (explore mode only) adds to it."""
+    return sec006.LABEL if baseline_match is not False else f"{sec006.LABEL}; {ANOTHER_TARGET}"
+
+
+def _baseline_problems(h):
+    """The M4 baseline facts of a header: `baseline_match` agrees with the baseline and the run, the label says so,
+    and an evidence-mode log has a baseline of the same model, variant and system prompt."""
+    base, match = h.get("m4_baseline"), h.get("baseline_match")
+    problems = []
+    if base is None:
+        agrees = match is None
+    else:
+        differs = baseline_differences(base, model_id=(h.get("model") or {}).get("pinned_id"),
+                                       variant=(h.get("variant") or {}).get("name"),
+                                       system_prompt_sha256=h.get("system_prompt_sha256"))
+        agrees = base.get("differs_from_run") == differs and match is (not differs)
+    if not agrees:
+        problems.append("header: baseline_match does not agree with the M4 baseline log and the run")
+    if h.get("mode") == "evidence" and match is not True:
+        problems.append("header: an evidence-mode log needs an M4 baseline log of the same model, variant and system "
+                        "prompt")
+    if h.get("label") != run_label(match):
+        problems.append(f"header: the label '{run_label(match)}' is missing")
+    return problems
 
 
 # ---------- checks on the log ----------
@@ -255,8 +310,7 @@ def check(path, recs, repo=runlog.REPO, use_repo=True):
         problems.append("header: the run engine is missing or unknown")
     if (h.get("variant") or {}).get("name") not in VARIANTS:
         problems.append("header: the variant is missing or unknown")
-    if h.get("label") != sec006.LABEL:
-        problems.append(f"header: the label '{sec006.LABEL}' is missing")
+    problems += _baseline_problems(h)
     corpus = h.get("corpus") or {}
     if corpus.get("item_set") != sec006.ITEM_SET:
         problems.append("header: the item set is not TP-SEC-006")

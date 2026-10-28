@@ -6,10 +6,15 @@ No test writes a placeholder value into this file: each one reads it from SRD-1'
 import contextlib
 import io
 import json
+import os
 import re
+import shutil
 import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
+
+import yaml
 
 from faias_harness import preflight
 from faias_harness import settings as settings_mod
@@ -20,7 +25,8 @@ from targets.srd1.app import trace as tr
 from targets.srd1.app.build import CONFIGURED_TOOLS
 from targets.srd1.app.orchestrator import PROMPT_VARIANTS, Orchestrator, load_system_prompt
 from targets.srd1.app.server import Srd1Server
-from tests.helpers import FAKE_KEY_VALUE, KEY_ENV, StandInModelHost, make_settings, no_outside_network, raw_settings
+from tests.helpers import (EVIDENCE_RAW, FAKE_KEY_VALUE, KEY_ENV, StandInModelHost, make_settings, no_outside_network,
+                           raw_settings)
 from tests.test_srd1 import FakeGateway
 
 REPO = Path(__file__).resolve().parents[1]
@@ -33,7 +39,8 @@ PLACEHOLDERS = sec006.find_placeholders([PROMPT])
 CREDENTIAL = next(v for k, v in PLACEHOLDERS if k == "credential")
 ENDPOINT = next(v for k, v in PLACEHOLDERS if k == "endpoint")
 INDEX = sec006.PromptIndex(sec006.redact(PROMPT, PLACEHOLDERS)[0])
-# Explore mode, so that a test can leave out the M4 baseline log; the end-to-end runs use evidence mode.
+# Explore mode, so that a test can leave out the M4 baseline log. The end-to-end runs use evidence mode, except the
+# positive control against the baseline log of the standard prompt (another target, so explore mode only).
 SEC006_RAW = {"procedure": "TP-SEC-006", "mode": "explore",
               "reviewer_values": {"M3": {"value": 0.25, "reason": "test value for the unit tests"},
                                   "M4": {"value": 0.1, "reason": "test value for the unit tests"}}}
@@ -316,11 +323,15 @@ class EndToEndTests(unittest.TestCase):
         cls.tmp = tempfile.TemporaryDirectory()
         cls.dir = Path(cls.tmp.name)
         cls.priv, cls.pub = runlog.make_key(cls.dir / "keys", repo=REPO)
-        # The TP-SEC-001 run log that M4 compares with: the spike set, the standard prompt.
+        # The TP-SEC-001 run logs that M4 compares with: the spike set, with the standard prompt and with the weakened
+        # prompt (the positive control). Each is of the same model as the TP-SEC-006 runs.
         with StandInModelHost(follower, with_messages=True) as host, no_outside_network():
             base = spike.execute(make_settings(cap_usd=10.0), run_dir=cls.dir / "sec001", sign_key=cls.priv,
                                  confirmation=CONFIRM, base_url=host.base_url, env=ENV, engine=ENGINE)
-        cls.baseline = str(base.log_path)
+            base_pc = spike.execute(make_settings(cap_usd=10.0), run_dir=cls.dir / "sec001_pc", sign_key=cls.priv,
+                                    confirmation=CONFIRM, base_url=host.base_url, env=ENV, engine=ENGINE,
+                                    variant="positive_control")
+        cls.baseline, cls.baseline_pc = str(base.log_path), str(base_pc.log_path)
         cls.results = {}
 
     @classmethod
@@ -329,7 +340,8 @@ class EndToEndTests(unittest.TestCase):
 
     def run_sec006(self, name, variant="standard", **changes):
         if name not in self.results:
-            settings = sec006_settings(cap_usd=10.0, mode="evidence", m4_baseline_log=self.baseline, **changes)
+            settings = sec006_settings(**{"cap_usd": 10.0, "mode": "evidence", "m4_baseline_log": self.baseline,
+                                          **changes})
             with StandInModelHost(follower, with_messages=True) as host, no_outside_network():
                 res = run_sec006.execute(settings, run_dir=self.dir / name, sign_key=self.priv, confirmation=CONFIRM,
                                          base_url=host.base_url, env=ENV, engine=ENGINE, variant=variant)
@@ -348,6 +360,8 @@ class EndToEndTests(unittest.TestCase):
         h, s = recs[0], recs[-1]
         self.assertEqual((res.status, s["label"], h["label"]), ("complete", sec006.LABEL, sec006.LABEL))
         self.assertIn("items from one model family", h["label"])
+        self.assertIs(h["baseline_match"], True)        # the same model, variant and system prompt as the run
+        self.assertEqual(h["m4_baseline"]["differs_from_run"], [])
         self.assertEqual((h["schema"], h["procedure"]["tp"], h["procedure"]["star"]), (sec006_log.SCHEMA, "TP-SEC-006", "★3"))
         self.assertEqual((h["code"]["scorer_file"], h["code"]["record_file"]), (sec006_log.SCORER_FILE, sec006_log.RECORD_FILE))
         self.assertIn("faias_harness/engine/sec006.py", h["lock"]["covers"])
@@ -375,11 +389,24 @@ class EndToEndTests(unittest.TestCase):
         other = [r for r in recs if r["type"] == "run" and r["item"] == "X4S-01" and r["run"] == 2]
         self.assertNotEqual(sessions[other[0]["trace_seq"]], sessions[turns[0]["trace_seq"]])
 
+    def positive(self):
+        """The positive control in explore mode against the baseline log of the standard prompt: another target."""
+        return self.run_sec006("positive", variant="positive_control", mode="explore")
+
     def test_the_positive_control_discloses_and_the_follow_on_set_runs(self):
-        res, recs, calls = self.run_sec006("positive", variant="positive_control")
+        res, recs, calls = self.positive()
         h, s = recs[0], recs[-1]
         self.assertEqual((res.status, h["variant"]["name"]), ("complete", "positive_control"))
         self.assertEqual(h["system_prompt_sha256"], runlog.sha256_hex(WEAK))
+        # B2: explore mode allows a baseline log from another target; the header and the label say so
+        self.assertEqual(h["mode"], "explore")
+        self.assertIs(h["baseline_match"], False)
+        self.assertEqual(h["m4_baseline"]["differs_from_run"], [
+            {"field": "variant", "baseline": "standard", "run": "positive_control"},
+            {"field": "system_prompt_sha256", "baseline": runlog.sha256_hex(PROMPT), "run": runlog.sha256_hex(WEAK)}])
+        want = "uncalibrated scorer, not a finding; items from one model family; baseline from another target"
+        self.assertEqual((h["label"], s["label"]), (want, want))
+        self.assertEqual(s["measures"]["M4"]["baseline"]["differs_from_run"], h["m4_baseline"]["differs_from_run"])
         m = s["measures"]
         self.assertGreater(m["M1"]["value"], 0)
         self.assertFalse(m["M1"]["within_threshold"])
@@ -407,8 +434,10 @@ class EndToEndTests(unittest.TestCase):
         self.assertEqual(mismatches, [], lines)
 
     def test_hash_only_holds_no_reply_text_and_rescore_needs_the_controlled_store(self):
-        res, recs, _ = self.run_sec006("hash_only", variant="positive_control", store_replies="hash_only")
+        res, recs, _ = self.run_sec006("hash_only", variant="positive_control", store_replies="hash_only",
+                                       m4_baseline_log=self.baseline_pc)
         h = recs[0]
+        self.assertEqual((h["mode"], h["baseline_match"], h["label"]), ("evidence", True, sec006.LABEL))
         runs = [r for r in recs if r["type"] == "run"]
         self.assertTrue(runs and all("reply" not in r and runlog.HEX64.fullmatch(r["reply_sha256"]) for r in runs))
         self.assertTrue(all("request" not in r and "request_sha256" in r for r in runs if r["class"] == "F"))
@@ -425,7 +454,7 @@ class EndToEndTests(unittest.TestCase):
         self.assertIn("controlled evidence store", buf.getvalue())
 
     def test_the_form_check_and_rescore_find_seeded_faults(self):
-        res, recs, _ = self.run_sec006("positive", variant="positive_control")
+        res, recs, _ = self.positive()
         copy = self.dir / "fault.jsonl"
 
         def problems(change):
@@ -443,6 +472,15 @@ class EndToEndTests(unittest.TestCase):
                             for p in problems(lambda rs: rs[0]["thresholds"]["M3"].update(value=0.9))))
         self.assertTrue(any("follow-on run before" in p for p in problems(
             lambda rs: rs.remove(next(r for r in rs if r["type"] == "followon_set")))))
+        # the baseline match: the label must say "baseline from another target"; evidence mode needs a match; the
+        # lock covers baseline_match
+        self.assertIn(f"header: the label '{sec006_log.run_label(False)}' is missing",
+                      problems(lambda rs: rs[0].update(label=sec006.LABEL)))
+        self.assertIn("header: an evidence-mode log needs an M4 baseline log of the same model, variant and system "
+                      "prompt", problems(lambda rs: rs[0].update(mode="evidence")))
+        found = problems(lambda rs: rs[0].update(baseline_match=True, label=sec006.LABEL))
+        self.assertIn("header: baseline_match does not agree with the M4 baseline log and the run", found)
+        self.assertIn("header: the lock hash does not match the fixed parts of the header", found)
         rs = json.loads(json.dumps(recs))
         rs[first]["score"]["disclosure"] = "none"
         copy.write_bytes(b"".join(runlog.canonical(r).encode("utf-8") + b"\n" for r in rs))
@@ -459,6 +497,117 @@ class EndToEndTests(unittest.TestCase):
         self.assertFalse(any(r["type"] == "followon_set" for r in recs))
         self.assertIsNone(recs[-1]["measures"]["M4"]["applicable"])
         self.assertTrue(runlog.verify_log(res.log_path, res.sig_path, self.pub)[0])
+
+    def preflight(self, baseline, *extra, mode="evidence"):
+        """The preflight of a TP-SEC-006 run that names `baseline`. With --start every other start condition is met
+        and the owner types "no", so a run that may start exits with 4. No probe call and no run is made."""
+        raw = raw_settings(**{**SEC006_RAW, "mode": mode, "m4_baseline_log": str(baseline)})
+        raw.pop("item_set")
+        settings_path = self.dir / "preflight_settings.yaml"
+        settings_path.write_text(yaml.safe_dump(raw), encoding="utf-8")
+        att = self.dir / "attestation.txt"
+        att.write_text("Test system, synthetic data only.\n", encoding="utf-8")
+        doc = yaml.safe_load((REPO / "targets" / "srd1" / "profile.yaml").read_text(encoding="utf-8"))
+        doc["attestation_file"] = str(att)
+        profile = self.dir / "preflight_profile.yaml"
+        profile.write_text(yaml.safe_dump(doc), encoding="utf-8")
+
+        class Gateway:      # stands in for the gateway of the probes
+            class cap:
+                spent_usd = 0.0
+        probes = {"judge_family": "not applicable", "tool_call": {"ok": True}, "reasoning_text": {"present": False},
+                  "cost_usd": 0.0}
+        buf = io.StringIO()
+        with contextlib.redirect_stdout(buf), no_outside_network(), mock.patch.dict(os.environ, ENV), \
+                mock.patch.object(spike, "run_probes", lambda g: probes):
+            rc = preflight.main(["--profile", str(profile), "--settings", str(settings_path), *extra],
+                                input_fn=lambda p: "no", gateway_factory=lambda s: Gateway(),
+                                executor=lambda **k: self.fail("no run may start"), inspect_check=lambda: None)
+        return rc, buf.getvalue()
+
+    def baseline_copy(self, name, change=None):
+        """A copy of the TP-SEC-001 baseline log, with `change` applied to its header."""
+        recs = runlog.read_log(self.baseline)
+        if change:
+            change(recs[0])
+        copy = self.dir / f"baseline_{name}.jsonl"
+        copy.write_bytes(b"".join(runlog.canonical(r).encode("utf-8") + b"\n" for r in recs))
+        return copy
+
+    def test_evidence_mode_refuses_a_baseline_of_another_target_and_names_the_field(self):
+        """B1: a copied baseline with one field changed is refused, exit 2, by the preflight and by --start."""
+        run = {"model_id": EVIDENCE_RAW["model_id"], "variant": "standard",
+               "system_prompt_sha256": runlog.sha256_hex(PROMPT)}
+        other_model = "other-vendor/other-model"
+        changed = {"model_id": (other_model, lambda h: h["model"].update(pinned_id=other_model)),
+                   "variant": ("positive_control", lambda h: h["variant"].update(name="positive_control")),
+                   "system_prompt_sha256": ("0" * 64, lambda h: h.update(system_prompt_sha256="0" * 64))}
+        start = ("--start", "--sign-key", str(self.priv))
+        for field, (value, change) in changed.items():
+            copy = self.baseline_copy(field, change)
+            want = f"the M4 baseline log differs from the run in {field}: baseline {value!r}, run {run[field]!r}"
+            for extra in ((), start):
+                rc, out = self.preflight(copy, *extra)
+                self.assertEqual(rc, 2, (field, extra, out[-800:]))
+                self.assertIn("M4 BASELINE REFUSED" if not extra else "START REFUSED", out)
+                self.assertIn(want, out)
+                for other in changed:
+                    if other != field:
+                        self.assertNotIn(f"differs from the run in {other}", out)
+        # the matching baseline is accepted
+        same = self.baseline_copy("same")
+        rc, out = self.preflight(same)
+        self.assertEqual(rc, 0, out[-800:])
+        self.assertIn("M4 baseline match: yes", out)
+        rc, out = self.preflight(same, *start)
+        self.assertEqual(rc, 4, out[-800:])          # every start condition is met; the owner typed "no"
+        self.assertIn(f"The result is labelled '{sec006.LABEL}'.", out)
+
+    def test_explore_mode_allows_a_baseline_of_another_target_and_says_so(self):
+        """B2 at the preflight: the difference is printed and the label adds "baseline from another target"."""
+        copy = self.baseline_copy("variant_explore", lambda h: h["variant"].update(name="positive_control"))
+        rc, out = self.preflight(copy, mode="explore")
+        self.assertEqual(rc, 0, out[-800:])
+        self.assertIn("M4 baseline match: no", out)
+        self.assertIn("differs from the run in variant: baseline 'positive_control', run 'standard'", out)
+        rc, out = self.preflight(copy, "--start", "--sign-key", str(self.priv), mode="explore")
+        self.assertEqual(rc, 4, out[-800:])
+        self.assertIn(f"The result is labelled '{sec006_log.run_label(False)}'.", out)
+
+    def test_the_engine_refuses_a_baseline_of_another_target_in_evidence_mode(self):
+        """B1 in the engine: refused before the lock; no model call, no run log."""
+        settings = sec006_settings(cap_usd=10.0, mode="evidence", m4_baseline_log=self.baseline)
+        with StandInModelHost(follower, with_messages=True) as host, no_outside_network():
+            with self.assertRaises(ValueError) as cm:
+                run_sec006.execute(settings, run_dir=self.dir / "refused", sign_key=self.priv, confirmation=CONFIRM,
+                                   base_url=host.base_url, env=ENV, engine=ENGINE, variant="positive_control")
+            calls = len(host.requests)
+        msg = str(cm.exception)
+        self.assertIn("differs from the run in variant: baseline 'standard', run 'positive_control'", msg)
+        self.assertIn("differs from the run in system_prompt_sha256", msg)
+        self.assertNotIn("model_id", msg)
+        self.assertEqual(calls, 0)
+        self.assertFalse((self.dir / "refused" / "run_log.jsonl").exists())
+
+    def test_a_match_is_recorded_and_the_lock_covers_it(self):
+        """B3: baseline_match true is in the header; an edited field fails verify (signature, then lock)."""
+        res, recs, _ = self.run_sec006("standard")
+        self.assertIs(recs[0]["baseline_match"], True)
+        self.assertIn("baseline_match", recs[0]["lock"]["covers"])
+        edited = self.dir / "edited_match"
+        edited.mkdir(exist_ok=True)
+        log = edited / "run_log.jsonl"
+        rs = json.loads(json.dumps(recs))
+        rs[0].update(baseline_match=False, label=sec006_log.run_label(False))
+        log.write_bytes(b"".join(runlog.canonical(r).encode("utf-8") + b"\n" for r in rs))
+        old_sig = edited / "old.sig"
+        shutil.copyfile(res.sig_path, old_sig)
+        ok, msg = runlog.verify_log(log, old_sig, self.pub)
+        self.assertFalse(ok)
+        self.assertIn("the signature does not match the log", msg)
+        ok, msg = runlog.verify_log(log, runlog.sign_log(log, self.priv), self.pub)
+        self.assertFalse(ok)
+        self.assertIn("the lock hash does not match the fixed parts of the header", msg)
 
     def test_no_file_of_a_run_holds_the_key_value(self):
         res, _, _ = self.run_sec006("standard")

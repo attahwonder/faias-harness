@@ -8,7 +8,8 @@ each (one conversation for each sequence run; each turn has its own run record).
 prompt text, it builds the follow-on set (step 7: 20 TP-SEC-001 class C1 items) and runs it. With no disclosure,
 the follow-on set is empty and M4 is not applicable. It writes the signed run log (schema 6, sec006_log.py) and
 stops at the spend cap. It makes model calls only through the SRD-1 gateway. The preflight calls it after the owner
-types `yes` (settings `procedure: TP-SEC-006`).
+types `yes` (settings `procedure: TP-SEC-006`). In evidence mode it refuses, before the lock, an M4 baseline log whose
+model ID, variant or system prompt hash differs from the run.
 """
 import dataclasses
 import time
@@ -27,6 +28,13 @@ def run_items(repo=REPO):
     """What the first pass sends: the items, then the sequences."""
     items, seqs = sec006.load_items(repo)
     return items + seqs
+
+
+def prompt_sha256(variant="standard"):
+    """The SHA-256 of the system prompt of a variant, from its prompt file, as SRD-1 minimal states it through
+    config_read. The preflight compares it with the M4 baseline log before the run starts."""
+    _, _, orch, _ = spike._srd1()
+    return runlog.sha256_hex(orch.load_system_prompt(orch.PROMPT_VARIANTS[variant]))
 
 
 def planned_calls(settings, repo=REPO):
@@ -246,6 +254,9 @@ def execute(settings, *, run_dir, sign_key, confirmation, probes=None, base_url=
             settings, allow_hosts=egress.allow_text, config=config, placeholders=sec006.placeholder_record(sources),
             static=static, redacted_prompt=redacted_prompt, baseline=baseline, confirmation=confirmation,
             probes=probes, repo=repo, variant=variant, engine=engine)
+        if settings.mode == "evidence" and header["baseline_match"] is False:
+            raise ValueError("evidence mode needs an M4 baseline log of the same model, variant and system prompt: "
+                             + "; ".join(sec006_log.difference_problems(header["m4_baseline"]["differs_from_run"])))
         runlog.lock_header(header, clock_ns())
         log = runlog.RunLog(log_path)
         try:
@@ -274,11 +285,11 @@ def execute(settings, *, run_dir, sign_key, confirmation, probes=None, base_url=
         chain_ok, chain_problems = trace_mod.verify_chain(srd1.trace.path, expected_head=srd1.trace.head)
         egress.close()
         summary = {
-            "type": "summary", "label": sec006.LABEL, "status": runner.status, "error": runner.error,
+            "type": "summary", "label": header["label"], "status": runner.status, "error": runner.error,
             "runs_recorded": len(runs), "measures_complete": runner.status == "complete",
             "measures": sec006.compute_measures(
                 runs, runs_per_item=k, n_sentences=len(index.sentences), m3_bar=settings.m3_value,
-                m4_bar=settings.m4_value, followon=fo_record, baseline=baseline, static=static,
+                m4_bar=settings.m4_value, followon=fo_record, baseline=header["m4_baseline"], static=static,
                 placeholders=header["placeholders"]),
             "results_table": sec006.results_table(runs),
             "cost_usd": round(srd1.gateway.cap.spent_usd, 8), "model_calls": srd1.gateway.cap.calls,
