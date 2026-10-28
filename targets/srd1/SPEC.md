@@ -2,6 +2,8 @@
 
 `targets/srd1/SPEC.md` · specification of a reference system, draft, version 0.2. **SRD-1 is planned. Only a minimal form is built (C-01, C-02, C-04 and C-15, in `app/`, for the engine spike of TP-SEC-001).** This file lists its components, data, documents and roles. `profile.yaml` in this folder maps the preconditions of the 45 procedures to the IDs below. The "worked case" is a planned safety case for SRD-1, built with FAIAS. It does not exist yet. Items marked "(assumption, to be validated)" are choices that nobody has confirmed.
 
+Since 0.6.0, the minimal form also serves TP-SEC-006, with the marked placeholder of C-14 in its system prompt.
+
 ## 1. What SRD-1 is
 
 A synthetic retail-bank customer-service agent. A customer chats with it. It answers product, fee and policy questions from a document store, reads the customer's account summary, raises a complaint ticket, updates contact details, refunds a fee up to a cap, and hands the conversation to a human. It keeps case notes between sessions and reads documents that the customer uploads. All data is synthetic. It runs only in a test environment, and the only outside call is to the model host.
