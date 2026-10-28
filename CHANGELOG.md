@@ -4,7 +4,7 @@
 
 The evidence frame. A run log now states more about the code that made it. A third party can check more of it without a matching checkout. The scorer patterns, the item set and the thresholds do not change.
 
-- M1 (overall and for each class), M2 and M3 give `upper95`, a one-sided 95% upper bound on the item rate. `upper95_method` names the method. For 0 successes in n items it is `clopper_pearson_exact_zero`, 1 - 0.05^(1/n). Otherwise it is `clopper_pearson_exact`, computed without SciPy (`faias_harness/engine/sec001.py`).
+- M1 (overall and for each class), M2 and M3 give `upper95`. It is a one-sided 95% upper bound on the per-item success rate for items of this kind. `upper95_note` states that bound and its assumption. The assumption is that the items are independent draws with one success probability. The item set is hand-written, not a random sample. `upper95_method` names the method. For 0 successes in n items it is `clopper_pearson_exact_zero`, 1 - 0.05^(1/n). Otherwise it is `clopper_pearson_exact`, computed without SciPy (`faias_harness/engine/sec001.py`).
 - `M4.per_item_note` states that at k = 3 a per-item interval is wide. Such an interval is not evidence alone.
 - New run logs use schemas 4 (SRD-1 runs) and 5 (external runs), in `faias_harness/engine/runlog.py`. The header has a `code` block. It holds the engine version, the git commit or null, and the SHA-256 of the scorer and record files.
 - The lock hash also covers the two file hashes. `verify` recomputes the lock hash of a schema 4 or 5 log.
@@ -18,7 +18,7 @@ The evidence frame. A run log now states more about the code that made it. A thi
 - The gateway's worst case uses the most completion tokens that a call has used, if that is more than `max_tokens`. The run summary counts `calls_over_max_tokens`.
 - The summary of an external run counts channel errors by class (`channel_errors_by_class`). A class is the HTTP status, or the kind where the error has no status. The rates do not change.
 - `AGENTS.md` rule 14 now agrees with `items/README.md`. Text from a third-party set is used only when its licence allows it, with credit and an inert objective.
-- `tests/test_evidence_frame.py` holds the new tests. Two of them read the signed live logs, which are not in the repository. Set `FAIAS_HARNESS_RUNS` to their folder, or these two tests check nothing.
+- `tests/test_evidence_frame.py` holds the new tests. Two of them read the signed live logs, which are not in the repository. Set `FAIAS_HARNESS_RUNS` to their folder, or these two tests check nothing. Each of them prints the number of logs that it read. `tests/run_all.py` shows that line after the test count.
 - Testability report (`faias_harness/testability.py`, `tests/test_testability.py`). It writes `testability.json` and `testability.md` from a target profile alone, with the preflight result of each of the 45 procedures. It makes no network call. It can sign the JSON file, and its `verify` command checks the signature.
 - `__version__` is "0.6.0.dev0".
 

@@ -4,7 +4,8 @@ max_tokens, and channel errors by class. No outside network.
 
 Some tests read the signed live run logs, which are not in the repository. They look in `runs/` of the checkout, or
 in the folders that the variable FAIAS_HARNESS_RUNS names (separated by the path separator: ';' on Windows). Each
-folder may hold run_log.jsonl itself or in its sub-folders. Without such logs, those tests check nothing.
+folder may hold run_log.jsonl itself or in its sub-folders. Without such logs, those tests check nothing. Each
+prints a "[test note]" line with the number of logs that it read, and tests/run_all.py shows that line.
 """
 import contextlib
 import hashlib
@@ -12,6 +13,7 @@ import io
 import json
 import os
 import shutil
+import subprocess
 import tempfile
 import unittest
 from fractions import Fraction
@@ -42,8 +44,17 @@ def call(argv):
     return rc, buf.getvalue()
 
 
+def note(text):
+    """Print one line that tests/run_all.py shows after the test count, so that a test that checks nothing says so."""
+    print(f"[test note] {text}", flush=True)
+
+
+def live_log_roots():
+    return [Path(p) for p in os.environ.get("FAIAS_HARNESS_RUNS", "").split(os.pathsep) if p] or [REPO / "runs"]
+
+
 def live_log_dirs():
-    roots = [Path(p) for p in os.environ.get("FAIAS_HARNESS_RUNS", "").split(os.pathsep) if p] or [REPO / "runs"]
+    roots = live_log_roots()
     out = []
     for root in roots:
         if (root / "run_log.jsonl").is_file():
@@ -124,7 +135,11 @@ class BoundTests(unittest.TestCase):
         self.assertEqual(m["M1"]["C2"]["upper95"], 0.1129)                                  # 25 C2 items
         for block in (m["M1"]["overall"], m["M1"]["C1"], m["M1"]["C2"], m["M1"]["C3"], m["M1"]["C4"], m["M2"], m["M3"]):
             self.assertEqual(block["upper95_method"], "clopper_pearson_exact_zero")
+            self.assertEqual(block["upper95_note"], sec001.UPPER95_NOTE)
             self.assertTrue(block["within_threshold"])
+        for words in ("per-item success rate for items of this kind", "independent draws with one success probability",
+                      "hand-written, not a random sample"):
+            self.assertIn(words, sec001.UPPER95_NOTE)
         note = m["M4"]["per_item_note"]
         self.assertIn("3 runs", note)
         self.assertIn("0.0 to 0.5615", note)
@@ -173,8 +188,29 @@ class LockTests(unittest.TestCase):
         done = mock.Mock(returncode=128, stdout="", stderr="fatal: not a git repository")
         with mock.patch("subprocess.run", return_value=done):
             self.assertIsNone(runlog.git_commit(self.dir))
-        with mock.patch("subprocess.run", return_value=mock.Mock(returncode=0, stdout="a" * 40 + "\n")):
+        def answer(argv, **kw):
+            return mock.Mock(returncode=0, stdout=(str(REPO) if "--show-toplevel" in argv else "a" * 40) + "\n")
+        with mock.patch("subprocess.run", side_effect=answer):
             self.assertEqual(runlog.git_commit(REPO), "a" * 40)
+
+    def test_git_commit_is_null_in_a_folder_inside_another_repository(self):
+        if shutil.which("git") is None:     # no skip: tests/run_all.py accepts a bare OK only
+            return note("git is not on PATH, so the test of a folder inside another repository checks nothing")
+        outer, inner = self.dir / "outer", self.dir / "outer" / "copy"
+        inner.mkdir(parents=True)
+
+        def git(*args):
+            return subprocess.run(["git", "-C", str(outer), *args], capture_output=True, text=True, check=True,
+                                  timeout=20).stdout.strip()
+        git("init", "-q")
+        tree = git("write-tree")       # the empty tree; plumbing only, so no hook and no signing runs
+        commit = git("-c", "user.name=t", "-c", "user.email=t@example.invalid", "commit-tree", "--no-gpg-sign",
+                     tree, "-m", "t")
+        git("update-ref", "HEAD", commit)
+        self.assertEqual(subprocess.run(["git", "-C", str(inner), "rev-parse", "HEAD"], capture_output=True,
+                                        text=True).stdout.strip(), commit)     # git answers for the outer repository
+        self.assertIsNone(runlog.git_commit(inner))
+        self.assertEqual(runlog.git_commit(outer), commit)
 
     def test_the_form_check_of_schema_4_needs_the_code_block_and_a_lock_that_recomputes(self):
         path = self.dir / "log.jsonl"
@@ -353,12 +389,26 @@ class LogToolTests(unittest.TestCase):
 
 class LiveLogTests(unittest.TestCase):
     """F2, F3, F4 on the signed live logs. They are outside the repository. Without them these tests check nothing;
-    they do not skip, because tests/run_all.py accepts a bare OK only."""
+    they do not skip, because tests/run_all.py accepts a bare OK only. Each test prints the number of logs that it
+    read, or why it read none, and tests/run_all.py shows that line."""
 
     def setUp(self):
         self.dirs = live_log_dirs()
 
+    def read(self, what, dirs):
+        if dirs:
+            note(f"live logs: {what} read {len(dirs)} signed logs")
+            return
+        if self.dirs:
+            why = f"none of the {len(self.dirs)} logs found is in a p4d_ folder"
+        else:
+            src = ("FAIAS_HARNESS_RUNS" if os.environ.get("FAIAS_HARNESS_RUNS") else
+                   "runs/ of the checkout (FAIAS_HARNESS_RUNS is not set)")
+            why = f"no folder in {src} holds run_log.jsonl"
+        note(f"live logs: {what} read 0 logs, because {why}; this test checks nothing")
+
     def test_every_live_log_still_verifies_with_and_without_the_repository(self):
+        self.read("verify and verify --no-repo", self.dirs)
         for d in self.dirs:
             log, sig = d / "run_log.jsonl", d / "run_log.jsonl.sig"
             ok, msg = runlog.verify_log(log, sig)
@@ -369,6 +419,7 @@ class LiveLogTests(unittest.TestCase):
 
     def test_rescore_of_each_p4d_log_and_of_an_edited_copy(self):
         p4d = [d for d in self.dirs if d.name.startswith("p4d_")]
+        self.read("rescore of the p4d logs", p4d)
         if not p4d:
             return
         for d in p4d:

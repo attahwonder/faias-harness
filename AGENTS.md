@@ -12,7 +12,7 @@ Version 0.4 holds the design, 45 procedure records, a record checker and a prefl
 
 | Path | Content |
 |---|---|
-| `faias_harness/` | The package: `capabilities.py` (the seven capability names), `target.py` (the target interface), `profile.py` (profile loader and validator), `settings.py` (settings loader and validator, for SRD-1 and external runs), `egress.py` (the HTTP client with an allow-list), `errors.py`, `preflight.py`, `adapters/` (`base.py` shared base, call budget and retry rule; `registry.py` the channel adapters of an external run; `directline.py`, `openai_responses.py`, `a2a.py`, `json_http.py`, `openai_chat.py`, `srd1_http.py`), `engine/` (`sec001.py` items, scorer and measures; `runlog.py` run log and signature; `spike.py` the SRD-1 run; `external.py` the external run; `inspect_task.py` the Inspect task that drives a run), `emulators/` (`mcp_tools.py` the MCP tool emulator) |
+| `faias_harness/` | The package: `capabilities.py` (the seven capability names), `target.py` (the target interface), `profile.py` (profile loader and validator), `settings.py` (settings loader and validator, for SRD-1 and external runs), `egress.py` (the HTTP client with an allow-list), `errors.py`, `preflight.py`, `adapters/` (`base.py` shared base, call budget and retry rule; `registry.py` the channel adapters of an external run; `directline.py`, `openai_responses.py`, `a2a.py`, `json_http.py`, `openai_chat.py`, `srd1_http.py`), `engine/` (`sec001.py` items, scorer and measures; `runlog.py` run log and signature; `spike.py` the SRD-1 run; `external.py` the external run; `inspect_task.py` the Inspect task that drives a run), `emulators/` (`mcp_tools.py` the MCP tool emulator), `testability.py` (the testability report) |
 | `records/` | `TP-*.yaml` (45 generated records), `classification.tsv`, `OVERRIDES.yaml`, `capability_needs.yaml` (a draft input file), `SCHEMA.md`, `README.md` |
 | `targets/` | `srd1/` (profile, firm values, settings and draft specification of the example reference system; `app/` holds SRD-1 minimal: channel, orchestrator, gateway, trace store) and `examples/` (six example profiles, the settings of an external run, and a tools file for the emulator) |
 | `items/` | `TP-SEC-001.json`, the item set for TP-SEC-001 (the engine's default set, since 0.4.0), and `README.md` (what came from where) |
@@ -38,6 +38,11 @@ You need Python 3.11 or later and the packages `pyyaml`, `httpx` and `cryptograp
 | Start an engine run | `... --settings <settings.yaml> --start --sign-key <private key file>` (model calls; asks for `yes`) |
 | Make the run-signing key | `py -3.14 -X utf8 -m faias_harness.engine.runlog make-key --out <folder outside the repository>` |
 | Verify a signed log | `py -3.14 -X utf8 -m faias_harness.engine.runlog verify --log <log> --sig <log>.sig [--pubkey <file>]` |
+| Verify a log without the item set and record of this checkout | `... runlog verify --log <log> --sig <log>.sig --no-repo [--pubkey <file>]` |
+| Score each reply of a log again | `py -3.14 -X utf8 -m faias_harness.engine.runlog rescore --log <log>` (exit 1 on a difference from the recorded score) |
+| Write the SHA-256 file of a log | `py -3.14 -X utf8 -m faias_harness.engine.runlog stamp --log <log>` (prints the `ots stamp` command; runs no command and makes no network call) |
+| Write a testability report | `py -3.14 -X utf8 -m faias_harness.testability --profile <profile.yaml> --out <new folder> [--sign-key <private key file>]` (no network call) |
+| Verify a testability report | `py -3.14 -X utf8 -m faias_harness.testability verify --report <folder>/testability.json --pubkey <public key file>` |
 | Sweep for barred terms and keys | `py -3.14 -X utf8 tools/sweep_barred.py --faias <FAIAS>` |
 | Preflight of an external run | `... --profile <profile.yaml> --settings <external settings.yaml>` (no network call) |
 | Make the channel probe | `... --settings <external settings.yaml> --probes` (one call through the channel) |

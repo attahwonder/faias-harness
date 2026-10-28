@@ -15,7 +15,8 @@ Steps:
   5. the firm-values file of SRD-1 lists exactly the keys of the records
   6. the sweep for barred terms and key-like strings finds 0 hits
   7. the unit tests of the engine (settings, SRD-1 minimal, gateway, scorer, run log, signature, end to end
-     against a local stand-in model host; no outside network)
+     against a local stand-in model host; no outside network). The "[test note]" lines of the tests follow the
+     count: for example, how many signed live logs the live-log tests read (FAIAS_HARNESS_RUNS)
 """
 import argparse
 import hashlib
@@ -237,6 +238,8 @@ def main():
     m = re.search(r"Ran (\d+) tests? in", out)
     expect(rc == 0 and m and re.search(r"^OK\s*$", out, re.M), f"unit tests failed: {out[-1500:]}")
     print("  ", f"{m.group(1)} tests, OK" if m and rc == 0 else out.strip().splitlines()[-1])
+    for line in re.findall(r"\[test note\] [^\n]*", out):     # a test that read no live log says so here
+        print("  ", line)
 
     if failures:
         print(f"run_all: FAIL ({len(failures)} failure(s))")

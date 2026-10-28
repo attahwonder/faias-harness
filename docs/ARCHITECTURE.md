@@ -6,14 +6,15 @@ Harness version 0.6 (in development). This document describes the design of the 
 
 The harness is planned to run the FAIAS test procedures against an AI system in a test environment. FAIAS is the Financial AI Independent Assurance Standard. Version 1.3.4 of FAIAS has 109 test procedures, one for each Independent Review Question (FAIAS `README.md`, line 31).
 
-Version 0.5 shows the design and the direction. It has six parts that work:
+Version 0.6 (in development) shows the design and the direction. It has seven parts that work:
 
 - the **records**: one generic record for each of 45 procedures;
 - the **record checker**: it compares each record with the FAIAS source lines;
 - the **preflight**: it compares a target profile with the capability needs of each procedure;
-- the **engine**: it runs one procedure, TP-SEC-001, on SRD-1 minimal. It uses the full item set or the 20 spike items (sections 11 and 12);
+- the **engine**: it runs one procedure, TP-SEC-001, on SRD-1 minimal. It uses the full item set or the 20 spike items (sections 11 and 12). Since 0.6, the commands `rescore`, `verify --no-repo` and `stamp` work on a signed run log (section 12);
 - the **external run**: the same procedure against a deployed staging agent, through a channel adapter (section 13);
-- the **tool emulator**: an MCP server with fixed synthetic tool results and a ledger, for `tool_routing` (section 14).
+- the **tool emulator**: an MCP server with fixed synthetic tool results and a ledger, for `tool_routing` (section 14);
+- the **testability report** (0.6, section 15). `python -m faias_harness.testability` writes the preflight result of a profile as a report. The report can be signed and verified.
 
 Version 0.5 runs one procedure only. A run on the full item set is labelled "uncalibrated scorer, not a finding", and a run on the spike set "engine spike, not a finding". The channel adapters are tested against local stand-ins. Only `generic-http` has also run live, against the OpenRouter chat completions endpoint (section 13). The other four are untested against the platform they are written for. The example target SRD-1 is built only in a minimal form.
 
@@ -258,10 +259,10 @@ The engine runs TP-SEC-001 on SRD-1 minimal. Version 0.3.0 added it as a spike, 
 
 | Part | What it does |
 |---|---|
-| Code block | The header's `code` block holds the engine version, the git commit (`git rev-parse HEAD`, or null when git does not answer) and the SHA-256 of `faias_harness/engine/sec001.py` and of `records/TP-SEC-001.yaml`. The commit does not show changes that were not committed; the two file hashes do. |
+| Code block | The header's `code` block holds the engine version, the git commit (`git rev-parse HEAD`, or null when git does not answer or the folder that ran is not the top of a git checkout) and the SHA-256 of `faias_harness/engine/sec001.py` and of `records/TP-SEC-001.yaml`. The commit does not show changes that were not committed; the two file hashes do. |
 | Lock | The lock hash also covers the two file hashes, and `lock.covers` names them. `verify` recomputes the lock hash of a schema 4 or 5 log. One changed byte in the scorer file or the record file gives a different lock hash. |
 | Scorer keys | `corpus.scorer_keys` holds the marker of each C1 item and the product of each C2 and C3 item. With them, the items hash and the scores can be checked from the log alone. |
-| Bounds | M1 (overall and for each class), M2 and M3 give `upper95`, a one-sided 95% upper bound on the item rate, and `upper95_method`. For 0 successes in n items the bound is 1 - 0.05^(1/n) (`clopper_pearson_exact_zero`): 0.1129 for 25 items, 0.0226 for 131. For more successes it is the exact Clopper-Pearson bound (`clopper_pearson_exact`), found by bisection without SciPy. |
+| Bounds | M1 (overall and for each class), M2 and M3 give `upper95`, `upper95_method` and `upper95_note`. `upper95` is a one-sided 95% upper bound on the per-item success rate for items of this kind. It assumes that the items are independent draws with one success probability. The item set is hand-written, not a random sample. For 0 successes in n items the bound is 1 - 0.05^(1/n) (`clopper_pearson_exact_zero`): 0.1129 for 25 items, 0.0226 for 131. For more successes it is the exact Clopper-Pearson bound (`clopper_pearson_exact`), found by bisection without SciPy. |
 | Per-item note | `M4.per_item_note` states that at k = 3 a per-item interval is wide (0 of 3 gives 0 to 0.5615). It is not evidence alone. |
 | `rescore --log` | Scores each run's reply again with the scorer of the checkout and compares the result with the recorded score. It prints each difference and exits with 1 if there is one. It names the hash of the scorer that it used and says if it equals the hash in the log. It takes the markers and products from the log, or from the item set of the checkout for a log before schema 4. |
 | `verify --no-repo` | Checks the signature and the form without the record and the item set of the checkout. Each run must name an item of the manifest, with one request text for all its runs. For a schema 4 or 5 log, the items hash is recomputed from the manifest, the scorer keys and the requests. It prints "repository item set: not checked". The default `verify` is as before. |

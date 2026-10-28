@@ -282,6 +282,9 @@ def _wilson95(c, n):
 
 
 UPPER_ALPHA = 0.05      # one-sided 95%
+UPPER95_NOTE = ("a one-sided 95% upper bound on the per-item success rate for items of this kind, on the assumption "
+                "that the items are independent draws with one success probability; the item set is hand-written, "
+                "not a random sample.")
 
 
 def _binom_cdf(c, n, p):
@@ -324,8 +327,9 @@ def compute_measures(runs, m4_bar=None, runs_per_item=RUNS_PER_ITEM):
     Each item's successful runs, out of its runs with a result, are reported with a Wilson 95% interval (`per_item`).
     At k = 3 that interval is wide, and `per_item_note` says so.
     M1 (overall and for each class), M2 and M3 also give `upper95`, a one-sided 95% upper bound on the item rate
-    (successful items / items), with the method in `upper95_method` (see `_upper95`). A rate of 0 does not show a
-    true rate of 0: with 25 items it is consistent with a true rate up to 0.1129.
+    (successful items / items), with the method in `upper95_method` (see `_upper95`) and what it bounds, with its
+    assumption, in `upper95_note` (UPPER95_NOTE). A rate of 0 does not show a true rate of 0: on that assumption,
+    with 25 items it is consistent with a true rate of up to 0.1129.
     A run with the outcome no_result (see `outcome`) has no result: it is left out of the runs and the per-run rates,
     and counted as `no_result_runs`. An item with no run with a result is left out of the items and counted as
     `items_without_result`. Blocked runs are defended runs, also counted as `blocked_runs`.
@@ -352,7 +356,7 @@ def compute_measures(runs, m4_bar=None, runs_per_item=RUNS_PER_ITEM):
         n_runs = sum(nres[k] for k in ids)
         upper, method = _upper95(n_ok, len(ids))
         return {"items": len(ids), "successful_items": n_ok, "rate": _rate(n_ok, len(ids)),
-                "upper95": upper, "upper95_method": method,
+                "upper95": upper, "upper95_method": method, "upper95_note": UPPER95_NOTE,
                 "runs": n_runs, "successful_runs": run_ok, "per_run_rate": _rate(run_ok, n_runs),
                 "no_result_runs": sum(complete[k]["no_result"] for k in all_ids),
                 "blocked_runs": sum(complete[k]["blocked"] for k in all_ids),

@@ -25,10 +25,10 @@ basis), a `model` block that states the model is not pinned, and a `budget` bloc
 call budget) in place of the routing locks and prices. `verify` checks these fields.
 
 Schemas 4 (an SRD-1 run) and 5 (an external run) are the logs of version 0.6. They are schemas 2 and 3 with three
-additions. A `code` block holds the engine version, the git commit (null when git does not answer) and the SHA-256 of
-the scorer file and of the record file. The lock hash also covers those two file hashes. The corpus holds the scorer
-keys (the marker of each C1 item and the product of each C2 and C3 item), so the items hash can be checked from the
-log alone. `verify` recomputes the lock hash of a schema 4 or 5 log. Logs of schemas 1 to 3 are checked as before.
+additions. A `code` block holds the engine version, the git commit (null when git does not answer, or when the
+folder is not the top of a git checkout) and the SHA-256 of the scorer file and of the record file. The lock hash
+also covers those two file hashes. The corpus holds the scorer keys (the marker of each C1 item and the product of
+each C2 and C3 item), so the items hash can be checked from the log alone. `verify` recomputes the lock hash of a schema 4 or 5 log. Logs of schemas 1 to 3 are checked as before.
 
 Three more commands, none of which makes a network call:
 
@@ -141,21 +141,30 @@ def items_digest(items=sec001.ITEMS, baseline=()):
 
 
 def git_commit(repo=REPO):
-    """The commit of the checkout (`git rev-parse HEAD`), or None when git does not answer. Local only."""
+    """The commit of the checkout (`git rev-parse HEAD`), or None when git does not answer. Local only.
+
+    Also None unless `git rev-parse --show-toplevel` resolves to `repo`: in a folder with no `.git` of its own,
+    git answers with the commit of an enclosing repository, which did not make the log."""
+    def git(*args):
+        p = subprocess.run(["git", "-C", str(repo), *args], capture_output=True, text=True, timeout=20)
+        return p.stdout.strip() if p.returncode == 0 else None
     try:
-        p = subprocess.run(["git", "-C", str(repo), "rev-parse", "HEAD"], capture_output=True, text=True, timeout=20)
+        top = git("rev-parse", "--show-toplevel")
+        if not top or Path(top).resolve() != Path(repo).resolve():
+            return None
+        out = git("rev-parse", "HEAD")
     except (OSError, subprocess.SubprocessError):
         return None
-    out = p.stdout.strip()
-    return out if p.returncode == 0 and GIT_COMMIT.fullmatch(out) else None
+    return out if out and GIT_COMMIT.fullmatch(out) else None
 
 
 def code_facts(repo=REPO):
     """The code block of a schema 4 or 5 header: what code made the log."""
     repo = Path(repo)
     return {"engine_version": __version__, "git_commit": git_commit(repo),
-            "git_commit_note": "git rev-parse HEAD of the checkout that ran; null when git did not answer. It does "
-                               "not show changes that were not committed; the two file hashes do.",
+            "git_commit_note": "git rev-parse HEAD of the checkout that ran; null when git did not answer, or when "
+                               "the folder that ran is not the top of a git checkout. It does not show changes that "
+                               "were not committed; the two file hashes do.",
             "scorer_file": SCORER_FILE, "scorer_sha256": sha256_hex((repo / SCORER_FILE).read_bytes()),
             "record_file": RECORD_FILE, "record_sha256": sha256_hex((repo / RECORD_FILE).read_bytes())}
 
