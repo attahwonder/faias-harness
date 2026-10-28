@@ -45,7 +45,7 @@ You need Python 3.11 or later and the packages `pyyaml`, `httpx` and `cryptograp
 | Serve the tool emulator | `py -3.14 -X utf8 -m faias_harness.emulators.mcp_tools serve --tools <tools.yaml> --ledger <new file> [--api-key-env NAME]` |
 | Verify a tool ledger | `py -3.14 -X utf8 -m faias_harness.emulators.mcp_tools verify --ledger <ledger.jsonl>` |
 
-`--start` with a profile alone never starts a run. It prints why a run may not start, or it prints that a profile alone names no run. With `--settings`, `--start` starts an engine run on the item set in the settings. It starts only after the checks pass and you type `yes`. The exit codes are 0 (done), 2 (refused) and 3 (conditions met but no run named). Exit code 4 is `yes` not typed, and 5 is a run stopped at the cap or on an error. The tests make no model call and no outside connection. Do not run `--probes` or `--start` unless you mean to spend money. Both reach a live model host or a live agent's platform.
+`--start` with a profile alone never starts a run. It prints why a run may not start, or it prints that a profile alone names no run. With `--settings`, `--start` starts an engine run on the item set in the settings. It starts only after the checks pass and you type `yes`. The exit codes are 0 (done), 2 (refused) and 3 (conditions met but no run named). Exit code 4 is `yes` not typed, and 5 is a run stopped at the cap or on an error. The tests make no model call and no outside connection. Do not run `--probes` or `--start` unless you mean to spend money. Both can reach a live model host or a live agent's platform.
 
 ## Binding rules
 

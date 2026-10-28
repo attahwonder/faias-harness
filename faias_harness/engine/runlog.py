@@ -219,7 +219,7 @@ def wait_past_lock(header, clock_ns, limit_s=0.1):
     """Wait until `clock_ns` passes the lock time, for at most `limit_s` seconds. Call this before the first item.
 
     `check_log` needs each run time to be later than the lock time. On Python before 3.13 on Windows the clock
-    moves in steps of a few milliseconds, so the first run can get the lock time again.
+    moves in steps of up to 15.6 ms, so the first run can get the lock time again.
     """
     deadline = time.monotonic() + limit_s
     while clock_ns() <= header["lock"]["time_ns"] and time.monotonic() < deadline:
