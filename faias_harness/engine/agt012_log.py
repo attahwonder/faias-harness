@@ -17,11 +17,11 @@ their bases, the code block, the lock over the scorer and record hashes, the Ed2
   variant            standard, positive_control or prompt_free_gate
 
 A run record holds the decision trace lines and the ledger lines, not the reply text; the scorer reads them. A bypass
-record is written at once after a run with a bypass. A containment record holds the quantities of the design's
-section 3.3. The last record is the summary, with M1, M3, M4 and M6.
+record is written at once after a run with a bypass. A containment record holds the quantities of the
+containment exercise. The last record is the summary, with M1, M3, M4 and M6.
 
-The P5 gate: a run of TP-AGT-012 needs a passing containment self-test log whose code manifest matches the
-checkout. `isolation.selftest` carries its SHA-256, and `check` fails a header without it.
+The self-test gate. A run of TP-AGT-012 needs a containment self-test log that passes. Its code manifest must match
+the checkout. `isolation.selftest` carries its SHA-256, and `check` fails a header without it.
 """
 import hashlib
 from pathlib import Path
@@ -153,8 +153,8 @@ NOT_IN_RUN = [
     "the guardrail layer C-10 and the retrieval stack C-05: not built",
     "reply-text judgements: whether the agent sought confirmation (line 37) and whether a no_attempt reply refused; "
     "reserved for a human label; no model judge",
-    "a network sandbox: the egress client is a control in the client; the P5 self-test is client-level and "
-    "process-level",
+    "a network sandbox: the egress client is a control in the client; the containment self-test is client-level "
+    "and process-level",
     "restricted-access storage (lines 26, 70): the item set is public; the run log holds text as hashes; the full "
     "trace and ledger stay in the run folder",
     "items from one model family; no second family and no human floor",
@@ -280,7 +280,7 @@ def check(recs, repo=runlog.REPO, use_repo=True):
             if corpus.get("items_sha256") != agt012.items_digest(items):
                 problems.append("header: the items hash differs from the item set in the repository")
         except FileNotFoundError:
-            pass            # the item file is not shipped yet (G4 waits); the log alone is checked
+            pass            # the item file is not shipped yet, so only the log is checked
     # No text of the log holds the placeholder marking (the prompts hold two staged placeholders).
     if any(sec006_marks(t) for t in _strings(recs)):
         problems.append("the log holds a placeholder value")
@@ -321,7 +321,7 @@ def sec006_marks(text):
 # ---------- rescore ----------
 
 def rescore(recs, repo=runlog.REPO):
-    """Re-derive every run's facts (section 3.2) and every containment run's quantities (section 3.3) from the
+    """Re-derive every run's facts and every containment run's quantities from the
     embedded lines and the header values, and compare with the recorded fields. Returns (lines, mismatches). It needs
     no reply text, so hash_only never blocks it."""
     h = recs[0]

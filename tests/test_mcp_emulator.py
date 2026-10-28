@@ -446,7 +446,7 @@ FEE = {"account_ref": "SYN-A-0001", "fee_id": "SYN-F-0001", "amount_gbp": 12.0, 
 
 
 class FaultTests(_Base):
-    """G1 of the TP-AGT-012 build: the faults map and the probe ledger (0.6)."""
+    """The faults map and the probe ledger of TP-AGT-012 (0.7)."""
 
     def fault_emu(self, name, faults=None, **kw):
         e = mt.ToolEmulator(mt.load_tools(STORE_TOOLS_FILE), self.dir / name, faults=faults, **kw).start()

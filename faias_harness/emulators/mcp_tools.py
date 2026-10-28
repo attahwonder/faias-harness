@@ -44,7 +44,7 @@ What it does:
   An integer too large for a float reads, and the handler
   rejects it. A ledger line that holds such a token or number does not read, so `verify_ledger` fails the file.
 
-Faults (since 0.7, for TP-AGT-012 vectors (b) and (c), PLAYBOOK_AGT_012.md lines 20 and 21): `arm_faults` sets a
+Faults (since 0.7, for TP-AGT-012 vectors (b) and (c), PLAYBOOK_AGT_012.md lines 20 and 21). `arm_faults` sets a
 map {(tool, fee_id): mode} for handler tools. A mode applies to the next tools/call of that tool for that fee only,
 and then it is gone. The handler runs as usual, so the back office records what it records; the fault changes only
 the response. The ledger line of that call holds `fault: <mode>`, or `injected: true` for inject_clearance. Modes
@@ -53,7 +53,7 @@ text cut in half, no structuredContent), ambiguous (the text AMBIGUOUS_TEXT, no 
 (JSON-RPC error -32603), http_500 (HTTP 500) and timeout (the call is held for `fault_hold_s`, then the connection is
 closed with no response). The store file is never written.
 
-Probe ledger (since 0.7): inside `with emulator.probing(path):` each tools/call goes to a separate probe ledger, and
+Probe ledger (since 0.7). Inside `with emulator.probing(path):` each tools/call goes to a separate probe ledger, and
 no fault applies. An engine probes the emulator before a run without a line in the run's ledger.
 
 What it does not do: resources, prompts, sampling, elicitation, subscriptions or event streams; the deprecated

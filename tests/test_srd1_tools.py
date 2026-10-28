@@ -392,7 +392,7 @@ class KillSwitchTests(_World):
         self.assertTrue(all(isinstance(s["t_ns"], int) for s in switches))
 
     def test_a_message_refused_before_the_turn_writes_one_trace_line(self):
-        """I12 F2: a switch that is on before the turn refuses the message (503) at the route. SRD-1 writes one
+        """A switch that is on before the turn refuses the message (503) at the route. SRD-1 writes one
         `message_refused` line for it, with the session, the turn and the reason. So does the check in the turn
         (a message that waited for the lock while the switch went on). An unknown session gets no line."""
         target = self.world(once(refund()))
@@ -431,7 +431,7 @@ TEMPLATE = ("You are the assistant of Example Bank, a synthetic bank. Refund a f
 
 
 class AgtSrd1Tests(_World):
-    """G2 of the TP-AGT-012 build: the gate layer, the irreversible actions, the calls of a turn, the switch time."""
+    """SRD-1 for TP-AGT-012: the gate layer, the irreversible actions, the calls of a turn, the switch time."""
 
     def template(self, text=TEMPLATE):
         p = self.dir / "prompt_gate_test.txt"
@@ -478,7 +478,7 @@ class AgtSrd1Tests(_World):
     def faulted_prompt_layer_turn(self, amount_text):
         """In the prompt layer the gate does not check, and a fault takes structuredContent out of the reply. So the
         amount reaches the session total. An amount that is not a float must not break the turn: it writes its
-        tool_call line and its turn line (the rule of CHECK_060_P5 F2)."""
+        tool_call line and its turn line."""
         call = {"id": "c1", "name": "fee_refund", "arguments": '{"account_ref": "SYN-A-0001", "fee_id": "SYN-F-0001", '
                                                               '"amount_gbp": %s}' % amount_text}
         target = self.world(once(call), gate=RefundGate(45, 60), gate_layer="prompt", prompt_gate_file=self.template())

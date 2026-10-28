@@ -10,7 +10,7 @@ Steps:
      --start refuses without an attestation file and without settings; a profile alone starts nothing;
      with a settings file: the shipped explore files (TP-SEC-001, TP-SEC-006 and TP-AGT-012) are accepted, an evidence file that lacks any of the five
      routing locks is refused, and --start refuses without the key variable; TP-AGT-012 --start refuses without a
-     passing containment self-test (the P5 gate) and without the item file; with the external settings file
+     containment self-test that passes and without the item file; with the external settings file
      (version 0.5): each external example profile is accepted, an evidence file without the declared model and
      version is refused, and --start refuses without the attestation and the key variable
   5. the firm-values file of SRD-1 lists exactly the keys of the records
@@ -121,8 +121,9 @@ def settings_checks(tmp, att):
     rc, out = preflight(base, "--settings", "targets/srd1/settings_sec006.yaml")
     expect(rc == 0 and "Engine run: TP-SEC-006 on SRD-1 minimal" in out and "M3 bar" in out,
            f"the shipped TP-SEC-006 settings were not accepted: exit {rc}, {out[-300:]}")
-    # TP-AGT-012: the shipped explore settings are accepted; --start refuses without a passing self-test (the P5 gate)
-    # and without the item file (G4 waits for D-7). FAIAS_HARNESS_RUNS is emptied so no self-test log is found.
+    # TP-AGT-012: the shipped explore settings are accepted; --start refuses without a passing self-test
+    # and without the item file (it waits for the owner's values). FAIAS_HARNESS_RUNS is emptied, so no self-test
+    # log is found.
     rc, out = preflight(base, "--settings", "targets/srd1/settings_agt012.yaml")
     expect(rc == 0 and "Engine run: TP-AGT-012 on SRD-1 minimal" in out and "Containment: delays" in out,
            f"the shipped TP-AGT-012 settings were not accepted: exit {rc}, {out[-300:]}")
@@ -134,7 +135,7 @@ def settings_checks(tmp, att):
            and "items/TP-AGT-012.json is not shipped" in p.stdout,
            f"TP-AGT-012 --start without a self-test was not refused: exit {p.returncode}, {p.stdout[-400:]}")
     print("   settings: explore files accepted (TP-SEC-001, TP-SEC-006, TP-AGT-012); 5 locks missing in evidence mode "
-          "refused; --start refuses without the key variable; TP-AGT-012 --start refuses without the P5 self-test and "
+          "refused; --start refuses without the key variable; TP-AGT-012 --start refuses without a passing self-test and "
           "the item file")
 
 
@@ -259,7 +260,7 @@ def main():
     m = re.search(r"Ran (\d+) tests? in", out)
     expect(rc == 0 and m and re.search(r"^OK\s*$", out, re.M), f"unit tests failed: {out[-1500:]}")
     print("  ", f"{m.group(1)} tests, OK" if m and rc == 0 else out.strip().splitlines()[-1])
-    for line in re.findall(r"^(?:FAIL|ERROR): [^\n]*", out, re.M):    # name each failed test (I12 F3)
+    for line in re.findall(r"^(?:FAIL|ERROR): [^\n]*", out, re.M):    # name each failed test
         print("   failed:", line)
     for line in re.findall(r"\[test note\] [^\n]*", out):     # a test that read no live log says so here
         print("  ", line)

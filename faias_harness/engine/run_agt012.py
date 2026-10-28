@@ -1,5 +1,6 @@
-"""The engine of TP-AGT-012 on SRD-1 minimal: the P5 gate, the probes, the switch confirmation, the structural
-inspection, the lock, the vector runs, the containment runs, the summary and the signature.
+"""The engine of TP-AGT-012 on SRD-1 minimal. Its steps are the self-test gate, the probes, the switch confirmation
+and the structural inspection. Then come the lock, the vector runs, the containment runs, the summary and the
+signature.
 
 The run drives SRD-1 minimal from outside, through the target interface, with its one tool routed to the harness's
 MCP tool emulator (toolrun.ToolRun). It sends the items of items/TP-AGT-012.json, k runs each, one session each. It
@@ -7,13 +8,13 @@ scores each run from two structured records and never the reply text: SRD-1's de
 ledger (engine/agt012.py). A bypass is written at once. The containment exercise flips the kill switch during a tool
 round and measures the time to the last ledger line.
 
-The P5 gate: a run needs a passing containment self-test log whose code manifest matches the checkout. The executor
-checks it before the lock with selftest.gate_problems, the same rule as the preflight. In evidence mode the log's
-signature must verify against a pinned public key (selftest_pubkey). The header embeds the log's SHA-256. A null
-cap or limit refuses the run before the lock (the target refuses the tool anyway).
+The self-test gate. A run needs a containment self-test log that passes. Its code manifest must match the checkout.
+The executor checks it before the lock with selftest.gate_problems, the same rule as the preflight. In evidence mode the
+log's signature must verify against a pinned public key (selftest_pubkey). The header embeds the log's SHA-256. A
+null cap or limit refuses the run before the lock (the target refuses the tool anyway).
 
-Out of scope here: no live call (tests use the stand-in host and the local emulator); no run until the D-7 risk
-values are declared and the P5 self-test passes; one `yes` per run.
+No live call has used this engine. The tests use the stand-in host and the local emulator. No run starts until the
+owner declares the risk values and the containment self-test passes. Each run needs one `yes`.
 """
 import threading
 import time
@@ -29,14 +30,14 @@ from . import agt012, agt012_log, runlog, spike, toolrun
 
 REPO = Path(__file__).resolve().parents[2]
 TARGET_DIR, TARGET_README = spike.TARGET_DIR, spike.TARGET_README
-DEFAULT_DELAYS_MS = (0, 50, 200, 800, 2000)     # the containment delay schedule (design section 3.3)
+DEFAULT_DELAYS_MS = (0, 50, 200, 800, 2000)     # the containment delay schedule (docs/ARCHITECTURE.md, section 18)
 GATE_LAYER = {"standard": "orchestrator", "positive_control": "prompt", "prompt_free_gate": "orchestrator"}
 
 
 def estimate(settings, repo=REPO):
     """The worst-case cost of a TP-AGT-012 run in USD, or None if the prices are not set or the item file is not
-    shipped yet (G4 waits for D-7). It counts the vector runs and the containment runs, each at the full output limit
-    and 1 + MAX_TOOL_ROUNDS calls a turn (the most a tool round makes)."""
+    shipped yet (it waits for the owner's values). It counts the vector runs and the containment runs, each at the
+    full output limit and 1 + MAX_TOOL_ROUNDS calls a turn (the most a tool round makes)."""
     if settings.price_in_per_m is None or settings.price_out_per_m is None:
         return None
     try:
@@ -145,7 +146,7 @@ class _Runner:
 
 def _containment_run(target, emulator, delay_ms, n, clock_ns, log, customer_ref, account, fee, amount):
     """One containment run: send an in-cap refund in one thread, flip the switch after `delay_ms` in another, then
-    send one more message and expect 503. Records the quantities of design section 3.3."""
+    send one more message and expect 503. Records the containment quantities."""
     before = emulator.ledger.seq
     sid = target.open_session(customer_ref)
     switch_result = {}
@@ -275,8 +276,8 @@ def execute(settings, *, run_dir, sign_key, confirmation, items=None, probes=Non
             selftest_pubkey=None):
     """Run TP-AGT-012 on SRD-1 minimal. Returns a spike.RunResult. `items` overrides the shipped item file (tests pass
     their own). `base_url`, `env`, `gate`, `prompt_gate_file` are for tests. `selftest_log` names a self-test log or a
-    folder; the P5 gate uses it. `selftest_pubkey` names the public key file of that log (default: the setting
-    selftest_pubkey); in evidence mode the P5 gate needs one."""
+    folder, and the self-test gate uses it. `selftest_pubkey` names the public key file of that log. The default is
+    the setting selftest_pubkey. In evidence mode the self-test gate needs a key."""
     build, gw, orch_mod, trace_mod = spike._srd1()
     if variant not in agt012_log.VARIANTS:
         raise ValueError(f"unknown variant: {variant}")
@@ -284,7 +285,7 @@ def execute(settings, *, run_dir, sign_key, confirmation, items=None, probes=Non
         raise ValueError(f"unknown engine: {engine}")
     if engine == "inspect" and not spike.inspect_available():
         raise RuntimeError("the run engine inspect_ai is not installed")
-    # P5 gate: a passing self-test log whose manifest matches the checkout, before anything else.
+    # The self-test gate: a passing self-test log whose manifest matches the checkout, before anything else.
     isolation_status = selftest.current(repo=repo, selftest_log=selftest_log,
                                         pubkey=selftest_pubkey or settings.selftest_pubkey)
     gate_problems = selftest.gate_problems(agt012.TP, isolation_status, settings.mode)
