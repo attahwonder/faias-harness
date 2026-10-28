@@ -184,7 +184,7 @@ if __name__ == "__main__":
 
 class ReviewFixTests(_Base):
     """Fixes from the review of 22 October 2026: refused calls in the ledger, the client capabilities, the legacy
-    header, the cache fields, and refusal before the body is read."""
+    header, the cache fields, and refusal without parsing the body."""
 
     def test_refused_calls_are_in_the_ledger(self):
         e = self.emu(name="refused.jsonl")
@@ -222,12 +222,30 @@ class ReviewFixTests(_Base):
         ok = self.post(e, {"jsonrpc": "2.0", "id": 4, "method": "tools/list"}, {"Mcp-Session-Id": sid})
         self.assertEqual(ok.status_code, 200)      # a 2025-03-26 client sends no header
 
-    def test_refusal_does_not_read_the_body_and_closes(self):
+    def test_refusal_does_not_parse_the_body_and_closes(self):
         e = self.emu(name="key.jsonl", api_key_env="EMU_KEY", env={"EMU_KEY": FAKE_KEY_VALUE})
         r = self.post(e, {"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {}})
         self.assertEqual((r.status_code, r.headers.get("Connection")), (401, "close"))
         r2 = self.post(e, {"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {}}, {"X-Api-Key": FAKE_KEY_VALUE})
         self.assertEqual(r2.status_code, 200)
+
+    def test_a_refused_body_is_dropped_so_the_reply_arrives(self):
+        """The refusal reads and drops the declared body before the close. Without that, the close resets the
+        connection, and the client can lose the reply (a rare ReadError in self-test probe S11)."""
+        import socket
+        import time
+        e = self.emu(name="origin.jsonl")
+        body = b"x" * 500_000
+        head = (f"POST {e.path} HTTP/1.1\r\nHost: {e.host}:{e.port}\r\nOrigin: https://other.test\r\n"
+                f"Content-Type: application/json\r\nContent-Length: {len(body)}\r\n\r\n").encode("ascii")
+        data = b""
+        with socket.create_connection((e.host, e.port), timeout=10) as s:
+            s.sendall(head + body)
+            time.sleep(0.3)             # a reset, if one comes, now arrives before the reply is read
+            while chunk := s.recv(65536):
+                data += chunk
+        self.assertTrue(data.startswith(b"HTTP/1.1 403"), data[:80])
+        self.assertIn(b"origin not allowed", data)
 
 
 STORE_TOOLS_FILE = REPO / "targets" / "examples" / "mcp_tools_store.yaml"
@@ -310,6 +328,61 @@ class HandlerTests(_Base):
                          ["structuredContent"]["status"], "recorded")
         with self.assertRaises(ValueError):
             mt.ToolEmulator(mt.load_tools(STORE_TOOLS_FILE), self.dir / "missing.jsonl", store=self.dir / "nope.yaml")
+
+    def raw_call(self, e, amount_text, mid=1):
+        """A tools/call whose amount is the JSON text given, as a client may send it (CHECK_060_P5 F1 and F2)."""
+        params = {"name": "fee_refund", "arguments": {"account_ref": "SYN-A-0001", "fee_id": "SYN-F-0001",
+                                                      "amount_gbp": "AMOUNT", "reason": "r"}, "_meta": modern_meta()}
+        body = json.dumps({"jsonrpc": "2.0", "id": mid, "method": "tools/call", "params": params})
+        return self.http.post(e.url, content=body.replace('"AMOUNT"', amount_text).encode("utf-8"), headers={
+            "Content-Type": "application/json", "Accept": "application/json, text/event-stream",
+            "MCP-Protocol-Version": "2026-07-28", "Mcp-Method": "tools/call", "Mcp-Name": "fee_refund"})
+
+    def test_nan_infinity_and_a_number_out_of_range_are_not_json_and_not_recorded(self):
+        e = self.store_emu()
+        for text in ("NaN", "Infinity", "-Infinity", "1e400"):
+            with self.subTest(amount=text):
+                r = self.raw_call(e, text)
+                self.assertEqual((r.status_code, r.json()["error"]["code"]), (400, mt.PARSE_ERROR))
+        self.assertEqual(mt.read_ledger(e.ledger.path), [])
+        out = []
+        for i, text in enumerate(("-12.0", "0", "1" + "0" * 400, "12.0"), 1):
+            out.append(self.raw_call(e, text, mid=i).json()["result"]["structuredContent"])
+        self.assertEqual([(x["status"], x.get("reason")) for x in out],
+                         [("rejected", "amount_gbp must be above zero"), ("rejected", "amount_gbp must be above zero"),
+                          ("rejected", "the amount differs from the fee"), ("recorded", None)])
+        self.assertEqual([x["status"] for x in mt.read_ledger(e.ledger.path)], ["rejected"] * 3 + ["recorded"])
+        self.assertTrue(mt.verify_ledger(e.ledger.path)[0])
+        handler = mt.handlers_mod.FeeRefund(mt.handlers_mod.load_store(STORE_FILE)[0])
+        for v in (float("nan"), float("inf"), float("-inf")):
+            self.assertEqual(handler.call({"account_ref": "SYN-A-0001", "fee_id": "SYN-F-0001", "amount_gbp": v}),
+                             ({"status": "rejected", "reason": "amount_gbp must be a number"}, True))
+
+    def test_the_ledger_writes_and_reads_strict_json_only(self):
+        e = self.store_emu()
+        self.call(e, {"account_ref": "SYN-A-0001", "fee_id": "SYN-F-0001", "amount_gbp": 12.0})
+        with self.assertRaises(ValueError):
+            e.ledger.append({"tool": "fee_refund", "arguments": {"amount_gbp": float("nan")}})
+        self.call(e, {"account_ref": "SYN-A-0001", "fee_id": "SYN-F-0001", "amount_gbp": 12.0}, mid=2)
+        self.assertEqual([x["seq"] for x in mt.read_ledger(e.ledger.path)], [1, 2])   # no gap after the refused line
+        self.assertTrue(mt.verify_ledger(e.ledger.path)[0])
+        bad = self.dir / "nan_ledger.jsonl"
+        bad.write_bytes(e.ledger.path.read_bytes().replace(b'"amount_gbp":12.0', b'"amount_gbp":NaN', 1))
+        ok, problems = mt.verify_ledger(bad)
+        self.assertEqual((ok, problems), (False, ["cannot read the ledger (ValueError)"]))
+        big = self.dir / "big_ledger.jsonl"          # re-check R1: 1e400 reads as an infinity
+        big.write_bytes(e.ledger.path.read_bytes().replace(b'"amount_gbp":12.0', b'"amount_gbp":1e400', 1))
+        self.assertEqual(mt.verify_ledger(big), (False, ["cannot read the ledger (ValueError)"]))
+
+    def test_a_store_fee_that_is_not_a_finite_number_above_zero_is_refused(self):
+        """Re-check R3: a NaN fee would equal every amount, so the handler refuses the store."""
+        def store(fee):
+            return {"accounts": [{"account_ref": "SYN-A-0001", "fees": [{"fee_id": "SYN-F-0001", "amount_gbp": fee}]}]}
+        for fee in (float("nan"), float("inf"), float("-inf"), 0, -12.0, "12.0", True, None):
+            with self.subTest(fee=fee):
+                with self.assertRaises(mt.handlers_mod.StoreError):
+                    mt.handlers_mod.FeeRefund(store(fee))
+        self.assertEqual(mt.handlers_mod.FeeRefund(store(12.0)).fees, {("SYN-A-0001", "SYN-F-0001"): 12.0})
 
 
 class SyntheticBankTests(unittest.TestCase):

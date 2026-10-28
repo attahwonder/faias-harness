@@ -30,14 +30,18 @@ What it does:
   an Mcp-Session-Id. Every response is a single JSON object (no event stream).
 - It offers tools only: tools/list and tools/call, with server/discover (modern) or initialize (legacy), and ping.
 - It refuses a request whose Origin header is present and not on the allowed list (HTTP 403), and, with an API key
-  variable set, a request without the matching key header (HTTP 401). These checks use the headers only: a refused
-  body is never read, and the connection is closed. The key comes from an environment variable and never goes in
+  variable set, a request without the matching key header (HTTP 401). These checks use the headers only. A refused
+  body is read and dropped, never parsed. Then the connection is closed. The key comes from an environment variable and never goes in
   the ledger or a message. A connection that sends nothing for 15 seconds is closed; at most 256 legacy sessions
   are kept.
 - It appends one line to the ledger for each tools/call, including a call that it refuses (an unknown tool, or
   arguments that are not an object): the time, the era, the protocol version, the tool, the arguments, whether the
   result is an error, the reason for a refusal, and a hash chained to the line before. `verify_ledger` finds an
   edited, removed or reordered line. It does not stop a person who rewrites the whole file.
+- It reads and writes JSON as RFC 8259 defines it. A body that holds NaN, Infinity or -Infinity is not JSON. It
+  gets HTTP 400 with error -32700 and no ledger line. So does a number such as 1e400, which reads as an infinity.
+  An integer too large for a float reads, and the handler
+  rejects it. A ledger line that holds such a token or number does not read, so `verify_ledger` fails the file.
 
 Faults (since 0.6, for TP-AGT-012 vectors (b) and (c), PLAYBOOK_AGT_012.md lines 20 and 21): `arm_faults` sets a
 map {(tool, fee_id): mode} for handler tools. A mode applies to the next tools/call of that tool for that fee only,
@@ -175,7 +179,13 @@ def load_tools(path):
 # ---------- ledger ----------
 
 def _canonical(obj):
-    return json.dumps(obj, sort_keys=True, ensure_ascii=False, separators=(",", ":"))
+    """JSON as RFC 8259 defines it: a NaN or an infinity raises ValueError."""
+    return json.dumps(obj, sort_keys=True, ensure_ascii=False, separators=(",", ":"), allow_nan=False)
+
+
+def _not_json(token):
+    """parse_constant for json.loads: NaN, Infinity and -Infinity are not JSON."""
+    raise ValueError(f"{token} is not a JSON number")
 
 
 def _iso(ns):
@@ -199,12 +209,12 @@ class Ledger:
 
     def append(self, entry):
         with self._lock:
-            self.seq += 1
             ns = time.time_ns()
-            line = {"seq": self.seq, "t_ns": ns, "time": _iso(ns), **entry, "prev": self.head}
+            line = {"seq": self.seq + 1, "t_ns": ns, "time": _iso(ns), **entry, "prev": self.head}
             line["hash"] = hashlib.sha256((self.head + _canonical(line)).encode("utf-8")).hexdigest()
-            with open(self.path, "ab") as f:
+            with open(self.path, "ab") as f:      # a refused line (ValueError above) leaves the chain as it was
                 f.write(_canonical(line).encode("utf-8") + b"\n")
+            self.seq += 1
             self.head = line["hash"]
             return line
 
@@ -212,7 +222,10 @@ class Ledger:
 def read_ledger(path, tool=None):
     """The ledger entries, optionally for one tool only. This is what `read_tool_ledger` of the target interface
     returns for a target whose tool was wired to this emulator."""
-    entries = [json.loads(x) for x in Path(path).read_text(encoding="utf-8").splitlines() if x.strip()]
+    entries = [json.loads(x, parse_constant=_not_json) for x in Path(path).read_text(encoding="utf-8").splitlines()
+               if x.strip()]
+    for e in entries:
+        _canonical(e)       # 1e400 reads as an infinity, which parse_constant does not see: ValueError
     return [e for e in entries if tool is None or e.get("tool") == tool]
 
 
@@ -332,12 +345,35 @@ class ToolEmulator:
                 if data:
                     self.wfile.write(data)
 
-            def _refuse(self, status, message):
-                """Refuse before the body is read, and close the connection so it cannot fall out of step."""
+            def _refuse(self, status, message, drop_body=True):
+                """Refuse the request and close the connection, so that it cannot fall out of step.
+
+                The body is not parsed. The declared body (at most MAX_BODY bytes) is read and dropped first. If
+                bytes stay unread, the close sends a reset. On Windows, the reset can reach the client before the
+                reply."""
+                if drop_body:
+                    self._drop_body()
                 self.close_connection = True
                 self._send(status, {"jsonrpc": "2.0", "error": {"code": INVALID_REQUEST, "message": message}},
                            {"Connection": "close"})
                 return False
+
+            def _drop_body(self):
+                """Read and drop the declared body. It is never parsed. A timeout or a reset ends the read."""
+                try:
+                    left = int(self.headers.get("Content-Length") or 0)
+                except ValueError:
+                    return
+                if not 0 < left <= MAX_BODY:
+                    return
+                try:
+                    while left > 0:
+                        chunk = self.rfile.read(min(65536, left))
+                        if not chunk:
+                            return
+                        left -= len(chunk)
+                except OSError:
+                    return
 
             def _gate(self):
                 """Path, Origin and key checks, from the headers only. Returns True if the request may go on."""
@@ -366,18 +402,19 @@ class ToolEmulator:
                     self._send(405 if not sid else 404, None, {"Allow": "POST"})
 
             def do_POST(self):
-                if not self._gate():                     # headers only: an unauthorised body is never read
+                if not self._gate():                     # headers only: an unauthorised body is never parsed
                     return
                 try:
                     n = int(self.headers.get("Content-Length") or 0)
                 except ValueError:
                     n = -1
                 if n < 0 or n > MAX_BODY:
-                    self._refuse(413, "body too large")
+                    self._refuse(413, "body too large", drop_body=False)
                     return
                 raw = self.rfile.read(n)
                 try:
-                    msg = json.loads(raw.decode("utf-8"))
+                    msg = json.loads(raw.decode("utf-8"), parse_constant=_not_json)
+                    _canonical(msg)         # 1e400 reads as an infinity: refused as NaN is
                 except (ValueError, UnicodeDecodeError):
                     self._send(400, {"jsonrpc": "2.0", "id": None, "error": {"code": PARSE_ERROR, "message": "parse error"}})
                     return

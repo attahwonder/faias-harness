@@ -24,8 +24,10 @@ routing locks (`only`, `quantizations`) or tool definitions hash differ from the
 differs, or a baseline log that is not in evidence mode.
 With a settings file of SRD-1 it also prints one line on the containment self-test (faias_harness/selftest): the result,
 time and commit of the newest self-test log (--selftest-log, or the folders of FAIAS_HARNESS_RUNS, or runs/), and
-whether its code manifest matches this checkout. For TP-AGT-012 and TP-DAT-009, --start refuses without a verified,
-passing log of this code. For other procedures the line is information only.
+whether its code manifest matches this checkout. The signature verifies against the public key that
+--selftest-pubkey or the setting `selftest_pubkey` names; with neither, the line says "(key not pinned)". For
+TP-AGT-012 and TP-DAT-009, --start refuses without a verified, passing log of this code. In evidence mode it also
+refuses them without a pinned key. For other procedures the line is information only.
 
 With --settings <settings.yaml> of `kind: external` (version 0.5), it checks an external run instead: TP-SEC-001
 against a deployed staging agent, through the channel adapter that the profile names (docs/ARCHITECTURE.md,
@@ -489,6 +491,9 @@ def main(argv=None, *, input_fn=input, gateway_factory=_default_gateway, executo
                     help="with --settings: the run variant; prompt_free_gate applies to TP-AGT-012 only")
     ap.add_argument("--selftest-log", help="with --settings: a containment self-test log, or a folder that holds one "
                                            "(default: the folders of FAIAS_HARNESS_RUNS, or runs/)")
+    ap.add_argument("--selftest-pubkey", help="with --settings: the public key file that the self-test log's signature "
+                                              "must verify against (default: selftest_pubkey in the settings; without "
+                                              "one, the key is not pinned)")
     a = ap.parse_args(argv)
     try:
         profile = load_profile(a.profile)
@@ -533,7 +538,8 @@ def main(argv=None, *, input_fn=input, gateway_factory=_default_gateway, executo
         else:
             est = spike.estimate(settings)
         settings_report(settings, est)
-        isolation = selftest.current(selftest_log=a.selftest_log)
+        isolation = selftest.current(selftest_log=a.selftest_log,
+                                     pubkey=a.selftest_pubkey or settings.selftest_pubkey)
         print(selftest.preflight_line(isolation))
         if settings.procedure == SEC006:
             sec006_label, lines, base_problems = sec006_baseline(settings, variant)
@@ -562,7 +568,7 @@ def main(argv=None, *, input_fn=input, gateway_factory=_default_gateway, executo
         if settings.procedure == AGT012:
             problems += agt012_start_problems(settings)
         from . import selftest
-        problems += selftest.gate_problems(settings.procedure, isolation)     # TP-AGT-012 and TP-DAT-009 only
+        problems += selftest.gate_problems(settings.procedure, isolation, settings.mode)   # TP-AGT-012, TP-DAT-009
     if a.probes and not a.start:
         problems = [p for p in problems if "attestation" not in p and "signing" not in p]
     if problems:
@@ -611,7 +617,8 @@ def main(argv=None, *, input_fn=input, gateway_factory=_default_gateway, executo
     exec_kwargs = dict(settings=settings, run_dir=run_dir, sign_key=a.sign_key, confirmation=confirmation,
                        probes=probes, prior_spent_usd=gateway.cap.spent_usd, variant=variant)
     if settings.procedure == AGT012:
-        exec_kwargs.update(selftest_log=a.selftest_log, delays_ms=settings.containment_plan()[0])
+        exec_kwargs.update(selftest_log=a.selftest_log, selftest_pubkey=a.selftest_pubkey,
+                           delays_ms=settings.containment_plan()[0])
     result = executor(**exec_kwargs)
     s = result.summary
     print(f"Run {result.status}. Calls {s.get('model_calls')}, cost USD {s.get('cost_usd')}. Label: {s.get('label')}.")

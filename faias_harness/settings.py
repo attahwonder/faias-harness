@@ -29,6 +29,9 @@ The settings `tools_enabled` and `tool_key_env` (version 0.6) turn on SRD-1's on
 by default. With tools on, the engine serves the tool through the harness's MCP tool emulator and generates a key
 for it in the run; `tool_key_env` names the environment variable that carries that key to SRD-1. They enter the
 settings hash only when `tools_enabled` is true, so every file without them keeps its settings hash.
+
+The setting `selftest_pubkey` (version 0.6) names the public key file that the containment self-test log's signature
+must verify against (selftest/__init__.py). It enters the settings hash only when it is set.
 """
 import hashlib
 import json
@@ -43,7 +46,7 @@ TOP_REQUIRED = ["provider", "model_id", "mode", "routing", "price_in_per_m", "pr
                 "api_key_env"]
 TOP_OPTIONAL = ["max_tokens", "reviewer_values", "temperature", "seed", "runs_per_item", "item_set", "kind",
                 "procedure", "store_replies", "m4_baseline_log", "m4_baseline_pubkey", "tools_enabled",
-                "tool_key_env", "containment", "halt_on_bypass"]
+                "tool_key_env", "containment", "halt_on_bypass", "selftest_pubkey"]
 RUNS_MIN, RUNS_MAX, RUNS_DEFAULT = 3, 20, 3     # three is the FAIAS minimum (PLAYBOOK_SEC_001.md line 27)
 # The item set of a run: the full set in items/TP-SEC-001.json (the default), or the 20 items of the engine spike.
 ITEM_SETS, ITEM_SET_DEFAULT = ("TP-SEC-001", "spike"), "TP-SEC-001"
@@ -100,6 +103,7 @@ class Settings:
     containment_delays_ms: tuple = ()      # TP-AGT-012 only; the delays of the containment exercise
     containment_runs: object = None        # TP-AGT-012 only; runs per delay bracket (default: runs_per_item)
     halt_on_bypass: bool = False           # TP-AGT-012 only; stop the run after the first bypass (default false)
+    selftest_pubkey: object = None
     kind = "srd1"           # a class attribute: not in the canonical content, so the settings hash is unchanged
 
     def routing(self):
@@ -139,6 +143,8 @@ class Settings:
             out.update(procedure=self.procedure,
                        containment={"delays_ms": list(self.containment_delays_ms), "runs": self.containment_runs},
                        halt_on_bypass=self.halt_on_bypass)
+        if self.selftest_pubkey is not None:
+            out["selftest_pubkey"] = self.selftest_pubkey
         return out
 
     def containment_plan(self):
@@ -263,6 +269,9 @@ def validate(raw):
         problems.append("tools_enabled: tool_key_env is not set (the variable that carries the tool server's key)")
     elif te is True and tk == raw.get("api_key_env"):
         problems.append("tool_key_env must differ from api_key_env: the tool server never gets the model key")
+    sp = raw.get("selftest_pubkey")
+    if sp is not None and not (isinstance(sp, str) and sp.strip()):
+        problems.append("selftest_pubkey must be the path of a public key file, or null")
     t = raw.get("temperature")
     if t is not None and not (_num(t) and 0 <= t <= 2):
         problems.append("temperature must be a number from 0 to 2 or null")
@@ -379,6 +388,7 @@ def from_raw(raw):
         tools_enabled=raw.get("tools_enabled", False), tool_key_env=raw.get("tool_key_env"),
         containment_delays_ms=tuple(cont.get("delays_ms") or ()), containment_runs=cont.get("runs"),
         halt_on_bypass=raw.get("halt_on_bypass", False),
+        selftest_pubkey=raw.get("selftest_pubkey"),
     )
 
 

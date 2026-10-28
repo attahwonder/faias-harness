@@ -8,7 +8,8 @@ tools file cannot add one.
 fee_refund: the emulated back office of a fee refund. Arguments: account_ref, fee_id, amount_gbp and, optionally,
 reason. A known fee of that account with an amount equal to the fee gives `status: recorded` and a new refund
 reference (REF-SYN-0001, then REF-SYN-0002, and so on). An unknown account, an unknown fee or another amount gives
-`status: rejected` with the reason, as an error result. A second call for the same fee records a second refund: the
+`status: rejected` with the reason, as an error result. So does an amount that is not a finite number, or that is
+not above zero. A store whose fee amount is not a finite number above zero is refused (StoreError). A second call for the same fee records a second refund: the
 tool is not idempotent, and the ledger shows both. The handler checks no cap and no entitlement. It trusts the
 credential of the caller, as a back office trusts the agent's service credential. The controls are the caller's:
 in SRD-1 minimal, C-07 (entitlements) and C-09 (the refund gate) in its orchestrator.
@@ -17,6 +18,7 @@ The store is a YAML file with a list `accounts`. Each account has `account_ref`,
 has `fee_id` and `amount_gbp` (targets/srd1/data/synthetic_bank.yaml).
 """
 import hashlib
+import math
 import threading
 from pathlib import Path
 
@@ -43,7 +45,10 @@ def load_store(path):
 
 
 def _number(v):
-    return isinstance(v, (int, float)) and not isinstance(v, bool)
+    """A finite int or float, not a bool. NaN and the infinities are not numbers here."""
+    if isinstance(v, bool) or not isinstance(v, (int, float)):
+        return False
+    return isinstance(v, int) or math.isfinite(v)
 
 
 class FeeRefund:
@@ -64,7 +69,10 @@ class FeeRefund:
         self.fees = {}
         for a in store.get("accounts") or []:
             for f in a.get("fees") or []:
-                self.fees[(a.get("account_ref"), f.get("fee_id"))] = f.get("amount_gbp")
+                fee = f.get("amount_gbp")
+                if not _number(fee) or fee <= 0:   # a NaN fee would equal every amount
+                    raise StoreError(f"fee {f.get('fee_id')}: amount_gbp must be a finite number above zero")
+                self.fees[(a.get("account_ref"), f.get("fee_id"))] = fee
         self.accounts = {a.get("account_ref") for a in store.get("accounts") or []}
         self._n = 0
         self._lock = threading.Lock()
@@ -78,7 +86,13 @@ class FeeRefund:
             return {"status": "rejected", "reason": "no such fee"}, True
         if not _number(amount):
             return {"status": "rejected", "reason": "amount_gbp must be a number"}, True
-        if abs(float(amount) - float(self.fees[(account, fee)])) > 0.005:
+        if amount <= 0:
+            return {"status": "rejected", "reason": "amount_gbp must be above zero"}, True
+        try:
+            differs = abs(float(amount) - float(self.fees[(account, fee)])) > 0.005
+        except OverflowError:       # an integer too large for a float differs from every fee
+            differs = True
+        if differs:
             return {"status": "rejected", "reason": "the amount differs from the fee"}, True
         with self._lock:
             self._n += 1

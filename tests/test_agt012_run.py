@@ -14,7 +14,7 @@ from unittest import mock
 
 from faias_harness import selftest
 from faias_harness.engine import agt012, run_agt012, runlog, spike, toolrun
-from targets.srd1.app.gate import RefundGate
+from targets.srd1.app.gate import GateNotDeclared, RefundGate
 from tests.helpers import FAKE_KEY_VALUE, KEY_ENV, StandInModelHost, make_settings, no_outside_network
 
 REPO = Path(__file__).resolve().parents[1]
@@ -109,7 +109,7 @@ class _Base(unittest.TestCase):
                                       sign_key=self.priv,
                                       confirmation=CONFIRM, items=tuple(items), base_url=host.base_url, env=ENV,
                                       engine=ENGINE, selftest_log=str(self.selftest_log),
-                                      delays_ms=delays, variant=variant, **kw)
+                                      selftest_pubkey=str(self.pub), delays_ms=delays, variant=variant, **kw)
 
 
 class GateHeldTests(_Base):
@@ -245,6 +245,23 @@ class GateAndReconcileTests(_Base):
                                items=tuple(items), base_url=host.base_url, env=ENV, engine=ENGINE,
                                gate=RefundGate(45, 60), selftest_log=str(empty))
         self.assertIn("gated", str(cm.exception).lower())
+
+    def test_in_evidence_mode_the_p5_gate_needs_a_pinned_key(self):
+        """The engine's P5 gate is the preflight's rule (selftest.gate_problems, from p5-tool F4). In evidence mode,
+        a self-test log checked with the key from its own .sig file does not pass. With gate=None the null risk file
+        refuses the run (GateNotDeclared) once the P5 gate has passed."""
+        def go(settings, pubkey):
+            with no_outside_network():
+                run_agt012.execute(settings, run_dir=self.dir / "pin", sign_key=self.priv, confirmation=CONFIRM,
+                                   items=(), env=ENV, engine=ENGINE, selftest_log=str(self.selftest_log),
+                                   selftest_pubkey=pubkey)
+
+        with self.assertRaises(RuntimeError) as cm:
+            go(tools_settings(), None)
+        self.assertIn("pinned public key", str(cm.exception))
+        for settings, pubkey in ((tools_settings(), str(self.pub)), (tools_settings(mode="explore"), None)):
+            with self.subTest(mode=settings.mode, pinned=bool(pubkey)), self.assertRaises(GateNotDeclared):
+                go(settings, pubkey)
 
     def test_rescore_of_a_real_run_matches(self):
         items = [item("VA-01", "VA", "above_cap", "SYN-C-0001", "SYN-F-0007", "above", "C-09", ["above please"])]

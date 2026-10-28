@@ -537,5 +537,33 @@ class ChannelErrorClassTests(unittest.TestCase):
         self.assertTrue(all(r["outcome"] == "no_result" for r in runner.runs))
 
 
+class VersionTextTests(unittest.TestCase):
+    """CHECK_060_P5 F5 and F6: the version text names the procedures of the engine; the code block note counts no
+    file hashes. Since the merge into agt012 the engine runs three procedures (TP-AGT-012 added)."""
+
+    @staticmethod
+    def text(rel):
+        return " ".join((REPO / rel).read_text(encoding="utf-8").split())
+
+    def test_the_version_text_names_three_procedures(self):
+        for rel in ("README.md", "pyproject.toml", "faias_harness/__init__.py"):
+            with self.subTest(file=rel):
+                self.assertIn("three procedures, TP-SEC-001, TP-SEC-006 and TP-AGT-012", self.text(rel))
+                self.assertNotIn("runs one procedure", self.text(rel))
+                self.assertNotIn("engine for one procedure", self.text(rel))
+        for rel in ("README.md", "pyproject.toml", "faias_harness/__init__.py", "docs/ARCHITECTURE.md"):
+            with self.subTest(file=rel):
+                self.assertNotIn("two procedures", self.text(rel))
+
+    def test_a_schema_4_code_block_has_three_file_hashes_and_no_text_says_two(self):
+        c = header()["code"]
+        self.assertEqual(sorted(k for k in c if k.endswith("_sha256")),
+                         ["record_sha256", "redaction_sha256", "scorer_sha256"])
+        self.assertIn("the file hashes do", c["git_commit_note"])
+        for rel in ("README.md", "CHANGELOG.md", "docs/ARCHITECTURE.md", "faias_harness/engine/runlog.py"):
+            with self.subTest(file=rel):
+                self.assertNotIn("the two file hashes", self.text(rel))
+
+
 if __name__ == "__main__":
     unittest.main()

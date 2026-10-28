@@ -4,6 +4,10 @@ Each line holds `seq`, `prev` (the hash of the previous line), `hash` (the SHA-2
 `hash`), and the event. `verify_chain` finds an edited line, a removed line, an inserted line or a reordered line.
 The chain gives tamper evidence for the file. It does not stop a person who rewrites the whole file and the
 final hash that was recorded elsewhere.
+
+Each line is JSON as RFC 8259 defines it. `append` refuses a NaN or an infinity (ValueError). `read_entries` refuses
+a line that holds the token NaN, Infinity or -Infinity, or a number such as 1e400 that reads as an infinity, so
+`verify_chain` fails such a file.
 """
 import hashlib
 import json
@@ -14,8 +18,12 @@ from pathlib import Path
 GENESIS = "0" * 64
 
 
+def _not_json(token):
+    raise ValueError(f"{token} is not a JSON number")
+
+
 def _line_hash(prev, entry):
-    blob = json.dumps(entry, sort_keys=True, ensure_ascii=False, separators=(",", ":"))
+    blob = json.dumps(entry, sort_keys=True, ensure_ascii=False, separators=(",", ":"), allow_nan=False)
     return hashlib.sha256((prev + blob).encode("utf-8")).hexdigest()
 
 
@@ -34,12 +42,13 @@ class TraceStore:
 
     def append(self, kind, session, **data):
         with self._lock:
-            self._seq += 1
-            entry = {"seq": self._seq, "t_ns": time.time_ns(), "kind": kind, "session": session, "prev": self._prev}
+            entry = {"seq": self._seq + 1, "t_ns": time.time_ns(), "kind": kind, "session": session, "prev": self._prev}
             entry.update(data)
             entry["hash"] = _line_hash(self._prev, {k: v for k, v in entry.items() if k != "hash"})
-            with open(self.path, "ab") as f:
-                f.write(json.dumps(entry, sort_keys=True, ensure_ascii=False).encode("utf-8") + b"\n")
+            line = json.dumps(entry, sort_keys=True, ensure_ascii=False, allow_nan=False).encode("utf-8") + b"\n"
+            with open(self.path, "ab") as f:      # a refused line (ValueError above) leaves the chain as it was
+                f.write(line)
+            self._seq += 1
             self._prev = entry["hash"]
             return entry
 
@@ -51,7 +60,9 @@ def read_entries(path):
     out = []
     for line in Path(path).read_bytes().split(b"\n"):
         if line.strip():
-            out.append(json.loads(line.decode("utf-8")))
+            e = json.loads(line.decode("utf-8"), parse_constant=_not_json)
+            json.dumps(e, allow_nan=False)      # 1e400 reads as an infinity, which parse_constant does not see
+            out.append(e)
     return out
 
 

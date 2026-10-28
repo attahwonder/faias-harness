@@ -378,9 +378,11 @@ def find_logs(roots):
     return out
 
 
-def current(repo=REPO, selftest_log=None):
+def current(repo=REPO, selftest_log=None, pubkey=None):
     """The newest self-test log under the roots, checked: its result, time and commit, whether its signature and form
-    verify, and whether its code manifest matches this checkout. None when no log is found."""
+    verify, and whether its code manifest matches this checkout. None when no log is found. `pubkey` names the public
+    key file that the signature must verify against (`pinned`). With no pubkey, the check uses the key in the log's own
+    .sig file. Then it shows integrity, not who signed."""
     repo = Path(repo)
     best = None
     for path in find_logs(_roots(selftest_log, repo)):
@@ -399,13 +401,13 @@ def current(repo=REPO, selftest_log=None):
     h, s = recs[0], recs[-1]
     sig = path.with_name(path.name + ".sig")
     if sig.is_file():
-        verified, message = runlog.verify_log(path, sig, repo=repo)
+        verified, message = runlog.verify_log(path, sig, pubkey, repo=repo)
     else:
         problems = check(path, recs, repo=repo)
         verified, message = False, "not signed" + (": " + "; ".join(problems) if problems else "")
     return {"path": str(path), "result": s.get("result") if s.get("type") == "summary" else None,
             "time": (h.get("lock") or {}).get("time"), "commit": (h.get("code") or {}).get("git_commit"),
-            "verified": verified, "message": message,
+            "verified": verified, "message": message, "pinned": bool(pubkey) and sig.is_file(),
             "manifest_matches": (h.get("code_manifest") or {}).get("sha256") == scan_mod.code_manifest(repo)["sha256"]}
 
 
@@ -413,13 +415,17 @@ def preflight_line(status):
     if status is None:
         return "Isolation self-test: none found"
     shown = status["result"] if status["verified"] else f"{status['result']} (not verified: {status['message']})"
+    if not status.get("pinned"):
+        shown += " (key not pinned)"
     return (f"Isolation self-test: {shown} at {status['time']}, commit {status['commit'] or 'not recorded'}, "
             f"code manifest matches: {'yes' if status['manifest_matches'] else 'no'}")
 
 
-def gate_problems(procedure, status):
+def gate_problems(procedure, status, mode=None):
     """Why a run of `procedure` may not start (empty if it may). TP-AGT-012 and TP-DAT-009 need a verified,
-    passing self-test log whose code manifest matches the checkout. Other procedures are not gated."""
+    passing self-test log whose code manifest matches the checkout. In evidence mode the signature must also verify
+    against a pinned public key (--selftest-pubkey, or selftest_pubkey in the settings). Other procedures are not
+    gated."""
     if procedure not in GATED:
         return []
     if status is None:
@@ -427,6 +433,10 @@ def gate_problems(procedure, status):
     out = []
     if not status["verified"]:
         out.append(f"{procedure} needs a verified isolation self-test log: {status['message']}")
+    if mode == "evidence" and not status.get("pinned"):
+        out.append(f"{procedure} in evidence mode needs the self-test log verified with a pinned public key "
+                   "(--selftest-pubkey, or selftest_pubkey in the settings); the key in the log's own .sig file "
+                   "shows integrity, not who signed")
     if status["result"] != "PASS":
         out.append(f"{procedure} needs a passing isolation self-test log; the newest one is {status['result']}")
     if not status["manifest_matches"]:

@@ -8,8 +8,9 @@ ledger (engine/agt012.py). A bypass is written at once. The containment exercise
 round and measures the time to the last ledger line.
 
 The P5 gate: a run needs a passing containment self-test log whose code manifest matches the checkout. The executor
-checks it before the lock, and the header embeds its SHA-256. A null cap or limit refuses the run before the lock
-(the target refuses the tool anyway).
+checks it before the lock with selftest.gate_problems, the same rule as the preflight. In evidence mode the log's
+signature must verify against a pinned public key (selftest_pubkey). The header embeds the log's SHA-256. A null
+cap or limit refuses the run before the lock (the target refuses the tool anyway).
 
 Out of scope here: no live call (tests use the stand-in host and the local emulator); no run until the D-7 risk
 values are declared and the P5 self-test passes; one `yes` per run.
@@ -269,10 +270,12 @@ def _entitlement_matrix(entitlements, target):
 
 def execute(settings, *, run_dir, sign_key, confirmation, items=None, probes=None, base_url=None, env=None,
             clock_ns=time.time_ns, repo=REPO, prior_spent_usd=0.0, variant="standard", engine="inspect", gate=None,
-            selftest_log=None, delays_ms=DEFAULT_DELAYS_MS, objective_s=None, prompt_gate_file=None):
+            selftest_log=None, delays_ms=DEFAULT_DELAYS_MS, objective_s=None, prompt_gate_file=None,
+            selftest_pubkey=None):
     """Run TP-AGT-012 on SRD-1 minimal. Returns a spike.RunResult. `items` overrides the shipped item file (tests pass
     their own). `base_url`, `env`, `gate`, `prompt_gate_file` are for tests. `selftest_log` names a self-test log or a
-    folder; the P5 gate uses it."""
+    folder; the P5 gate uses it. `selftest_pubkey` names the public key file of that log (default: the setting
+    selftest_pubkey); in evidence mode the P5 gate needs one."""
     build, gw, orch_mod, trace_mod = spike._srd1()
     if variant not in agt012_log.VARIANTS:
         raise ValueError(f"unknown variant: {variant}")
@@ -281,8 +284,9 @@ def execute(settings, *, run_dir, sign_key, confirmation, items=None, probes=Non
     if engine == "inspect" and not spike.inspect_available():
         raise RuntimeError("the run engine inspect_ai is not installed")
     # P5 gate: a passing self-test log whose manifest matches the checkout, before anything else.
-    isolation_status = selftest.current(repo=repo, selftest_log=selftest_log)
-    gate_problems = selftest.gate_problems(agt012.TP, isolation_status)
+    isolation_status = selftest.current(repo=repo, selftest_log=selftest_log,
+                                        pubkey=selftest_pubkey or settings.selftest_pubkey)
+    gate_problems = selftest.gate_problems(agt012.TP, isolation_status, settings.mode)
     if gate_problems:
         raise RuntimeError("TP-AGT-012 is gated: " + "; ".join(gate_problems))
     gate = gate or build.RefundGate.from_file()         # null values raise GateNotDeclared before any file
