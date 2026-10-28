@@ -1,6 +1,6 @@
 # Changelog
 
-## 0.5.0 (unreleased)
+## 0.5.0 (28 October 2026)
 
 External targets. The engine can now run TP-SEC-001 against a deployed staging agent, through the channel that the agent's own front end uses, and the harness has a tool emulator for `tool_routing`. Each adapter is tested against a local stand-in. One live run has used an external target, on 22 October 2026. That run sent 60 calls of the spike set to openai/gpt-oss-120b, through `generic-http` and the OpenRouter chat completions endpoint. It tested the channel and the engine only. The adapter sends no system prompt. The harness asked OpenRouter for the routing lock. It cannot see if OpenRouter applied the lock. The other four adapters are untested against the platform they are written for. The harness supports no platform.
 
@@ -19,7 +19,7 @@ External targets. The engine can now run TP-SEC-001 against a deployed staging a
 - Inspect log: a no-result run (an empty or cut-off reply, or a channel error) now has the score kind `no_result` in the Inspect log, as in the run log, for SRD-1 runs and external runs. Before, the Inspect log scored it as a defence. The signed run log and its measures never used the Inspect score.
 - The full item set has run live through OpenRouter on 22 October 2026, after release 0.4.0. That was six runs of 468 calls, against three hosted models. The 0.4.0 entry below says that no live run had used the full set. That statement was correct at release 0.4.0.
 - `.gitattributes` keeps LF line endings in every clone. Before, a Windows clone with `core.autocrlf=true` got CRLF files, and `tests/run_all.py` step 1 failed, because the rebuilt records differed from the checked-out copies by the CR bytes only.
-- `__version__` is "0.5.0.dev0".
+- `__version__` is "0.5.0".
 
 ## 0.4.1 (25 October 2026)
 

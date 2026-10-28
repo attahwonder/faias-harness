@@ -1,8 +1,8 @@
 # FAIAS harness
 
-An open-source test harness for FAIAS, the Financial AI Independent Assurance Standard. The harness is planned to run the FAIAS test procedures against an AI system in a test environment. A firm describes its own system in a target profile. The harness reaches that system through one target interface. This repository holds version 0.5, in development: the design, the procedure records, a record checker, a preflight, a run engine for one procedure with its full item set (see "Engine" below), channel adapters that let that engine reach a deployed staging agent (see "External runs"), and an MCP tool emulator (see "Tool emulator").
+An open-source test harness for FAIAS, the Financial AI Independent Assurance Standard. The harness is planned to run the FAIAS test procedures against an AI system in a test environment. A firm describes its own system in a target profile. The harness reaches that system through one target interface. This repository holds version 0.5: the design, the procedure records, a record checker, a preflight, a run engine for one procedure with its full item set (see "Engine" below), channel adapters that let that engine reach a deployed staging agent (see "External runs"), and an MCP tool emulator (see "Tool emulator").
 
-## Status: version 0.5 (in development)
+## Status: version 0.5
 
 **What works now**
 

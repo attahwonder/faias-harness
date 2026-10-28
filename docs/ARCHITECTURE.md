@@ -1,6 +1,6 @@
 # Architecture
 
-Harness version 0.5 (in development). This document describes the design of the harness and what exists today. Each section says what is built and what is not.
+Harness version 0.5. This document describes the design of the harness and what exists today. Each section says what is built and what is not.
 
 ## 1. Scope and status
 
@@ -15,7 +15,7 @@ Version 0.5 shows the design and the direction. It has six working parts:
 - the **external run**: the same procedure against a deployed staging agent, through a channel adapter (section 13);
 - the **tool emulator**: an MCP server with fixed synthetic tool results and a ledger, for `tool_routing` (section 14).
 
-Version 0.5 runs one procedure only. A run on the full item set is labelled "uncalibrated scorer, not a finding", and a run on the spike set "engine spike, not a finding". No adapter is tested against a platform: the channel adapters are tested against local stand-ins only. The example target SRD-1 is built only in a minimal form.
+Version 0.5 runs one procedure only. A run on the full item set is labelled "uncalibrated scorer, not a finding", and a run on the spike set "engine spike, not a finding". The channel adapters are tested against local stand-ins. Only `generic-http` has also run live, against the OpenRouter chat completions endpoint (section 13). The other four are untested against the platform they are written for. The example target SRD-1 is built only in a minimal form.
 
 Sections 11 and 12 describe the engine, which version 0.3.0 adds as a spike; version 0.4.0 adds the full item set (section 12). A feature that sections 8 and 10 give as built for the engine exists only for TP-SEC-001: on SRD-1 minimal, or, since 0.5, on an external target (section 13).
 
