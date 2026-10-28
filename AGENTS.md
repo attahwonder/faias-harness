@@ -6,7 +6,7 @@ A guide for any person or software agent that works on this repository. It does 
 
 This repository is the FAIAS harness, version 0.5. FAIAS is the Financial AI Independent Assurance Standard. The harness is planned to run the FAIAS test procedures against an AI system in a test environment.
 
-Version 0.4 holds the design, 45 procedure records, a record checker, a preflight and a run engine for one procedure, TP-SEC-001, run on SRD-1 minimal and tested against a local stand-in for the model host. By default it runs the full item set (131 items and 25 clean-baseline requests), labelled "uncalibrated scorer, not a finding". The full set has run live through OpenRouter on 22 October 2026. That was six runs of 468 calls, against three hosted models. The 20 spike items remain as an option, labelled "engine spike, not a finding". The spike set has run live through OpenRouter on 20 and 21 October 2026: six runs of 180 calls, against three hosted models. Those run logs are not in the repository. Version 0.5 adds an external run of the same procedure through five channel adapters (`directline`, `openai-responses`, `a2a`, `json-http`, `generic-http`) and an MCP tool emulator. Each is tested against a local stand-in. `generic-http` has run live one time, against the OpenRouter chat completions endpoint on 22 October 2026. That run tested the channel and the engine only. The adapter sends no system prompt. The harness cannot see if OpenRouter applied the routing lock. The harness supports no platform. Do not write text that says or implies more.
+Version 0.4 holds the design, 45 procedure records, a record checker and a preflight. It also holds a run engine for one procedure, TP-SEC-001. The engine runs on SRD-1 minimal and is tested against a local stand-in for the model host. By default it runs the full item set (131 items and 25 clean-baseline requests), labelled "uncalibrated scorer, not a finding". The full set has run live through OpenRouter on 22 October 2026. That was six runs of 468 calls, against three hosted models. The 20 spike items remain as an option, labelled "engine spike, not a finding". The spike set has run live through OpenRouter on 20 and 21 October 2026. That was six runs of 180 calls, against three hosted models. Those run logs are not in the repository. Version 0.5 adds an external run of the same procedure and an MCP tool emulator. The external run goes through five channel adapters (`directline`, `openai-responses`, `a2a`, `json-http`, `generic-http`). Each is tested against a local stand-in. `generic-http` has run live one time, against the OpenRouter chat completions endpoint on 22 October 2026. That run tested the channel and the engine only. The adapter sends no system prompt. The harness cannot see if OpenRouter applied the routing lock. The harness supports no platform. Do not write text that says or implies more.
 
 ## Layout
 
@@ -45,7 +45,7 @@ You need Python 3.11 or later and the packages `pyyaml`, `httpx` and `cryptograp
 | Serve the tool emulator | `py -3.14 -X utf8 -m faias_harness.emulators.mcp_tools serve --tools <tools.yaml> --ledger <new file> [--api-key-env NAME]` |
 | Verify a tool ledger | `py -3.14 -X utf8 -m faias_harness.emulators.mcp_tools verify --ledger <ledger.jsonl>` |
 
-`--start` with a profile alone never starts a run. It prints why a run may not start, or it prints that a profile alone names no run. With `--settings`, `--start` starts an engine run on the item set in the settings only after the checks pass and you type `yes`. Exit codes: 0 done, 2 refused, 3 conditions met but no run named, 4 `yes` not typed, 5 run stopped at the cap or on an error. The tests make no model call and no outside connection. Do not run `--probes` or `--start` unless you mean to spend money on a live model host or a live agent's platform.
+`--start` with a profile alone never starts a run. It prints why a run may not start, or it prints that a profile alone names no run. With `--settings`, `--start` starts an engine run on the item set in the settings. It starts only after the checks pass and you type `yes`. The exit codes are 0 (done), 2 (refused) and 3 (conditions met but no run named). Exit code 4 is `yes` not typed, and 5 is a run stopped at the cap or on an error. The tests make no model call and no outside connection. Do not run `--probes` or `--start` unless you mean to spend money. Both reach a live model host or a live agent's platform.
 
 ## Binding rules
 
@@ -64,7 +64,7 @@ You need Python 3.11 or later and the packages `pyyaml`, `httpx` and `cryptograp
 12. **Evidence mode needs the five routing locks.** A settings file with `mode: evidence` sets `routing.only`, `routing.allow_fallbacks` (false), `routing.zdr` (true), `routing.data_collection` (deny) and `routing.quantizations`. The validator refuses it otherwise. A run starts only after the owner types `yes`.
 13. **The run-signing key stays outside the repository.** It is a key made for the harness. It is never a key that signs a release of FAIAS. No test, log or commit holds it. A test makes a temporary key in a temporary folder.
 14. **Test items stay benign.** Each item asks for a harmless marker, a fictitious commitment about a product that does not exist, or a harmless canary string. Write new items from the class definitions of the procedure. Copy no text from a corpus, a data set or a website.
-15. **An external run uses the channel that the firm's own front end uses.** A test through another channel reaches the agent by a different path. The model and version of an external target are declared by the operator; record them as declared, never as observed. Do not add a field to an adapter's record that the channel does not return.
+15. **An external run uses the channel that the firm's own front end uses.** A test through another channel reaches the agent by a different path. The model and version of an external target are declared by the operator. Record them as declared, never as observed. Do not add a field to an adapter's record that the channel does not return.
 16. **The tool emulator returns fixed synthetic results only.** It listens on the local machine. Set a key variable before a tunnel exposes it. A tools file holds no real account, customer or system data.
 
 ## Add a target profile
@@ -80,8 +80,8 @@ A profile for the real system of a firm holds information about that firm. Keep 
 
 ## Add an external target profile
 
-1. Copy the example for the channel: `targets/examples/copilot_studio.yaml` (`directline`), `responses_agent.yaml` (`openai-responses`), `a2a_agent.yaml` (`a2a`) or `json_app.yaml` (`json-http`).
-2. Set `endpoint` to the staging agent's channel. Put the adapter's settings in `adapter_options` (each adapter module's docstring lists them). Put no key in the file; name the variable in `settings.api_key_env`.
+1. Copy the example for the channel. The examples are `targets/examples/copilot_studio.yaml` (`directline`), `responses_agent.yaml` (`openai-responses`), `a2a_agent.yaml` (`a2a`) and `json_app.yaml` (`json-http`).
+2. Set `endpoint` to the staging agent's channel. Put the adapter's settings in `adapter_options` (each adapter module's docstring lists them). Put no key in the file. Name the variable in `settings.api_key_env`.
 3. Copy `targets/examples/external_settings.yaml`. Set the cap and the cost per call from the platform's prices. Keep `item_set: spike` until the channel probe and a first run show replies.
 4. Point `attestation_file` to the firm's statement, run the preflight with `--settings`, then `--probes`.
 5. Keep the profile and the settings outside this repository.
@@ -93,7 +93,7 @@ A profile for the real system of a firm holds information about that firm. Keep 
 3. Send traffic only to the staging endpoints that the profile names. Take any key from the environment variable that the profile names. Do not reach into production systems.
 4. Add the adapter to the table in `faias_harness/adapters/README.md`. Mark it **untested** until a test exercises it. A test needs no real vendor account: use a local stand-in server or recorded responses.
 5. Write "supported" only when a test shows it, and say what the test covers. A page in `docs/PLATFORMS.md` that describes a vendor feature is not a test and is not support.
-   For a channel adapter of an external run: subclass `adapters/base.py` `ChannelTarget`, send through `_send_with_retry` (it calls `before_send`, so the call budget counts every attempt), fill `last_exchange` only with what the channel returned, raise `ChannelError` with the kind `auth` or `config` for a fault that every call would hit, add `validate_options` and `hosts`, and add the adapter to `adapters/registry.py`. Add a stand-in to `tests/standins.py`.
+   For a channel adapter of an external run, subclass `adapters/base.py` `ChannelTarget`. Send through `_send_with_retry`. It calls `before_send`, so the call budget counts every attempt. Fill `last_exchange` only with what the channel returned. For a fault that every call hits, raise `ChannelError` with the kind `auth` or `config`. Add `validate_options` and `hosts`, and add the adapter to `adapters/registry.py`. Add a stand-in to `tests/standins.py`.
 6. Run the sweep and the tests.
 
 ## Writing rules for text in this repository

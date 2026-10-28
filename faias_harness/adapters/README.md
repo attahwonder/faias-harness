@@ -15,21 +15,21 @@ An adapter connects the target interface (`faias_harness/target.py`) to a real s
 | Amazon Lex V2, Dialogflow CX, contact-centre messaging, Agentforce Agent API | none | none | not decided | Not built. |
 | Amazon Bedrock InvokeAgent | none | none | not decided | Not built. It needs AWS request signing. Where AgentCore exposes an A2A endpoint, `a2a` may reach it; that is not tested. |
 
-`adapters/registry.py` lists the five channel adapters that an external run can use (`docs/ARCHITECTURE.md`, section 13). `srd1-http` is not in it: SRD-1 minimal runs through the SRD-1 engine.
+`adapters/registry.py` lists the five channel adapters that an external run can use (`docs/ARCHITECTURE.md`, section 13). `srd1-http` is not in it, because SRD-1 minimal runs through the SRD-1 engine.
 
 ## Pick the channel that customers or colleagues use
 
-An external run tests the path through the channel that the adapter reaches. If customers reach an agent through Direct Line and a test reaches the same agent through A2A, the test measures a different path: a control in the customer channel is not in it. List `conversation` in a profile only for the channel that the firm's own front end uses.
+An external run tests the path through the channel that the adapter reaches. Suppose that customers reach an agent through Direct Line and a test reaches the same agent through A2A. Then the test measures a different path. A control in the customer channel is not in that path. List `conversation` in a profile only for the channel that the firm's own front end uses.
 
 ## Profile fields for a channel adapter
 
-- `endpoint`: the channel's base URL. Plain HTTP goes only to the local machine (the egress client refuses it otherwise). The profile validator refuses a query string in it (0.5), because a query can hold a key.
-- `settings.api_key_env`: the name of the environment variable that holds the key or token, where the adapter needs one.
-- `adapter_options`: the adapter's own settings. Each module's docstring lists them, and `validate_options` checks them. The profile validator refuses a field name from a fixed list of key-like names anywhere in `adapter_options`.
+- `endpoint` is the channel's base URL. Plain HTTP goes only to the local machine (the egress client refuses it otherwise). The profile validator refuses a query string in it (0.5), because a query can hold a key.
+- `settings.api_key_env` is the name of the environment variable that holds the key or token, where the adapter needs one.
+- `adapter_options` holds the adapter's own settings. Each module's docstring lists them, and `validate_options` checks them. The profile validator refuses a field name from a fixed list of key-like names anywhere in `adapter_options`.
 
 ## What each adapter records for each call
 
-After each `send`, `last_exchange` holds what the channel showed: the host that answered, the HTTP statuses, the time, the retries, and any block, finish signal, model name or token use that the channel's response names. It never holds a header or a key. The external engine copies it into the run record.
+After each `send`, `last_exchange` holds what the channel showed. That is the host that answered, the HTTP statuses, the time and the retries. It also holds any block, finish signal, model name or token use that the channel's response names. It never holds a header or a key. The external engine copies it into the run record.
 
 | Adapter | Names the model | Names a block | Notes |
 |---|---|---|---|

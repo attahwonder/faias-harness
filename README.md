@@ -1,6 +1,6 @@
 # FAIAS harness
 
-An open-source test harness for FAIAS, the Financial AI Independent Assurance Standard. The harness is planned to run the FAIAS test procedures against an AI system in a test environment. A firm describes its own system in a target profile. The harness reaches that system through one target interface. This repository holds version 0.5: the design, the procedure records, a record checker, a preflight, a run engine for one procedure with its full item set (see "Engine" below), channel adapters that let that engine reach a deployed staging agent (see "External runs"), and an MCP tool emulator (see "Tool emulator").
+An open-source test harness for FAIAS, the Financial AI Independent Assurance Standard. The harness is planned to run the FAIAS test procedures against an AI system in a test environment. A firm describes its own system in a target profile. The harness reaches that system through one target interface. This repository holds version 0.5. It has the design, the procedure records, a record checker and a preflight. It also has a run engine for one procedure with its full item set (see "Engine" below). Channel adapters let that engine reach a deployed staging agent (see "External runs"). The last part is an MCP tool emulator (see "Tool emulator").
 
 ## Status: version 0.5
 
@@ -10,13 +10,13 @@ An open-source test harness for FAIAS, the Financial AI Independent Assurance St
 - **Record checker.** It compares every record with the FAIAS source lines (`tools/check_records.py`). It also checks the form of the capability needs and the FAIAS lines that they cite. A test seeds eight faults and confirms that the checker catches them.
 - **Preflight.** It compares a target profile with the draft capability needs of each procedure and prints which procedures can run in full, in part, or not at all (`faias_harness/preflight.py`). It makes no network call.
 - **Engine.** It runs one procedure, TP-SEC-001, against SRD-1 minimal and writes a signed run log (`faias_harness/engine/`). By default it runs the full item set (`items/TP-SEC-001.json`: 131 items and 25 clean-baseline requests), labelled "uncalibrated scorer, not a finding". The 20 spike items remain as an option, labelled "engine spike, not a finding".
-- **External runs (0.5).** The engine can run TP-SEC-001 against a deployed staging agent, through an adapter written for the channel that the firm's own front end uses: Direct Line 3.0 (Copilot Studio, Azure Bot Service), the Responses API (OpenAI; Azure AI Foundry agents), A2A (protocol 1.0 or 0.3), a firm's own JSON chat endpoint, or OpenAI-compatible chat completions. The harness is then a client of the channel: it records what the channel shows and states what it cannot see. Each adapter is tested against a local stand-in. Only `generic-http` has also run live, against the OpenRouter chat completions endpoint. That run tested the channel and the engine only (see below). The other four adapters are untested against the platform they are written for.
-- **Tool emulator (0.5).** An MCP server on the local machine with fixed synthetic tool results and a hash-chained ledger of every tool call, for the capability `tool_routing`. It is tested with a local client only. No engine uses it yet.
+- **External runs (0.5).** The engine can run TP-SEC-001 against a deployed staging agent. It uses an adapter written for the channel that the firm's own front end uses. One adapter is for Direct Line 3.0 (Copilot Studio, Azure Bot Service). Others are for the Responses API (OpenAI, Azure AI Foundry agents) and for A2A (protocol 1.0 or 0.3). The last two are for a firm's own JSON chat endpoint and for OpenAI-compatible chat completions. The harness is then a client of the channel. It records what the channel shows and states what it cannot see. Each adapter is tested against a local stand-in. Only `generic-http` has also run live, against the OpenRouter chat completions endpoint. That run tested the channel and the engine only (see below). The other four adapters are untested against the platform they are written for.
+- **Tool emulator (0.5).** An MCP server on the local machine for the capability `tool_routing`. It gives fixed synthetic tool results and keeps a hash-chained ledger of every tool call. It is tested with a local client only. No engine uses it yet.
 - **Platform survey.** `docs/PLATFORMS.md` lists what the public documentation of six agent platforms says about the seven capabilities. On 16 October 2026, a script found the quote of 84 of 87 survey rows on the vendor page. The survey is documentation only. It is not an adapter and not a test.
 
 **What does not work**
 
-- Version 0.5 runs one procedure only. Its tests use a local stand-in for the model host. The spike set has run live through OpenRouter on 20 and 21 October 2026: six runs of 180 calls, against three hosted models. The full item set has run live through OpenRouter on 22 October 2026. That was six runs of 468 calls, against three hosted models. Those run logs are not in the repository.
+- Version 0.5 runs one procedure only. Its tests use a local stand-in for the model host. The spike set has run live through OpenRouter on 20 and 21 October 2026. That was six runs of 180 calls, against three hosted models. The full item set has run live through OpenRouter on 22 October 2026. That was six runs of 468 calls, against three hosted models. Those run logs are not in the repository.
 - The harness supports no platform. Four of the five channel adapters (`directline`, `openai-responses`, `a2a`, `json-http`) are untested against a platform. Each of them is tested against a local stand-in only. `generic-http` has one live run, on 22 October 2026. It sent 60 calls of the spike set to openai/gpt-oss-120b, through the OpenRouter chat completions endpoint. That run tested the channel and the engine only. The adapter sends no system prompt. Thus the model had no rules to defend. The harness asked OpenRouter for the routing lock. It cannot see if OpenRouter applied the lock. Its run log is not in the repository. The adapter for SRD-1 minimal is tested against a local stand-in only.
 - SRD-1, the example reference system in `targets/srd1/`, is built only in a minimal form (four components, for the engine). Its profile and its full specification are drafts.
 - The capability needs are a draft. Two independent model passes read the Preconditions of each procedure. For 26 procedures they agree, and nobody has checked these entries at each line. For the 19 where they differed, a third reading, also a model, settled 17 at the lines and left 2 open. No person has checked the file.
@@ -37,7 +37,7 @@ These rules come first. They bind every use of the harness.
 
 The harness reaches every system through one **target interface** with seven **capabilities**: `conversation`, `traces`, `tool_routing`, `state_read`, `data_seeding`, `config_read` and `control`. A **target profile** lists the capabilities that a system offers. The **preflight** compares the profile with what each procedure needs. SRD-1 has no private path: it uses the same interface as any other system.
 
-Read `docs/ARCHITECTURE.md` for the full design (section 13 for external runs, section 14 for the tool emulator), the profile schema, the design rules and the draft status of the capability needs. Read `docs/PLATFORMS.md` for the survey of platform documentation. Read `AGENTS.md` if you work on this repository, as a person or as a software agent.
+Read `docs/ARCHITECTURE.md` for the full design, the profile schema, the design rules and the draft status of the capability needs. Section 13 is about external runs. Section 14 is about the tool emulator. Read `docs/PLATFORMS.md` for the survey of platform documentation. Read `AGENTS.md` if you work on this repository, as a person or as a software agent.
 
 ## Run the preflight and the tests
 
@@ -85,7 +85,7 @@ Version 0.3 added a first run engine, and version 0.4 adds its full item set. It
 
 **What it does.** The harness sends the items of the chosen set (by default 131 items and 25 clean-baseline requests; `item_set: spike` sends the 20 spike items, 5 for each of the four technique classes) through the chat channel of SRD-1 minimal, with k runs for each item (`runs_per_item` in the settings: at least 3, the FAIAS minimum; the log states k). SRD-1 calls its model through OpenRouter, with five routing locks on every request. A deterministic scorer marks each reply. The harness computes the measures M1 to M4 with the formulas of the record. It writes one run log. The log holds the procedure, the ★ label, the pinned model ID, the host that served each call, the thresholds with their bases, the reviewer-set value of M4 with its reason, a lock time before the first item, and a hash of the settings. The log is signed with an Ed25519 key that belongs to the operator. The run stops before a call that could pass the spend cap.
 
-**Item set (0.4.0).** The engine runs the item set in `items/TP-SEC-001.json` by default: 131 items (C1 40, C2 25, C3 26, C4 40) and a clean-baseline arm of 25 requests, k runs each (468 calls at k = 3). The baseline requests are recorded with an outcome (answered, blocked or no result) and are not scored. Whether a reply refuses is for a human label. A run on this set is labelled "uncalibrated scorer, not a finding". The setting `item_set: spike` runs the 20 spike items. The full set has run live on 22 October 2026, in six runs. Those run logs are not in the repository.
+**Item set (0.4.0).** By default, the engine runs the item set in `items/TP-SEC-001.json`. It has 131 items (C1 40, C2 25, C3 26, C4 40) and a clean-baseline arm of 25 requests. Each runs k times (468 calls at k = 3). The baseline requests are recorded with an outcome (answered, blocked or no result) and are not scored. Whether a reply refuses is for a human label. A run on this set is labelled "uncalibrated scorer, not a finding". The setting `item_set: spike` runs the 20 spike items. The full set has run live on 22 October 2026, in six runs. Those run logs are not in the repository.
 
 **What it does not do.**
 
@@ -131,7 +131,7 @@ py -3.14 -X utf8 -m faias_harness.engine.runlog verify --log <run_log.jsonl> --s
 
 ## External runs
 
-Version 0.5 adds a second run path. The SRD-1 engine builds SRD-1 minimal in the same process and reads the model, the host, the tokens and the cost from SRD-1's gateway. A deployed agent offers none of that to an outside client. An external run sends the same items through the agent's channel, scores the replies with the same scorer and computes M1 to M4 with the same formulas. The run log (schema 3) states what the channel showed for each call, records the model and version as declared by the operator, not observed, and states that the model is not pinned.
+Version 0.5 adds a second run path. The SRD-1 engine builds SRD-1 minimal in the same process. It reads the model, the host, the tokens and the cost from SRD-1's gateway. A deployed agent offers none of that to an outside client. An external run sends the same items through the agent's channel. It scores the replies with the same scorer and computes M1 to M4 with the same formulas. The run log (schema 3) states what the channel showed for each call. It records the model and version as declared by the operator, not observed. It also states that the model is not pinned.
 
 | Adapter | Channel | The channel names a model | The channel names a block |
 |---|---|---|---|
@@ -143,7 +143,7 @@ Version 0.5 adds a second run path. The SRD-1 engine builds SRD-1 minimal in the
 
 Use the adapter for the channel that customers or colleagues use. A test through another channel reaches the agent by a different path.
 
-**Settings.** `targets/examples/external_settings.yaml` (`kind: external`) holds no key and no provider. Its budget is `cap_usd` and `cost_per_call_usd`, the operator's estimate of what one call costs on the platform; the run stops before a call that would pass floor(cap / cost). Evidence mode needs `declared.model_id`, `declared.target_version` and the M4 value with its reason. The profile (for example `targets/examples/copilot_studio.yaml`) names the adapter, the endpoint, the key variable and `adapter_options`. A firm's own profile holds information about the firm: keep it outside this repository.
+**Settings.** `targets/examples/external_settings.yaml` (`kind: external`) holds no key and no provider. Its budget is `cap_usd` and `cost_per_call_usd`. The second is the operator's estimate of what one call costs on the platform. The run stops before it passes floor(cap / cost) calls. Evidence mode needs `declared.model_id`, `declared.target_version` and the M4 value with its reason. The profile (for example `targets/examples/copilot_studio.yaml`) names the adapter, the endpoint, the key variable and `adapter_options`. A firm's own profile holds information about the firm. Keep it outside this repository.
 
 **Commands.** Preflight with the external settings (no network call):
 
@@ -151,23 +151,23 @@ Use the adapter for the channel that customers or colleagues use. A test through
 py -3.14 -X utf8 -m faias_harness.preflight --profile <profile> --settings <external settings>
 ```
 
-Make one channel probe (one call through the channel; it needs the attestation file, because the probe reaches the agent) and start nothing:
+The probe is one call through the channel. It needs the attestation file, because the probe reaches the agent. Make one channel probe and start nothing:
 
 ```
 py -3.14 -X utf8 -m faias_harness.preflight --profile <profile> --settings <external settings> --probes
 ```
 
-Start the run. It refuses without the attestation file, the key variable (where the adapter needs one), the M4 value with its reason, and the signing key, makes the probe, refuses if the probe gets no usable reply, and starts only after you type `yes`:
+Start the run. It refuses without the attestation file or the signing key. It also refuses without the key variable (where the adapter needs one) or the M4 value with its reason. Then it makes the probe. It refuses if the probe gets no usable reply. It starts only after you type `yes`:
 
 ```
 py -3.14 -X utf8 -m faias_harness.preflight --profile <profile> --settings <external settings> --start --sign-key <private key file>
 ```
 
-**What an external run does not do.** It does not pin or observe the model, the host that served it, the tokens or the cost, unless the channel's response names them. It does not see the platform's content filter where the channel names no block: a reply that the platform replaced with a fallback message counts as a reply. It has no positive control of its own: the operator runs a second staging agent with no rules, with its own profile. The run log lists these limits (`not_in_run`).
+**What an external run does not do.** It does not pin or observe the model, the host that served it, the tokens or the cost. It sees them only where the channel's response names them. It does not see the platform's content filter where the channel names no block. A reply that the platform replaced with a fallback message counts as a reply. It has no positive control of its own. The operator runs a second staging agent with no rules, with its own profile. The run log lists these limits (`not_in_run`).
 
 ## Tool emulator
 
-`faias_harness/emulators/mcp_tools.py` serves the tools of a tools file (`targets/examples/mcp_tools.yaml`) over MCP Streamable HTTP, on the local machine only. Each tool returns a fixed synthetic result and acts on no system. Each tools/call adds a line to a hash-chained ledger, also a call that the emulator refuses (an unknown tool, or arguments that are not an object). A firm points its staging agent's tool at the emulator, in place of the real tool, through a tunnel that the operator runs; then the harness sees every call that the agent makes to that tool. It answers protocol version 2026-07-28 and the earlier versions 2025-03-26, 2025-06-18 and 2025-11-25. Set a key before you expose the port.
+`faias_harness/emulators/mcp_tools.py` serves the tools of a tools file (`targets/examples/mcp_tools.yaml`) over MCP Streamable HTTP, on the local machine only. Each tool returns a fixed synthetic result and acts on no system. Each tools/call adds a line to a hash-chained ledger. A call that the emulator refuses (an unknown tool, or arguments that are not an object) also adds a line. A firm points its staging agent's tool at the emulator, in place of the real tool. It does this through a tunnel that the operator runs. Then the harness sees every call that the agent makes to that tool. It answers protocol version 2026-07-28 and the earlier versions 2025-03-26, 2025-06-18 and 2025-11-25. Set a key before you expose the port.
 
 ```
 py -3.14 -X utf8 -m faias_harness.emulators.mcp_tools serve --tools targets/examples/mcp_tools.yaml --ledger <new ledger file> --api-key-env <variable>
