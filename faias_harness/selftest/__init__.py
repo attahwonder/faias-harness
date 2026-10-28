@@ -77,7 +77,7 @@ NOT_IN_RUN = [
      "show that the operating system or the network blocks anything (H-01 is a later step)"},
     {"what": "inspect_ai in every mode", "lines": [], "why": "probe S14 covers one pass with Inspect's model none"},
     {"what": "an operator's allow-list", "lines": [], "why": "each run log records its own list; the self-test "
-     "proves the rules of the list, not that a list is right"},
+     "checks the rules of the list, not that a list is right"},
 ]
 STEPS = {
     "step 1": "met: this self-test probes the harness itself before any state-writing run (line 29)",

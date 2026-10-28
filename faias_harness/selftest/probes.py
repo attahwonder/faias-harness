@@ -1,8 +1,9 @@
 """The probes of the containment self-test. Each probe tests one path of the harness and records what it found.
 
-Every target is a name under the reserved top-level name `.invalid` (RFC 2606, section 2: reserved for names that
-are sure to be invalid) or an address in a documentation block of RFC 5737, section 3 (192.0.2.0/24, 198.51.100.0/24,
-203.0.113.0/24; section 4 asks that they do not appear on the public internet). No probe names a real outside host.
+Every target name is under the reserved top-level name `.invalid`. RFC 2606, section 2, reserves it for names that
+are sure to be invalid. Every target address off the local machine is in a documentation range of RFC 5737,
+section 3 (192.0.2.0/24, 198.51.100.0/24 or 203.0.113.0/24). Section 4 asks that they do not appear on the public
+internet. No probe names a real outside host.
 The sources are https://www.rfc-editor.org/rfc/rfc2606.txt and https://www.rfc-editor.org/rfc/rfc5737.txt, read
 28 Oct 2026.
 
@@ -449,7 +450,7 @@ def s13(ctx):
 
 
 PUBLICATION_READING = ("structurally absent in this version; a tool that publishes would add a path and a probe. "
-                       "This is a reading of PLAYBOOK_AGT_014.md line 55 that the owner has not yet confirmed.")
+                       "This is a reading of PLAYBOOK_AGT_014.md line 55 that the maintainer has not yet confirmed.")
 
 
 def s16(ctx):

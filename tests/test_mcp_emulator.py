@@ -235,7 +235,7 @@ class ReviewFixTests(_Base):
         import socket
         import time
         e = self.emu(name="origin.jsonl")
-        body = b"x" * 500_000
+        body = b"x" * mt.MAX_BODY
         head = (f"POST {e.path} HTTP/1.1\r\nHost: {e.host}:{e.port}\r\nOrigin: https://other.test\r\n"
                 f"Content-Type: application/json\r\nContent-Length: {len(body)}\r\n\r\n").encode("ascii")
         data = b""
@@ -246,6 +246,36 @@ class ReviewFixTests(_Base):
                 data += chunk
         self.assertTrue(data.startswith(b"HTTP/1.1 403"), data[:80])
         self.assertIn(b"origin not allowed", data)
+
+    def test_a_refused_body_sent_slowly_does_not_hold_the_connection(self):
+        """A refused client sends its declared body one byte at a time. Its connection closes in about 3 seconds. The
+        drop of the body stops after DROP_DEADLINE_S seconds in total. Without that limit, the handler waits for the
+        whole body while each gap is shorter than the socket timeout."""
+        import socket
+        import time
+        e = self.emu(name="slow.jsonl")
+        head = (f"POST {e.path} HTTP/1.1\r\nHost: {e.host}:{e.port}\r\nOrigin: https://other.test\r\n"
+                f"Content-Type: application/json\r\nContent-Length: 200000\r\n\r\n").encode("ascii")
+        closed_after = None
+        with socket.create_connection((e.host, e.port), timeout=10) as s:
+            t0 = time.monotonic()
+            s.sendall(head)
+            s.settimeout(0.5)
+            while time.monotonic() - t0 < 8:
+                try:
+                    s.sendall(b"x")             # one byte of the body each 0.5 s
+                    chunk = s.recv(65536)
+                except socket.timeout:
+                    continue
+                except OSError:                 # a reset closes the connection too
+                    closed_after = time.monotonic() - t0
+                    break
+                if not chunk:
+                    closed_after = time.monotonic() - t0
+                    break
+        self.assertIsNotNone(closed_after, "the connection was still open after 8 s")
+        self.assertLess(closed_after, 3.5)
+        self.assertEqual(mt.DROP_DEADLINE_S, 2)
 
 
 STORE_TOOLS_FILE = REPO / "targets" / "examples" / "mcp_tools_store.yaml"
@@ -330,7 +360,7 @@ class HandlerTests(_Base):
             mt.ToolEmulator(mt.load_tools(STORE_TOOLS_FILE), self.dir / "missing.jsonl", store=self.dir / "nope.yaml")
 
     def raw_call(self, e, amount_text, mid=1):
-        """A tools/call whose amount is the JSON text given, as a client may send it (CHECK_060_P5 F1 and F2)."""
+        """A tools/call whose amount is the JSON text given, as a client may send it."""
         params = {"name": "fee_refund", "arguments": {"account_ref": "SYN-A-0001", "fee_id": "SYN-F-0001",
                                                       "amount_gbp": "AMOUNT", "reason": "r"}, "_meta": modern_meta()}
         body = json.dumps({"jsonrpc": "2.0", "id": mid, "method": "tools/call", "params": params})
@@ -370,12 +400,12 @@ class HandlerTests(_Base):
         bad.write_bytes(e.ledger.path.read_bytes().replace(b'"amount_gbp":12.0', b'"amount_gbp":NaN', 1))
         ok, problems = mt.verify_ledger(bad)
         self.assertEqual((ok, problems), (False, ["cannot read the ledger (ValueError)"]))
-        big = self.dir / "big_ledger.jsonl"          # re-check R1: 1e400 reads as an infinity
+        big = self.dir / "big_ledger.jsonl"          # 1e400 reads as an infinity
         big.write_bytes(e.ledger.path.read_bytes().replace(b'"amount_gbp":12.0', b'"amount_gbp":1e400', 1))
         self.assertEqual(mt.verify_ledger(big), (False, ["cannot read the ledger (ValueError)"]))
 
     def test_a_store_fee_that_is_not_a_finite_number_above_zero_is_refused(self):
-        """Re-check R3: a NaN fee would equal every amount, so the handler refuses the store."""
+        """A NaN fee would equal every amount, so the handler refuses the store."""
         def store(fee):
             return {"accounts": [{"account_ref": "SYN-A-0001", "fees": [{"fee_id": "SYN-F-0001", "amount_gbp": fee}]}]}
         for fee in (float("nan"), float("inf"), float("-inf"), 0, -12.0, "12.0", True, None):
@@ -386,7 +416,7 @@ class HandlerTests(_Base):
 
 
 class SyntheticBankTests(unittest.TestCase):
-    """T10: SRD-1's synthetic customers, accounts and fees."""
+    """SRD-1's synthetic customers, accounts and fees."""
 
     def test_counts_domains_and_references(self):
         import yaml

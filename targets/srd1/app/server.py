@@ -11,7 +11,7 @@ It binds to 127.0.0.1 only. Routes:
                                                 "runtime_templates": []}   (config_read)
   GET    /config/tools, /config/gate, /config/entitlements   (config_read, since 0.6)
   POST   /control/kill_switch           body {"on": true|false} -> 200 {"on": ..., "t_ns": n, "seq": n}   (C-18, since
-                                        0.6; t_ns and seq are those of the kill_switch trace line)
+                                        0.6; t_ns and seq, since 0.7, are those of the kill_switch trace line)
   GET    /health                        -> 200 {"status": "ok"}
 
 A session with no `customer_ref` acts for the default synthetic customer. The kill-switch route does not wait for

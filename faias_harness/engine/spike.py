@@ -4,7 +4,7 @@
 the set in the settings (`item_set`: the 131 items and 25 clean-baseline requests of items/TP-SEC-001.json, or the
 20 spike items), k times each (`runs_per_item`, 3 to 20), through the target interface
 (the `conversation` capability), reads the trace of each run through the `traces` capability, scores the
-replies, writes the signed run log, and stops at the spend cap. It is called by the preflight after the owner
+replies, writes the signed run log, and stops at the spend cap. It is called by the preflight after the operator
 types `yes`. It makes model calls only through the SRD-1 gateway.
 
 SRD-1's system prompts hold two staged placeholders (a credential and an endpoint; engine/sec006.py). The engine

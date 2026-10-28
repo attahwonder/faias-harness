@@ -13,7 +13,7 @@ Since 0.6 it also offers `tool_routing` and `control`, in part:
 - `read_tool_ledger(tool)`: the lines of the run's tool ledger (the emulator's file), for one tool.
 - `set_kill_switch(on)`: POST /control/kill_switch (C-18). It returns the time and number of SRD-1's trace line.
   `rollback`, `switch_version` and `inject_failure` are not built and raise NotImplementedError.
-`open_session(customer_ref)` (since 0.6) opens a session for one synthetic customer.
+`open_session(customer_ref)` (since 0.7) opens a session for one synthetic customer.
 """
 from ..emulators.mcp_tools import read_ledger
 from ..errors import CapReached
@@ -51,7 +51,7 @@ class Srd1ChatTarget(Target):
 
     # conversation
     def open_session(self, customer_ref=None):
-        """`customer_ref` (since 0.6): the synthetic customer that the session acts for; None for SRD-1's default."""
+        """`customer_ref` (since 0.7): the synthetic customer that the session acts for; None for SRD-1's default."""
         body = None if customer_ref is None else {"customer_ref": customer_ref}
         return self._call("POST", "/sessions", body)["session_id"]
 

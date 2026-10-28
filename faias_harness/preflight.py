@@ -16,7 +16,7 @@ With --settings <settings.yaml> (version 0.3 and later), it also checks the sett
 estimate against the cap, and whether the key variable is present (never its value). An evidence-mode settings
 file that lacks any of the five routing locks is refused. With --start it checks the signing key, makes two probe
 calls (a tool-call probe and a reasoning-text probe; the judge-family check is not applicable because the engine
-has no model judge), shows the result, and starts the run only after the owner types `yes`. With --probes it makes
+has no model judge), shows the result, and starts the run only after the operator types `yes`. With --probes it makes
 the two probe calls and starts nothing. For a TP-SEC-006 run, the preflight verifies the signature of the M4 baseline
 log against the key that `m4_baseline_pubkey` names, and refuses a key inside the repository or a log that fails. In
 evidence mode the preflight and --start also refuse a baseline log whose model ID, variant, system prompt hash,
@@ -34,10 +34,10 @@ against a deployed staging agent, through the channel adapter that the profile n
 section 13). It prints the adapter, the endpoint host, what the channel lets the harness observe, the declared
 model and version, the calls against the call budget, and whether the key variable is present (never its value).
 --probes makes one channel probe (one benign message). --start makes the probe, refuses if it gets no usable
-reply, and starts the run only after the owner types `yes`.
+reply, and starts the run only after the operator types `yes`.
 
 Exit codes: 0 table printed, or a run finished; 2 start refused or profile or settings invalid; 3 start
-conditions met, but a profile alone starts no run; 4 the owner did not type `yes`; 5 the run stopped at the cap
+conditions met, but a profile alone starts no run; 4 the operator did not type `yes`; 5 the run stopped at the cap
 or on an error.
 """
 import argparse

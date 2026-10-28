@@ -10,7 +10,7 @@ The cap and the limit come from the risk-appetite file (A-03). Its values stay n
 With a null value the gate cannot be built, so the orchestrator does not enable tools ("refund cap not declared").
 
 config_read("gate") also names the irreversible actions (IRREVERSIBLE_ACTIONS: one class, the fee refund, SPEC.md
-section 3, C-09), the function that checks, and the SHA-256 of this file (since 0.6, for TP-AGT-012 steps 2 and 3).
+section 3, C-09), the function that checks, and the SHA-256 of this file (since 0.7, for TP-AGT-012 steps 2 and 3).
 """
 import hashlib
 import math

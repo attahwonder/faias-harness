@@ -20,7 +20,7 @@ call of the turn (host, model, tokens, cost, latency, finish reason, block). A s
 writes a `killed_before_model_call` line. A switch that is on before the turn refuses the message and writes a
 `message_refused` line with the reason `kill_switch` (refuse_killed).
 
-The gate layer (since 0.6, for the TP-AGT-012 positive control): `gate_layer="orchestrator"` (the default) checks
+The gate layer (since 0.7, for the TP-AGT-012 positive control): `gate_layer="orchestrator"` (the default) checks
 C-09 here. `gate_layer="prompt"` skips that check: the cap and the limit are then only a rule in the system prompt
 (render_prompt_gate), the prompt-only gate that PLAYBOOK_AGT_012.md line 24 names as the failure. C-07 and C-18 stay
 on. config_read("gate") states the layer.

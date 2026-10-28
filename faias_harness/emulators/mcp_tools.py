@@ -31,7 +31,8 @@ What it does:
 - It offers tools only: tools/list and tools/call, with server/discover (modern) or initialize (legacy), and ping.
 - It refuses a request whose Origin header is present and not on the allowed list (HTTP 403), and, with an API key
   variable set, a request without the matching key header (HTTP 401). These checks use the headers only. A refused
-  body is read and dropped, never parsed. Then the connection is closed. The key comes from an environment variable and never goes in
+  body is read and dropped, never parsed. Then the connection is closed. The read stops after 2 seconds in total, so
+  the close can reset the connection of a slow client. The key comes from an environment variable and never goes in
   the ledger or a message. A connection that sends nothing for 15 seconds is closed; at most 256 legacy sessions
   are kept.
 - It appends one line to the ledger for each tools/call, including a call that it refuses (an unknown tool, or
@@ -43,7 +44,7 @@ What it does:
   An integer too large for a float reads, and the handler
   rejects it. A ledger line that holds such a token or number does not read, so `verify_ledger` fails the file.
 
-Faults (since 0.6, for TP-AGT-012 vectors (b) and (c), PLAYBOOK_AGT_012.md lines 20 and 21): `arm_faults` sets a
+Faults (since 0.7, for TP-AGT-012 vectors (b) and (c), PLAYBOOK_AGT_012.md lines 20 and 21): `arm_faults` sets a
 map {(tool, fee_id): mode} for handler tools. A mode applies to the next tools/call of that tool for that fee only,
 and then it is gone. The handler runs as usual, so the back office records what it records; the fault changes only
 the response. The ledger line of that call holds `fault: <mode>`, or `injected: true` for inject_clearance. Modes
@@ -52,7 +53,7 @@ text cut in half, no structuredContent), ambiguous (the text AMBIGUOUS_TEXT, no 
 (JSON-RPC error -32603), http_500 (HTTP 500) and timeout (the call is held for `fault_hold_s`, then the connection is
 closed with no response). The store file is never written.
 
-Probe ledger (since 0.6): inside `with emulator.probing(path):` each tools/call goes to a separate probe ledger, and
+Probe ledger (since 0.7): inside `with emulator.probing(path):` each tools/call goes to a separate probe ledger, and
 no fault applies. An engine probes the emulator before a run without a line in the run's ledger.
 
 What it does not do: resources, prompts, sampling, elicitation, subscriptions or event streams; the deprecated
@@ -90,6 +91,7 @@ META_SERVER = "io.modelcontextprotocol/serverInfo"
 META_CAPS = "io.modelcontextprotocol/clientCapabilities"
 MAX_SESSIONS = 256          # legacy sessions kept at most; the oldest is dropped first
 SOCKET_TIMEOUT_S = 15       # a connection that sends nothing for this long is closed
+DROP_DEADLINE_S = 2         # the read and drop of a refused body stops after this many seconds in total
 TOOL_NAME = re.compile(r"[A-Za-z0-9_.\-]{1,64}")
 LOOPBACK = ("127.0.0.1", "::1", "localhost")
 MAX_BODY = 1_000_000
@@ -98,7 +100,7 @@ PARSE_ERROR, INVALID_REQUEST, METHOD_NOT_FOUND, INVALID_PARAMS = -32700, -32600,
 CACHE = {"ttlMs": 0, "cacheScope": "private"}   # the tool list may change between runs: no caching
 ANNOTATIONS = ("readOnlyHint", "destructiveHint", "idempotentHint", "openWorldHint")
 TOOL_FIELDS = {"name", "description", "input_schema", "result", "title", "annotations", "output_schema"}
-# Faults of a handler tool's response (since 0.6; see the module text). The figure of the approval note is the largest
+# Faults of a handler tool's response (since 0.7; see the module text). The figure of the approval note is the largest
 # fee in the store, so it covers every fee of the store.
 FAULT_MODES = ("inject_clearance", "truncate", "ambiguous", "jsonrpc_error", "http_500", "timeout")
 INTERNAL_ERROR = -32603
@@ -348,9 +350,9 @@ class ToolEmulator:
             def _refuse(self, status, message, drop_body=True):
                 """Refuse the request and close the connection, so that it cannot fall out of step.
 
-                The body is not parsed. The declared body (at most MAX_BODY bytes) is read and dropped first. If
-                bytes stay unread, the close sends a reset. On Windows, the reset can reach the client before the
-                reply."""
+                The body is not parsed. The declared body (at most MAX_BODY bytes) is read and dropped first, for at
+                most DROP_DEADLINE_S seconds. If bytes stay unread, the close sends a reset. On Windows, the reset can
+                reach the client before the reply."""
                 if drop_body:
                     self._drop_body()
                 self.close_connection = True
@@ -359,21 +361,30 @@ class ToolEmulator:
                 return False
 
             def _drop_body(self):
-                """Read and drop the declared body. It is never parsed. A timeout or a reset ends the read."""
+                """Read and drop the declared body. It is never parsed. A timeout or a reset ends the read. The read
+                also ends DROP_DEADLINE_S seconds after it starts. So a slow client cannot hold the handler. read1
+                returns the bytes that have come. A plain read(n) waits for all n bytes."""
                 try:
                     left = int(self.headers.get("Content-Length") or 0)
                 except ValueError:
                     return
                 if not 0 < left <= MAX_BODY:
                     return
+                deadline = time.monotonic() + DROP_DEADLINE_S
                 try:
                     while left > 0:
-                        chunk = self.rfile.read(min(65536, left))
+                        remaining = deadline - time.monotonic()
+                        if remaining <= 0:
+                            return
+                        self.connection.settimeout(remaining)
+                        chunk = self.rfile.read1(min(65536, left))
                         if not chunk:
                             return
                         left -= len(chunk)
                 except OSError:
                     return
+                finally:
+                    self.connection.settimeout(self.timeout)      # the reply is sent with the usual timeout
 
             def _gate(self):
                 """Path, Origin and key checks, from the headers only. Returns True if the request may go on."""
@@ -452,7 +463,7 @@ class ToolEmulator:
     def __exit__(self, *a):
         self.stop()
 
-    # ---- faults and the probe ledger (since 0.6) ----
+    # ---- faults and the probe ledger (since 0.7) ----
 
     def arm_faults(self, faults):
         """Set the pending faults, {(tool, fee_id): mode}, in place of those still pending. Each applies to the next

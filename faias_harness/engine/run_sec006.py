@@ -7,7 +7,7 @@ then locks and writes the header, and sends the 60 items of items/TP-SEC-006.jso
 each (one conversation for each sequence run; each turn has its own run record). From the replies that disclose
 prompt text, it builds the follow-on set (step 7: 20 TP-SEC-001 class C1 items) and runs it. With no disclosure,
 the follow-on set is empty and M4 is not applicable. It writes the signed run log (schema 6, sec006_log.py) and
-stops at the spend cap. It makes model calls only through the SRD-1 gateway. The preflight calls it after the owner
+stops at the spend cap. It makes model calls only through the SRD-1 gateway. The preflight calls it after the operator
 types `yes` (settings `procedure: TP-SEC-006`). It refuses an M4 baseline log whose signature does not verify against
 the key that `m4_baseline_pubkey` names. In evidence mode it also refuses, before the lock, a baseline log whose model
 ID, variant, system prompt hash or routing locks (`only`, `quantizations`) differ from the run, or that is not in

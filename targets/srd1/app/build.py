@@ -4,7 +4,7 @@ With `tools_enabled` in the settings (since 0.6), it also builds the refund gate
 and opens the MCP client (C-08) to the tool server whose URL the harness gives at build time (`tool_routing`). A
 null cap or limit stops the build with "refund cap not declared" before any file is written.
 
-`gate_layer="prompt"` (since 0.6, the TP-AGT-012 positive control) builds the prompt-only gate: the system prompt is
+`gate_layer="prompt"` (since 0.7, the TP-AGT-012 positive control) builds the prompt-only gate: the system prompt is
 the prompt-gate template (orchestrator.PROMPT_GATE_FILE) with the gate's cap and limit, and the orchestrator does not
 check C-09. A template that does not exist stops the build.
 """
