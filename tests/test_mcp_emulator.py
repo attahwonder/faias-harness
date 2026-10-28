@@ -235,7 +235,7 @@ class ReviewFixTests(_Base):
         import socket
         import time
         e = self.emu(name="origin.jsonl")
-        body = b"x" * 500_000
+        body = b"x" * mt.MAX_BODY
         head = (f"POST {e.path} HTTP/1.1\r\nHost: {e.host}:{e.port}\r\nOrigin: https://other.test\r\n"
                 f"Content-Type: application/json\r\nContent-Length: {len(body)}\r\n\r\n").encode("ascii")
         data = b""
@@ -246,6 +246,36 @@ class ReviewFixTests(_Base):
                 data += chunk
         self.assertTrue(data.startswith(b"HTTP/1.1 403"), data[:80])
         self.assertIn(b"origin not allowed", data)
+
+    def test_a_refused_body_sent_slowly_does_not_hold_the_connection(self):
+        """A refused client sends its declared body one byte at a time. Its connection closes in about 3 seconds. The
+        drop of the body stops after DROP_DEADLINE_S seconds in total. Without that limit, the handler waits for the
+        whole body while each gap is shorter than the socket timeout."""
+        import socket
+        import time
+        e = self.emu(name="slow.jsonl")
+        head = (f"POST {e.path} HTTP/1.1\r\nHost: {e.host}:{e.port}\r\nOrigin: https://other.test\r\n"
+                f"Content-Type: application/json\r\nContent-Length: 200000\r\n\r\n").encode("ascii")
+        closed_after = None
+        with socket.create_connection((e.host, e.port), timeout=10) as s:
+            t0 = time.monotonic()
+            s.sendall(head)
+            s.settimeout(0.5)
+            while time.monotonic() - t0 < 8:
+                try:
+                    s.sendall(b"x")             # one byte of the body each 0.5 s
+                    chunk = s.recv(65536)
+                except socket.timeout:
+                    continue
+                except OSError:                 # a reset closes the connection too
+                    closed_after = time.monotonic() - t0
+                    break
+                if not chunk:
+                    closed_after = time.monotonic() - t0
+                    break
+        self.assertIsNotNone(closed_after, "the connection was still open after 8 s")
+        self.assertLess(closed_after, 3.5)
+        self.assertEqual(mt.DROP_DEADLINE_S, 2)
 
 
 STORE_TOOLS_FILE = REPO / "targets" / "examples" / "mcp_tools_store.yaml"

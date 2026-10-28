@@ -31,7 +31,8 @@ What it does:
 - It offers tools only: tools/list and tools/call, with server/discover (modern) or initialize (legacy), and ping.
 - It refuses a request whose Origin header is present and not on the allowed list (HTTP 403), and, with an API key
   variable set, a request without the matching key header (HTTP 401). These checks use the headers only. A refused
-  body is read and dropped, never parsed. Then the connection is closed. The key comes from an environment variable and never goes in
+  body is read and dropped, never parsed. Then the connection is closed. The read stops after 2 seconds in total, so
+  the close can reset the connection of a slow client. The key comes from an environment variable and never goes in
   the ledger or a message. A connection that sends nothing for 15 seconds is closed; at most 256 legacy sessions
   are kept.
 - It appends one line to the ledger for each tools/call, including a call that it refuses (an unknown tool, or
@@ -77,6 +78,7 @@ META_SERVER = "io.modelcontextprotocol/serverInfo"
 META_CAPS = "io.modelcontextprotocol/clientCapabilities"
 MAX_SESSIONS = 256          # legacy sessions kept at most; the oldest is dropped first
 SOCKET_TIMEOUT_S = 15       # a connection that sends nothing for this long is closed
+DROP_DEADLINE_S = 2         # the read and drop of a refused body stops after this many seconds in total
 TOOL_NAME = re.compile(r"[A-Za-z0-9_.\-]{1,64}")
 LOOPBACK = ("127.0.0.1", "::1", "localhost")
 MAX_BODY = 1_000_000
@@ -304,9 +306,9 @@ class ToolEmulator:
             def _refuse(self, status, message, drop_body=True):
                 """Refuse the request and close the connection, so that it cannot fall out of step.
 
-                The body is not parsed. The declared body (at most MAX_BODY bytes) is read and dropped first. If
-                bytes stay unread, the close sends a reset. On Windows, the reset can reach the client before the
-                reply."""
+                The body is not parsed. The declared body (at most MAX_BODY bytes) is read and dropped first, for at
+                most DROP_DEADLINE_S seconds. If bytes stay unread, the close sends a reset. On Windows, the reset can
+                reach the client before the reply."""
                 if drop_body:
                     self._drop_body()
                 self.close_connection = True
@@ -315,21 +317,30 @@ class ToolEmulator:
                 return False
 
             def _drop_body(self):
-                """Read and drop the declared body. It is never parsed. A timeout or a reset ends the read."""
+                """Read and drop the declared body. It is never parsed. A timeout or a reset ends the read. The read
+                also ends DROP_DEADLINE_S seconds after it starts. So a slow client cannot hold the handler. read1
+                returns the bytes that have come. A plain read(n) waits for all n bytes."""
                 try:
                     left = int(self.headers.get("Content-Length") or 0)
                 except ValueError:
                     return
                 if not 0 < left <= MAX_BODY:
                     return
+                deadline = time.monotonic() + DROP_DEADLINE_S
                 try:
                     while left > 0:
-                        chunk = self.rfile.read(min(65536, left))
+                        remaining = deadline - time.monotonic()
+                        if remaining <= 0:
+                            return
+                        self.connection.settimeout(remaining)
+                        chunk = self.rfile.read1(min(65536, left))
                         if not chunk:
                             return
                         left -= len(chunk)
                 except OSError:
                     return
+                finally:
+                    self.connection.settimeout(self.timeout)      # the reply is sent with the usual timeout
 
             def _gate(self):
                 """Path, Origin and key checks, from the headers only. Returns True if the request may go on."""
