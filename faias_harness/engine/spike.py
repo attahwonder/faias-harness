@@ -6,6 +6,12 @@ the set in the settings (`item_set`: the 131 items and 25 clean-baseline request
 (the `conversation` capability), reads the trace of each run through the `traces` capability, scores the
 replies, writes the signed run log, and stops at the spend cap. It is called by the preflight after the owner
 types `yes`. It makes model calls only through the SRD-1 gateway.
+
+SRD-1's system prompts hold two staged placeholders (a credential and an endpoint; engine/sec006.py). The engine
+finds them in the prompt that it gives SRD-1. It redacts each request and each reply with `sec006.redact` before it
+scores and stores them, so the run log and the Inspect log hold the redacted text. Each run record holds the counts
+in `placeholders`. The redaction misses the forms that REDACTION_NOTE names. SRD-1's own trace store
+(`srd1_trace.jsonl`) is not redacted: it is the target's record.
 """
 import sys
 import time
@@ -17,10 +23,18 @@ from urllib.parse import urlsplit
 from ..adapters.srd1_http import Srd1ChatTarget
 from ..egress import EgressClient, EgressLog
 from ..errors import CapReached
-from . import runlog, sec001, toolrun
+from . import runlog, sec001, sec006, toolrun
 
 REPO = Path(__file__).resolve().parents[2]
 LOCAL_MARGIN_S = 30.0
+# The header line of a TP-SEC-001 log on SRD-1 about the redaction. It names no placeholder value and no marking.
+REDACTION_NOTE = ("SRD-1's system prompts hold two staged placeholders, a credential and an endpoint. Each request "
+                  "and reply is redacted with sec006.redact before it is scored and stored. Each run record holds the "
+                  "counts in placeholders. The redaction misses these forms: a cut copy in which the marking is not "
+                  "whole or has spaces; a reversed, translated or encoded copy (other than Base64 of "
+                  f"{sec006.BASE64_MIN} or more characters); a copy with a letter that is not ASCII; and a part of a "
+                  f"value, unless parts of {sec006.PART_MIN} or more letters and digits in the same reply cover all "
+                  "of it.")
 
 
 def _srd1():
@@ -106,11 +120,14 @@ class _Runner:
     """One run of one item: send it, read its trace, score it, write its record. Both engines call `one`.
 
     With `halt_on_mismatch` (evidence mode), a reply from a host other than the locked one is recorded and the run
-    stops. After a stop, `one` sends nothing and returns None.
+    stops. After a stop, `one` sends nothing and returns None. `placeholders` are the (kind, value) pairs of the
+    system prompt; `one` redacts the request and the reply with them before it scores and stores, and returns the
+    redacted reply.
     """
 
-    def __init__(self, log, clock_ns, halt_on_mismatch=False):
+    def __init__(self, log, clock_ns, halt_on_mismatch=False, placeholders=()):
         self.log, self.clock_ns, self.halt_on_mismatch = log, clock_ns, halt_on_mismatch
+        self.placeholders = tuple(placeholders)
         self.status, self.error = "complete", None
         self.runs, self.hosts, self.models = [], Counter(), Counter()
         self.mismatches = self.usage_missing = self.retries = self.host_not_reported = 0
@@ -141,6 +158,11 @@ class _Runner:
         if self.stopped:
             self._stop(item, n, t_ns)
             return None
+        request, request_counts = sec006.redact(item.text, self.placeholders)
+        if reply is not None:       # a reply of None stays None, as before the redaction
+            reply, reply_counts = sec006.redact(reply, self.placeholders)
+        else:
+            reply_counts = dict.fromkeys(sec006.COUNTS, 0)
         if item.cls == sec001.BASELINE:     # a clean-baseline request is recorded, never scored
             sc = sec001.Score(False, "baseline", "")
             outcome = sec001.baseline_outcome(reply, turn.get("finish_reason"), turn.get("blocked"))
@@ -156,7 +178,8 @@ class _Runner:
         self.runs.append({"item": item.id, "cls": item.cls, "run": n, "success": sc.success, "outcome": outcome})
         self.last_no_result = outcome == "no_result"
         self.log.write({"type": "run", "item": item.id, "class": item.cls, "run": n, "t_ns": t_ns,
-                        "time": runlog.iso(t_ns), "request": item.text, "reply": reply,
+                        "time": runlog.iso(t_ns), "request": request, "reply": reply,
+                        "placeholders": {"request": request_counts, "reply": reply_counts},
                         "score": {"success": sc.success, "kind": sc.kind, "evidence": sc.evidence},
                         "outcome": outcome, "finish_reason": turn.get("finish_reason"), "blocked": turn.get("blocked"),
                         "served_host": turn["served_host"], "served_model": turn["model_served"],
@@ -246,6 +269,7 @@ def execute(settings, *, run_dir, sign_key, confirmation, probes=None, base_url=
                                  system_prompt_sha256=srd1.orchestrator.prompt_sha256, probes=probes, repo=repo,
                                  variant=variant, engine=engine,
                                  tools=tool_run.header(srd1.orchestrator.definitions_sha256) if tool_run else None)
+    header["redaction"] = REDACTION_NOTE
     runlog.lock_header(header, clock_ns())
     log = runlog.RunLog(log_path)
     try:
@@ -255,7 +279,8 @@ def execute(settings, *, run_dir, sign_key, confirmation, probes=None, base_url=
         target = Srd1ChatTarget(srd1.server.url, egress, timeout=gw.max_call_seconds(egress.timeout) + LOCAL_MARGIN_S,
                                 tools_url=tool_run.url if tool_run else None,
                                 ledger_path=tool_run.emulator.ledger.path if tool_run else None)
-        runner = _Runner(log, clock_ns, halt_on_mismatch=settings.mode == "evidence")
+        runner = _Runner(log, clock_ns, halt_on_mismatch=settings.mode == "evidence",
+                         placeholders=sec006.find_placeholders([system_prompt]))
         srd1.server.start()
         try:
             k, items = settings.runs_per_item, run_items(settings, repo=repo)
