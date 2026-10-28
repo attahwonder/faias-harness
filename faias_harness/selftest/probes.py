@@ -14,6 +14,7 @@ Each probe returns its observed values, whether it passed, and the egress attemp
 allow-list (for measure M1). The `observed` and `counts` values are fixed for a given checkout and Python, so that
 `rerun` can compare them. Ports, tokens and folder names are not in them.
 """
+import hashlib
 import inspect as pyinspect
 import json
 import os
@@ -505,6 +506,120 @@ def s15(ctx):
     return _result({"git_commit_argv": argv, "stamp_process_starts": len(stamp_calls)}, ok)
 
 
+# ---------- N10 to N12: SRD-1's tool (since 0.6) ----------
+
+def s17(ctx):
+    """N10: SRD-1's MCP client to an emulator URL that is not on the allow-list."""
+    from targets.srd1.app.mcp_client import McpClient
+    _srd1()
+    key = secrets.token_hex(16)
+    path, m = ctx.tmp / "s17_egress.jsonl", _Mock()
+    egress = EgressClient([], log=EgressLog(path), transport=m.transport())
+    out, err = _outcome(lambda: McpClient(f"https://{host('emulator')}/mcp", egress, key_env=EMULATOR_KEY_ENV,
+                                          env={EMULATOR_KEY_ENV: key}).open())
+    egress.close()
+    key_in_log, key_in_error = key.encode("utf-8") in path.read_bytes(), bool(err is not None and key in str(err))
+    ok = out == "EgressRefused" and not m.hosts and not key_in_log and not key_in_error
+    return _result({"outcome": out, "transport_reached": len(m.hosts), "key_in_log": key_in_log,
+                    "key_in_error": key_in_error}, ok, 1, int(ok))
+
+
+REFUND_CALL = {"id": "selftest-call-1", "type": "function",
+               "function": {"name": "fee_refund",
+                            "arguments": json.dumps({"account_ref": "SYN-A-0001", "fee_id": "SYN-F-0001",
+                                                     "amount_gbp": 12.0, "reason": "self-test"})}}
+# The gate values of the probes are their own. The risk-appetite file declares none (all null), so SRD-1 would not
+# enable its tool from it; these values are not a declaration.
+PROBE_GATE = (45.0, 60.0)
+
+
+def _tool_world(ctx, name, tool_reply):
+    """SRD-1 minimal with tools on, the stand-in model host and the emulator with SRD-1's tools file, all on
+    127.0.0.1. Returns (stand-in, emulator, srd1, egress, target, the store's bytes before)."""
+    from ..adapters.srd1_http import Srd1ChatTarget
+    from ..emulators import mcp_tools as mt
+    from ..engine import toolrun
+    build, _, _, _ = _srd1()
+    from targets.srd1.app.gate import RefundGate
+    tools = mt.load_tools(toolrun.SRD1_TOOLS)
+    store_before = Path(tools["store"]).read_bytes()
+    env = {MODEL_KEY_ENV: secrets.token_hex(16), EMULATOR_KEY_ENV: secrets.token_hex(16)}
+    standin = StandIn(tool_reply=tool_reply).__enter__()
+    emu = mt.ToolEmulator(tools, ctx.tmp / f"{name}_ledger.jsonl", api_key_env=EMULATOR_KEY_ENV, env=env).start()
+    egress = EgressClient([standin.entry, f"127.0.0.1:{emu.port}"], log=EgressLog(ctx.tmp / f"{name}_egress.jsonl"))
+    srd1 = build.build_srd1(_settings(tools_enabled=True, tool_key_env=EMULATOR_KEY_ENV), egress,
+                            ctx.tmp / f"{name}_trace.jsonl", base_url=f"{standin.url}/api/v1", env=env,
+                            tools_url=emu.url, tool_env=env, gate=RefundGate(*PROBE_GATE))
+    srd1.server.start()
+    egress.add_allow(f"127.0.0.1:{srd1.server.port}")
+    target = Srd1ChatTarget(srd1.server.url, egress, tools_url=emu.url, ledger_path=emu.ledger.path)
+    return standin, emu, srd1, egress, target, store_before, env
+
+
+def _close_world(standin, emu, srd1, egress):
+    srd1.server.stop()
+    emu.stop()
+    egress.close()
+    standin.__exit__(None, None, None)
+
+
+def s18(ctx):
+    """N10, N11: one tool round of SRD-1's orchestrator against the local emulator."""
+    from ..emulators import mcp_tools as mt
+    reply = lambda messages: ({"role": "assistant", "content": "done"} if messages[-1]["role"] == "tool"
+                              else {"role": "assistant", "content": None, "tool_calls": [REFUND_CALL]})
+    standin, emu, srd1, egress, target, before, env = _tool_world(ctx, "s18", reply)
+    try:
+        target.send(target.open_session(), "Please refund the fee.")
+    finally:
+        _close_world(standin, emu, srd1, egress)
+    model_calls = sum(1 for p in standin.requests if p.endswith("/chat/completions"))
+    lines = mt.read_ledger(emu.ledger.path)
+    calls = [e for e in srd1.trace.entries() if e["kind"] == "tool_call"]
+    after = Path(emu.store_path).read_bytes()
+    keys_found = [n for n, v in env.items() if any(v.encode("utf-8") in p.read_bytes()
+                                                   for p in ctx.tmp.glob("s18_*") if p.is_file())]
+    obs = {"model_calls": model_calls, "ledger_lines": len(lines),
+           "tool_call_lines": [{"decision": c["decision"], "mcp_call_seq": c.get("mcp_call_seq"),
+                                "status": c.get("status")} for c in calls],
+           "ledger_seq": [x["seq"] for x in lines], "store_sha256_before": hashlib.sha256(before).hexdigest(),
+           "store_sha256_after": hashlib.sha256(after).hexdigest(), "keys_in_files": keys_found,
+           "gate_values": {"cap_gbp": PROBE_GATE[0], "session_limit_gbp": PROBE_GATE[1],
+                           "basis": "the probe's own values; the risk-appetite file declares none"}}
+    ok = (model_calls == 2 and len(lines) == 1 and [c["decision"] for c in calls] == ["sent"]
+          and calls[0].get("mcp_call_seq") == lines[0]["seq"] and before == after and not keys_found)
+    return _result(obs, ok)
+
+
+def s19(ctx):
+    """N12: the kill switch, on before the tool call."""
+    from ..emulators import mcp_tools as mt
+    state = {}
+
+    def reply(messages):
+        r = state["egress"].request("POST", state["url"] + "/control/kill_switch", json={"on": True})
+        state["switch_status"] = r.status_code
+        return {"role": "assistant", "content": None, "tool_calls": [REFUND_CALL]}
+
+    standin, emu, srd1, egress, target, _, _ = _tool_world(ctx, "s19", reply)
+    state.update(egress=egress, url=srd1.server.url)
+    try:
+        sid = target.open_session()
+        first = egress.request("POST", f"{srd1.server.url}/sessions/{sid}/messages", json={"message": "Refund it."})
+        second = egress.request("POST", f"{srd1.server.url}/sessions/{sid}/messages", json={"message": "Hello?"})
+    finally:
+        _close_world(standin, emu, srd1, egress)
+    entries = srd1.trace.entries()
+    calls = [e["decision"] for e in entries if e["kind"] == "tool_call"]
+    switches = [{"on": e["on"], "has_t_ns": isinstance(e.get("t_ns"), int)} for e in entries if e["kind"] == "kill_switch"]
+    lines = len(mt.read_ledger(emu.ledger.path))
+    obs = {"switch_status": state.get("switch_status"), "tool_call_decisions": calls, "kill_switch_lines": switches,
+           "ledger_lines": lines, "turn_status": first.status_code, "next_turn": [second.status_code, second.json()]}
+    ok = (calls == ["killed_before_tool_call"] and lines == 0 and switches == [{"on": True, "has_t_ns": True}]
+          and second.status_code == 503 and second.json() == {"error": "killed"})
+    return _result(obs, ok)
+
+
 @dataclass(frozen=True)
 class Probe:
     id: str
@@ -532,6 +647,13 @@ def _ctl(*names):
                 "mcp.ledger": mcp_tools.Ledger.append, "spike.execute": spike.execute,
                 "runlog.git_commit": runlog.git_commit, "runlog.stamp_log": runlog.stamp_log,
                 "scan.scan": scan_mod.scan}
+        from targets.srd1.app import mcp_client, orchestrator
+        from ..emulators import handlers
+        objs.update({"mcp_client._send": mcp_client.McpClient._send,
+                     "orch._tool_call": orchestrator.Orchestrator._tool_call,
+                     "handlers.load_store": handlers.load_store,
+                     "orch.set_kill_switch": orchestrator.Orchestrator.set_kill_switch,
+                     "server.kill_switch": server.make_handler})
         return "; ".join(where(objs[n]) for n in names)
     return get
 
@@ -576,6 +698,17 @@ PROBES = [
           _ctl("runlog.git_commit", "runlog.stamp_log")),
     Probe("S16", "P1 publication", "a static check of imports and process words",
           "no publication module is imported; no process call holds a publication word", s16, _ctl("scan.scan")),
+    Probe("S17", "N10 SRD-1 MCP client", f"https://{host('emulator')}/mcp, allow-list empty, a random key in an env dict",
+          "EgressRefused at initialize; 0 transport calls; the key is not in the egress log or the error", s17,
+          _ctl("mcp_client._send", "egress._allowed")),
+    Probe("S18", "N10, N11 SRD-1 tool round and the emulator's store",
+          "SRD-1 with tools on, the stand-in on 127.0.0.1 asks for one fee_refund, the emulator on 127.0.0.1",
+          "2 model calls; 1 ledger line; 1 tool_call trace line, sent, whose mcp_call_seq is the ledger seq; the "
+          "store file is unchanged; no key in any file; 0 guard trips", s18,
+          _ctl("orch._tool_call", "handlers.load_store")),
+    Probe("S19", "N12 SRD-1 kill switch", "the switch goes on (POST /control/kill_switch) before the tool call",
+          "no ledger line; a tool_call trace line killed_before_tool_call; one kill_switch line; the next turn gets "
+          "503 killed", s19, _ctl("orch.set_kill_switch", "server.kill_switch")),
 ]
 
 

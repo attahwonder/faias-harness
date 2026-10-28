@@ -180,6 +180,16 @@ class SelftestRunTests(unittest.TestCase):
         self.assertEqual(s14["observed"]["engine"], "inspect_ai" if spike.inspect_available() else "direct")
         self.assertEqual((s14["counts"]["guard_trips"], s14["observed"]["all_loopback"]), (0, True))
 
+    def test_the_tool_probes_s17_to_s19(self):
+        """T18: 19 probe records; the three tool probes pass with the counts of the design."""
+        self.assertEqual(list(self.probes), [f"S{n}" for n in range(1, 20)])
+        s17, s18, s19 = (self.probes[k]["observed"] for k in ("S17", "S18", "S19"))
+        self.assertEqual((s17["outcome"], s17["key_in_log"], s17["key_in_error"]), ("EgressRefused", False, False))
+        self.assertEqual((s18["model_calls"], s18["ledger_lines"], s18["keys_in_files"]), (2, 1, []))
+        self.assertEqual(s18["store_sha256_before"], s18["store_sha256_after"])
+        self.assertEqual((s19["tool_call_decisions"], s19["ledger_lines"], s19["next_turn"]),
+                         (["killed_before_tool_call"], 0, [503, {"error": "killed"}]))
+
     def test_verify_and_one_changed_byte(self):
         sig = self.log.with_name(self.log.name + ".sig")
         rc, out = call(runlog.main, ["verify", "--log", str(self.log), "--sig", str(sig), "--pubkey", str(self.pub)])
