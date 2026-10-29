@@ -108,13 +108,13 @@ class DigestTests(unittest.TestCase):
         self.assertEqual(hits({".github/workflows/tests.yml": ok}), [])
         self.assertEqual(hits({".github/workflows/tests.yml": f"    uses: actions/setup-python@{COMMIT}\n"}), [])
         for name in ("tests.yml", ".github/tests.yml", ".github/workflows/tests.yaml", "docs/workflows/tests.yml",
-                     ".github/workflows/notes.md"):
+                     ".github/workflows/notes.md", ".github/workflows/sub/tests.yml"):
             with self.subTest(name=name):
                 self.assertEqual(len(hits({name: ok})), 1)
         for text in (f"      - uses: actions/checkout@{DIGEST}\n", f"      - uses: actions/checkout@{COMMIT.upper()}\n",
                      f"      - uses: actions/checkout@{COMMIT}  # {COMMIT}\n", f"      - run: echo {COMMIT}\n",
                      f"      - uses: actions@{COMMIT}\n", f"      - uses: a/b/c@{COMMIT}\n",
-                     f"      - uses: actions/checkout@{COMMIT} {COMMIT}\n"):
+                     f"      - uses: actions/checkout@{COMMIT} {COMMIT}\n", f"      - uses: ./x@{COMMIT}\n"):
             with self.subTest(text=text):
                 self.assertEqual(len(hits({".github/workflows/tests.yml": text})), 1)
 

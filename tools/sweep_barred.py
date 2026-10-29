@@ -51,9 +51,10 @@ SKIP_DIRS = {".git", "__pycache__", "runs", ".pytest_cache"}
 # line of a .jsonl or .jsonl.sig file that is one JSON object with no repeated key. In it, each such run must be the
 # whole value of a digest field. A JSON number is not such a value. A digest field is named sha256, hash or head, or
 # ends in _sha256, _hash or _head, or is git_commit. Its value is exactly 40 or 64 lower-case hex characters. Every
-# other key and string of the line is still read. The third is a line of a .yml file in .github/workflows/ that pins
-# an action by its commit. Its form is "uses: <owner>/<repo>@<40 lower-case hex>". An optional comment can follow,
-# with no such run. In a file of any other type, each such run is key-like. The other key patterns read the whole
+# other key and string of the line is still read. The third is a line of a .yml file directly in .github/workflows/
+# (GitHub reads no sub-folder) that pins an action by its commit. Its form is "uses: <owner>/<repo>@<40 lower-case
+# hex>", and the owner starts with a letter or a digit (a local action, "./x", takes no ref). An optional comment can
+# follow, with no such run. In a file of any other type, each such run is key-like. The other key patterns read the whole
 # line of each file.
 JSON_LINES = (".jsonl", ".jsonl.sig")
 HEX_PATTERN = KEY_PATTERNS[-1]
@@ -61,7 +62,7 @@ DIGEST_FIELD = re.compile(r"(?:[a-z0-9]+_)*(?:sha256|hash|head)|git_commit")
 DIGEST_VALUE = re.compile(r"[0-9a-f]{64}|[0-9a-f]{40}")
 SHA256SUM_LINE = re.compile(r"[0-9a-f]{64}  ([^\s/\\]+)")
 WORKFLOWS = ".github/workflows/"
-PINNED_ACTION = re.compile(r"\s*(?:-\s+)?uses:\s+[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+@([0-9a-f]{40})(?:\s+#.*)?")
+PINNED_ACTION = re.compile(r"\s*(?:-\s+)?uses:\s+[A-Za-z0-9][A-Za-z0-9_.-]*/[A-Za-z0-9_.-]+@([0-9a-f]{40})(?:\s+#.*)?")
 
 
 def json_strings(node):
@@ -101,11 +102,11 @@ def unique_keys(pairs):
 def only_digests(line, rel):
     """True when each run of 40 or more hex characters in the line is a digest or a pinned commit. The line is in
     sha256sum form in a .sha256 file. Or it is one JSON object with no repeated key, in a .jsonl or .jsonl.sig file.
-    Or it pins an action by its commit, in a .yml file in .github/workflows/."""
+    Or it pins an action by its commit, in a .yml file directly in .github/workflows/."""
     if rel.endswith(".sha256"):
         m = SHA256SUM_LINE.fullmatch(line)
         return bool(m) and not HEX_PATTERN.search(m.group(1))
-    if rel.startswith(WORKFLOWS) and rel.endswith(".yml"):
+    if rel.startswith(WORKFLOWS) and "/" not in rel[len(WORKFLOWS):] and rel.endswith(".yml"):
         m = PINNED_ACTION.fullmatch(line)
         return bool(m) and HEX_PATTERN.findall(line) == [m.group(1)]
     if not rel.endswith(JSON_LINES):
