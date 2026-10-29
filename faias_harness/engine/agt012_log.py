@@ -17,10 +17,15 @@ their bases, the code block, the lock over the scorer and record hashes, the Ed2
   variant            standard, positive_control or prompt_free_gate
 
 A run record holds the decision trace lines and the ledger lines, not the reply text; the scorer reads them. In those
-lines, the model-written `arguments.reason` is its SHA-256 (`reason_sha256`). The full trace and ledger stay in the
-run folder. A run record also holds `turn_error`, `blocked` and `finish_reason`, so rescore derives the outcome from
-the record alone. A bypass record is written at once after a run with a bypass. A containment record holds the
-quantities of the containment exercise. The last record is the summary, with M1, M3, M4 and M6.
+lines, each string value in a tool call's `arguments` is its SHA-256 (hash_arguments). The identifier fields
+(agt012.ID_FIELDS) stay as text, because the scorer reads them. Key names stay as text too. `check` fails a record
+that holds other text there. Each string in the `amount_gbp` of a `gate_hold` line is its SHA-256 too, and `check`
+fails one that is not. So is a `tool` name that is not in the target's tool list (hash_line). The full trace and
+ledger stay in the run folder. A run record also holds `turn_error`,
+`blocked` and `finish_reason`, so rescore derives the outcome from the record alone. A bypass record is written at
+once after a run with a bypass. A containment record holds the quantities of the containment exercise and any send
+error. It also holds `next_message_killed`, so rescore derives `acknowledged` from the record. The last record is
+the summary, with M1, M3, M4 and M6.
 
 The self-test gate. A run of TP-AGT-012 needs a containment self-test log that passes. Its code manifest must match
 the checkout. `isolation.selftest` carries its SHA-256 and time. `check` fails a header without them, or whose
@@ -38,6 +43,16 @@ STORE_MODES = ("hash_only",)        # schema 7 holds no reply text: the scorer r
 VARIANTS = ("standard", "positive_control", "prompt_free_gate")
 LABEL = ("not a finding; one action class (fee refund); items from one model family; no second reviewer; no "
          "clearance path")
+
+STORE_NOTE = (
+    "each run record holds the SHA-256 of each request and reply, the decision trace lines and the ledger lines; "
+    "never the reply text (PLAYBOOK_AGT_012.md line 26). In the lines of the run and containment records, each string "
+    "value in a tool call's arguments is its SHA-256. Two identifier fields stay as text. They are account_ref and "
+    "fee_id. The scorer compares them with the store, so rescore needs them. Key names, numbers, booleans and nulls stay as they "
+    "are. A model can write text in a key name or an identifier field, and that text stays in the log. Each string in "
+    "the amount_gbp of a gate_hold line is its SHA-256 too. So is a tool name that is not in the target's tool list "
+    "(tools.names). The tool_call_id of a tool_call line is text from the provider, and it stays. The full trace and "
+    "ledger stay in the run folder.")
 
 LOCK_COVERS = ("procedure, thresholds with bases, settings hash, routing locks, model ID, system prompt hash, item "
                "set, risk appetite (cap, session limit, time-to-halt, with bases), self-test log hash, structural "
@@ -102,12 +117,7 @@ def build_header(settings, *, allow_hosts, items, isolation, action_classes, str
                    "scoring": "deterministic; the scorer reads the trace and the ledger, never the reply text"},
         "isolation": isolation, "action_classes": action_classes, "structural_inspection": structural_inspection,
         "risk_appetite": risk_appetite, "emulator": emulator, "containment_plan": containment_plan,
-        "store": {"mode": "hash_only", "note": "each run record holds the SHA-256 of each request and reply, the "
-                                               "decision trace lines and the ledger lines; never the reply text "
-                                               "(PLAYBOOK_AGT_012.md line 26). In the lines of the run and "
-                                               "containment records, the model-written arguments.reason is its "
-                                               "SHA-256 (reason_sha256). The full trace and ledger stay in the run "
-                                               "folder."},
+        "store": {"mode": "hash_only", "note": STORE_NOTE},
         "variant": {"name": variant, "purpose": _variant_purpose(variant)},
         "run_engine": runlog._engine_facts(engine),
         "scorer": SCORER_STATUS,
@@ -154,7 +164,7 @@ NOT_IN_RUN = [
     "a clearance service (lines 21, 37): SRD-1 minimal has no approval queue (C-11); a hold is recorded and never "
     "cleared, so no run shows a correct affirmative clearance; vector (c) is built as back-office faults (a reading)",
     "step 12 and M6 (lines 41, 52): one deployment",
-    "a board-approved risk appetite (lines 12, 33, 51): the owner declares the values in the role R-04; a stated limit",
+    "a board-approved risk appetite (lines 12, 33, 51): the owner declared the values in the role R-04; a stated limit",
     "the two-week artefact lead and prior gate testing (line 13): none",
     "the guardrail layer C-10 and the retrieval stack C-05: not built",
     "reply-text judgements: whether the agent sought confirmation (line 37) and whether a no_attempt reply refused; "
@@ -179,6 +189,62 @@ def lock_extra(header):
             "emulator_faults": (header.get("emulator") or {}).get("faults"),
             "containment_plan": header.get("containment_plan"),
             "store": header.get("store")}
+
+
+# ---------- the text in tool-call arguments ----------
+
+def hash_arguments(args):
+    """A copy of a tool call's `arguments`. Each string value in it, at any depth, is its SHA-256. The string value
+    of an identifier field (agt012.ID_FIELDS) stays, because the scorer reads it. Key names, numbers, booleans and
+    nulls stay. The input is not changed."""
+    if isinstance(args, dict):
+        return {k: v if k in agt012.ID_FIELDS and isinstance(v, str) else _hash_strings(v) for k, v in args.items()}
+    return _hash_strings(args)
+
+
+def _hash_strings(node):
+    if isinstance(node, str):
+        return runlog.sha256_hex(node)
+    if isinstance(node, dict):
+        return {k: _hash_strings(v) for k, v in node.items()}
+    if isinstance(node, list):
+        return [_hash_strings(v) for v in node]
+    return node
+
+
+def hash_line(line, tools):
+    """A copy of one trace or ledger line, with the text that a model wrote as its SHA-256. That text is each string
+    in `arguments` (hash_arguments) and each string in the `amount_gbp` of a `gate_hold` line. It is also a `tool`
+    name that is not in `tools`, the target's tool list. The input is not changed."""
+    out = dict(line)
+    if "arguments" in out:
+        out["arguments"] = hash_arguments(out["arguments"])
+    if out.get("kind") == "gate_hold" and "amount_gbp" in out:
+        out["amount_gbp"] = _hash_strings(out["amount_gbp"])
+    if isinstance(out.get("tool"), str) and out["tool"] not in tools:
+        out["tool"] = runlog.sha256_hex(out["tool"])
+    return out
+
+
+def _text_paths(node, where):
+    """The paths under `where` that hold text, a string that is not a SHA-256. A path names keys, never the text."""
+    if isinstance(node, str):
+        return [] if runlog.HEX64.fullmatch(node) else [where]
+    if isinstance(node, dict):
+        return [p for k, v in node.items() for p in _text_paths(v, f"{where}.{k}")]
+    if isinstance(node, list):
+        return [p for i, v in enumerate(node) for p in _text_paths(v, f"{where}[{i}]")]
+    return []
+
+
+def text_in_arguments(args):
+    """The paths in a tool call's `arguments` that hold text. Text is a string that is not a SHA-256. The string
+    value of an identifier field does not count. A path names keys, never the text. hash_arguments gives arguments
+    with no such path."""
+    if not isinstance(args, dict):
+        return _text_paths(args, "arguments")
+    return [p for k, v in args.items() if not (k in agt012.ID_FIELDS and isinstance(v, str))
+            for p in _text_paths(v, f"arguments.{k}")]
 
 
 # ---------- checks on the log ----------
@@ -290,7 +356,7 @@ def check(recs, repo=runlog.REPO, use_repo=True):
             if corpus.get("items_sha256") != agt012.items_digest(items):
                 problems.append("header: the items hash differs from the item set in the repository")
         except FileNotFoundError:
-            pass            # the item file is not shipped yet, so only the log is checked
+            pass            # the item file is not found, so only the log is checked
     # No text of the log holds the placeholder marking (the prompts hold two staged placeholders).
     if any(sec006_marks(t) for t in _strings(recs)):
         problems.append("the log holds a placeholder value")
@@ -314,6 +380,17 @@ def check(recs, repo=runlog.REPO, use_repo=True):
             run_of = next((x for x in runs if x.get("item") == r.get("item") and x.get("run") == r.get("run")), None)
             if run_of is None or not run_of.get("bypass"):
                 problems.append(f"bypass {r.get('item')}/{r.get('run')}: no run with bypass: true for it")
+        # The lines of a run or containment record hold the text of a call's arguments as its SHA-256 only.
+        if r.get("type") in ("run", "containment"):
+            where = (f"run {r.get('item')}/{r.get('run')}" if r["type"] == "run"
+                     else f"containment {r.get('delay_ms')}/{r.get('run')}")
+            for line in (r.get("trace_lines") or []) + (r.get("ledger_lines") or []):
+                if isinstance(line, dict) and "arguments" in line:
+                    for path in text_in_arguments(line["arguments"]):
+                        problems.append(f"{where}: {path} holds text, not its SHA-256")
+                if isinstance(line, dict) and line.get("kind") == "gate_hold" and "amount_gbp" in line:
+                    for path in _text_paths(line["amount_gbp"], "gate_hold.amount_gbp"):
+                        problems.append(f"{where}: {path} holds text, not its SHA-256")
     containment = [r for r in recs if r.get("type") == "containment"]
     want = len(plan.get("delays_ms") or []) * (plan.get("runs") or 0)
     # A stopped run (the summary status says why) does not run the containment exercise.
@@ -359,7 +436,8 @@ def rescore(recs, repo=runlog.REPO):
             mismatches.append(f"{r.get('item')}/{r.get('run')}: recorded {_canon(recorded)}; now {_canon(now)}")
     for c in containment:
         got = agt012.score_containment(c)
-        for k in ("in_flight_completed", "time_to_last_action_ms", "time_to_quiet_ms", "turn_ended_before_switch"):
+        for k in ("in_flight_completed", "time_to_last_action_ms", "time_to_quiet_ms", "acknowledged",
+                  "turn_ended_before_switch", "no_result"):
             if _canon(got.get(k)) != _canon(c.get(k)):
                 mismatches.append(f"containment {c.get('delay_ms')}/{c.get('run')} {k}: recorded {_canon(c.get(k))}; "
                                   f"now {_canon(got.get(k))}")

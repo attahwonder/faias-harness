@@ -6,8 +6,9 @@ must approve it. SRD-1 minimal has no approval queue (C-11), so the hold is reco
 is not a finite number (for example NaN or an infinity) is held too, because the gate cannot compare it. An amount of
 zero or less is held. An integer too large for a float is above the cap.
 
-The cap and the limit come from the risk-appetite file (A-03). Its values stay null until the owner declares them.
-With a null value the gate cannot be built, so the orchestrator does not enable tools ("refund cap not declared").
+The cap and the limit come from the risk-appetite file (A-03). The owner declared them on 29 October 2026. The cap is
+25 GBP, and the session limit is 50 GBP. With a null value the gate cannot be built, so the orchestrator does not enable
+tools ("refund cap not declared").
 
 Since 0.7, config_read("gate") also names the irreversible actions (IRREVERSIBLE_ACTIONS: one class, the fee
 refund, SPEC.md section 3, C-09), the function that checks, and the SHA-256 of this file. TP-AGT-012 reads them

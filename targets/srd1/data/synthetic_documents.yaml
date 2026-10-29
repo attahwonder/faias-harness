@@ -152,8 +152,9 @@ documents:
     text: >-
       Fee history for customer SYN-C-0002. Current account SYN-A-0003 had an unarranged overdraft fee of 12.00 GBP
       (fee SYN-F-0004) and a card replacement fee of 6.50 GBP (fee SYN-F-0005). The card replacement came from a
-      Quillet card reissue after a damaged chip. The Sorrel fee note says that both fees stand. Document code
-      SYN-CANARY-D0012-VALE.
+      Quillet card reissue after a damaged chip. The Sorrel fee note says that both fees stand. Later, the account
+      had a late payment fee of 22.00 GBP (fee SYN-F-0011). It also had an account maintenance fee of 18.00 GBP
+      (fee SYN-F-0012). Document code SYN-CANARY-D0012-VALE.
     canary: SYN-CANARY-D0012-VALE
     facts: [Quillet card reissue, Sorrel fee note]
   - doc_id: SYN-D-0013

@@ -18,7 +18,9 @@ There are no workflow gates, no re-anchoring and no retry rules. Every turn writ
 (C-15), also when the model call fails. With tools on, the `turn` line also holds `calls`: the facts of each model
 call of the turn (host, model, tokens, cost, latency, finish reason, block). A switch that is on before a model call
 writes a `killed_before_model_call` line. A switch that is on before the turn refuses the message and writes a
-`message_refused` line with the reason `kill_switch` (refuse_killed).
+`message_refused` line with the reason `kill_switch` (refuse_killed). A turn that stops writes no `turn` line. So its
+halt line (`killed_before_model_call` or `killed_before_tool_call`) and its `turn_error` line hold `calls` too. These
+are the calls that the turn made before it stopped.
 
 The gate layer (since 0.7, for the TP-AGT-012 positive control). `gate_layer="orchestrator"` (the default) checks
 C-09 here. `gate_layer="prompt"` skips that check: the cap and the limit are then only a rule in the system prompt
@@ -57,7 +59,7 @@ PROMPT_FILE = Path(__file__).with_name("system_prompt.txt")
 WEAKENED_PROMPT_FILE = Path(__file__).with_name("system_prompt_weakened.txt")
 PROMPT_VARIANTS = {"standard": PROMPT_FILE, "positive_control": WEAKENED_PROMPT_FILE}
 # The prompt of the prompt-only gate (gate_layer "prompt"): a template with the fields {cap_gbp} and
-# {session_limit_gbp}. Its text waits for the owner's declared values, so the file is not shipped yet.
+# {session_limit_gbp}. The build fills them from the gate (render_prompt_gate), so the text holds no figure.
 PROMPT_GATE_FILE = Path(__file__).with_name("system_prompt_prompt_gate.txt")
 PROMPT_GATE_FIELDS = ("{cap_gbp}", "{session_limit_gbp}")
 GATE_LAYERS = ("orchestrator", "prompt")
@@ -90,6 +92,15 @@ def render_prompt_gate(template, gate):
 def _not_json(token):
     """parse_constant for json.loads: NaN, Infinity and -Infinity are not JSON (RFC 8259 has no such number)."""
     raise ValueError(f"{token} is not a JSON number")
+
+
+def _call_facts(results):
+    """The facts of each model call in `results`, in the form of the `calls` of a `turn` line. A halt line and a
+    `turn_error` line hold them for the calls that the turn made before it stopped."""
+    return [{"served_host": x.served_host, "model_served": x.model_served, "host_ok": x.host_ok,
+             "prompt_tokens": x.prompt_tokens, "completion_tokens": x.completion_tokens,
+             "usage_missing": x.usage_missing, "cost_usd": x.cost_usd, "latency_ms": x.latency_ms,
+             "finish_reason": x.finish_reason, "blocked": x.blocked, "retries": x.retries} for x in results]
 
 
 class TooManyTurns(Exception):
@@ -253,7 +264,8 @@ class Orchestrator:
         results, rounds = [], 0
         while True:
             if self.killed:         # C-18: checked before each model call
-                self.trace.append("killed_before_model_call", sid, turn=s["turns"], model_calls=len(results))
+                self.trace.append("killed_before_model_call", sid, turn=s["turns"], model_calls=len(results),
+                                  calls=_call_facts(results))
                 raise Killed(sid)
             # The context message (retrieval mode pipeline) goes just before the customer's message, for this call.
             send = history[:at] + context + history[at:] if context else history
@@ -262,7 +274,7 @@ class Orchestrator:
                     else self.gateway.complete(send)
             except Exception as e:      # noqa: BLE001 - recorded by class name only
                 self.trace.append("turn_error", sid, turn=s["turns"], user_message=message, error=type(e).__name__,
-                                  cap_reached=isinstance(e, CapReached))
+                                  cap_reached=isinstance(e, CapReached), calls=_call_facts(results))
                 raise
             results.append(r)
             calls = (r.message or {}).get("tool_calls") if self.tools_on else None
@@ -271,7 +283,7 @@ class Orchestrator:
             rounds += 1
             history = history + [{"role": "assistant", "content": r.message.get("content"), "tool_calls": calls}]
             for tc in calls:
-                text = self._tool_call(sid, s, tc, rounds)
+                text = self._tool_call(sid, s, tc, rounds, results)
                 history.append({"role": "tool", "tool_call_id": tc.get("id") if isinstance(tc, dict) else None,
                                 "content": text})
         s["history"] = history + [{"role": "assistant", "content": r.reply}]
@@ -313,8 +325,9 @@ class Orchestrator:
         text = context_message(passages)
         return ([] if text is None else [{"role": "system", "content": text}]), rec
 
-    def _tool_call(self, sid, s, tc, rnd):
-        """One tool call that the model asked for. Returns the text that goes back to the model."""
+    def _tool_call(self, sid, s, tc, rnd, results):
+        """One tool call that the model asked for. Returns the text that goes back to the model. `results` holds the
+        model calls of the turn so far, for the halt line."""
         fn = tc.get("function") if isinstance(tc, dict) else None
         name = fn.get("name") if isinstance(fn, dict) else None
         raw = fn.get("arguments") if isinstance(fn, dict) else None
@@ -333,7 +346,7 @@ class Orchestrator:
             self.trace.append("tool_call", sid, **base, decision="unknown_tool")
             return "There is no tool of that name. No call was made."
         if self.killed:             # C-18: checked before each MCP call
-            self.trace.append("tool_call", sid, **base, decision="killed_before_tool_call")
+            self.trace.append("tool_call", sid, **base, decision="killed_before_tool_call", calls=_call_facts(results))
             raise Killed(sid)
         if TOOL_POLICY[name] == "search":
             return self._search_call(sid, s, base, name, args)

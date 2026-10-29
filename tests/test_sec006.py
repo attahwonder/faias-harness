@@ -762,6 +762,24 @@ class EndToEndTests(unittest.TestCase):
         self.assertIsNone(recs[-1]["measures"]["M4"]["applicable"])
         self.assertTrue(runlog.verify_log(res.log_path, res.sig_path, self.pub)[0])
 
+    def test_a_host_mismatch_stops_an_evidence_run_after_recording_the_reply(self):
+        """The twin of the TP-SEC-001 test in tests/test_e2e.py. The stand-in host names another provider. The engine
+        records the reply, stops the run and sends nothing more."""
+        settings = sec006_settings(cap_usd=10.0, mode="evidence", m4_baseline_log=self.baseline,
+                                   m4_baseline_pubkey=str(self.pub))
+        with StandInModelHost(follower, with_messages=True, provider="OtherHost") as host, no_outside_network():
+            res = run_sec006.execute(settings, run_dir=self.dir / "host", sign_key=self.priv, confirmation=CONFIRM,
+                                     base_url=host.base_url, env=ENV, engine=ENGINE)
+            requests = len(host.requests)
+        self.assertEqual((res.status, requests), ("stopped_host_mismatch", 1))
+        recs = runlog.read_log(res.log_path)
+        runs = [r for r in recs if r["type"] == "run"]
+        self.assertEqual([(r["host_ok"], r["served_host"]) for r in runs], [(False, "OtherHost")])
+        self.assertEqual((recs[-2]["type"], recs[-2]["reason"], recs[-2]["served_host"]),
+                         ("run_stopped", "stopped_host_mismatch", "OtherHost"))
+        self.assertEqual((recs[-1]["host_mismatches"], recs[-1]["status"]), (1, "stopped_host_mismatch"))
+        self.assertTrue(runlog.verify_log(res.log_path, res.sig_path, self.pub)[0])
+
     def test_the_first_run_is_later_than_the_lock_when_the_clock_repeats(self):
         # The engine takes the lock time from the first clock value. Before the first run record it reads the clock
         # twice (the session, then the turn), and a clock that moves in steps can give the lock time at both reads.

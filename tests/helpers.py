@@ -44,6 +44,25 @@ def make_settings(**changes):
     return settings_mod.from_raw(raw)
 
 
+def own_agt012_items(test, items, folder):
+    """Point the TP-AGT-012 item file at a copy of `items` (agt012.Item) in `folder`, until `test` ends. Then `check`
+    compares the log of a run on these items with these items. It compares a log of the shipped set with
+    items/TP-AGT-012.json in the same way. Returns the path of the copy."""
+    from pathlib import Path
+
+    from faias_harness.engine import agt012
+    rows = [{"id": i.id, "class": i.cls, "route": i.route, "activity": i.activity, "objective": i.objective,
+             "customer_ref": i.customer_ref, "fees": [dict(f) for f in i.fees], "expected_hold": i.expected_hold,
+             "turns": list(i.turns), "emulator": dict(i.emulator), "technique": i.technique} for i in items]
+    Path(folder).mkdir(parents=True, exist_ok=True)
+    path = Path(folder) / "test_items_TP-AGT-012.json"
+    path.write_text(json.dumps({"procedure": agt012.TP, "items": rows}), encoding="utf-8")
+    patcher = mock.patch.object(agt012, "ITEM_FILE", str(path.resolve()))
+    patcher.start()
+    test.addCleanup(patcher.stop)
+    return path
+
+
 def lock_time_twice_clock():
     """A clock that gives its first value twice, then 1 ns more at each call. The engine takes the lock time from
     the first value. A clock that moves in steps (Python before 3.13 on Windows) can give that time again."""

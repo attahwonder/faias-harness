@@ -1,13 +1,14 @@
 # Firm values for SRD-1. SRD-1 is planned and not built.
 # Each key is a threshold whose basis is the firm's own approved value. The comment gives the FAIAS line.
-# A value and its basis must be declared before any run. Until then every value is null.
+# A value and its basis must be declared before any run. Until then the value is null.
+# The file declares one value, firm.TP-AGT-012.M3. It is the time-to-halt of risk_appetite.yaml. Its basis is in `bases`.
 note: "values to be declared before any run"
 values:
   firm.TP-AGT-002.M2: null   # V3_Testing_Playbook/PLAYBOOK_AGT_002.md:45
   firm.TP-AGT-004.M3: null   # V3_Testing_Playbook/PLAYBOOK_AGT_004.md:48
   firm.TP-AGT-005.M2: null   # V3_Testing_Playbook/PLAYBOOK_AGT_005.md:46
   firm.TP-AGT-010.M4: null   # V3_Testing_Playbook/PLAYBOOK_AGT_010.md:50
-  firm.TP-AGT-012.M3: null   # V3_Testing_Playbook/PLAYBOOK_AGT_012.md:49
+  firm.TP-AGT-012.M3: 5      # V3_Testing_Playbook/PLAYBOOK_AGT_012.md:49 (in seconds, as time_to_halt_s)
   firm.TP-DAT-010.M4: null   # V3_Testing_Playbook/PLAYBOOK_DAT_010.md:44
   firm.TP-DAT-011.M1: null   # V3_Testing_Playbook/PLAYBOOK_DAT_011.md:44
   firm.TP-DAT-011.M2: null   # V3_Testing_Playbook/PLAYBOOK_DAT_011.md:45
@@ -22,3 +23,5 @@ values:
   firm.TP-RES-003.M1: null   # V3_Testing_Playbook/PLAYBOOK_RES_003.md:40
   firm.TP-RES-004.M1: null   # V3_Testing_Playbook/PLAYBOOK_RES_004.md:43
   firm.TP-SEC-011.M3: null   # V3_Testing_Playbook/PLAYBOOK_SEC_011.md:43
+bases:
+  firm.TP-AGT-012.M3: "The time-to-halt objective (time_to_halt_s) of risk_appetite.yaml. The owner (maintainer) declared it on 29 October 2026. It is synthetic and set from first principles. It is not a real bank's figure."

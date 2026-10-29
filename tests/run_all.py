@@ -10,10 +10,11 @@ Steps:
      --start refuses without an attestation file and without settings; a profile alone starts nothing;
      with a settings file: the shipped explore files (TP-SEC-001, TP-SEC-006 and TP-AGT-012) are accepted, an evidence file that lacks any of the five
      routing locks is refused, and --start refuses without the key variable; TP-AGT-012 --start refuses without a
-     containment self-test that passes and without the item file; with the external settings file
+     containment self-test that passes; with the external settings file
      (version 0.5): each external example profile is accepted, an evidence file without the declared model and
      version is refused, and --start refuses without the attestation and the key variable
-  5. the firm-values file of SRD-1 lists exactly the keys of the records
+  5. the firm-values file of SRD-1 lists exactly the keys of the records; each declared value is a number with a
+     basis, and firm.TP-AGT-012.M3 equals the time-to-halt of risk_appetite.yaml
   6. the sweep for barred terms and key-like strings finds 0 hits
   7. the unit tests of the engine (settings, SRD-1 minimal, gateway, scorers of TP-SEC-001 and TP-SEC-006, run log,
      signature, end to end against a local stand-in model host; no outside network). They also cover TP-AGT-012,
@@ -125,9 +126,9 @@ def settings_checks(tmp, att):
     rc, out = preflight(base, "--settings", "targets/srd1/settings_sec006.yaml")
     expect(rc == 0 and "Engine run: TP-SEC-006 on SRD-1 minimal" in out and "M3 bar" in out,
            f"the shipped TP-SEC-006 settings were not accepted: exit {rc}, {out[-300:]}")
-    # TP-AGT-012: the shipped explore settings are accepted; --start refuses without a passing self-test
-    # and without the item file (it waits for the owner's values). FAIAS_HARNESS_RUNS is emptied, so no self-test
-    # log is found.
+    # For TP-AGT-012, the preflight accepts the shipped explore settings. Then --start refuses without a self-test
+    # that passes. FAIAS_HARNESS_RUNS is emptied, so no self-test log is found. The item file ships, so no refusal
+    # names it.
     rc, out = preflight(base, "--settings", "targets/srd1/settings_agt012.yaml")
     expect(rc == 0 and "Engine run: TP-AGT-012 on SRD-1 minimal" in out and "Containment: delays" in out,
            f"the shipped TP-AGT-012 settings were not accepted: exit {rc}, {out[-300:]}")
@@ -136,11 +137,10 @@ def settings_checks(tmp, att):
                              "--settings", "targets/srd1/settings_agt012.yaml", "--start"],
                        cwd=REPO, env=env_no_runs, capture_output=True, text=True, encoding="utf-8", input="")
     expect(p.returncode == 2 and "START REFUSED" in p.stdout and "isolation self-test log" in p.stdout
-           and "items/TP-AGT-012.json is not shipped" in p.stdout,
+           and "items/TP-AGT-012.json" not in p.stdout,
            f"TP-AGT-012 --start without a self-test was not refused: exit {p.returncode}, {p.stdout[-400:]}")
     print("   settings: explore files accepted (TP-SEC-001, TP-SEC-006, TP-AGT-012); 5 locks missing in evidence mode "
-          "refused; --start refuses without the key variable; TP-AGT-012 --start refuses without a passing self-test and "
-          "the item file")
+          "refused; --start refuses without the key variable; TP-AGT-012 --start refuses without a self-test that passes")
     dat009_checks(tmp, base, env_no_runs)
 
 
@@ -166,6 +166,32 @@ def dat009_checks(tmp, base, env_no_runs):
                f"{p.stdout[-400:]}")
     print("   TP-DAT-009: explore file accepted; item set check 0 problems; --start refuses without a passing self-test "
           "and refuses the display filter in the standard variant")
+
+
+def firm_value_problems(firm_file=REPO / "targets" / "srd1" / "firm_values.yaml",
+                        risk_file=REPO / "targets" / "srd1" / "risk_appetite.yaml", records=REPO / "records"):
+    """Step 5. It returns the problems, the keys of the records and the declared keys. The file lists exactly the
+    firm_value_key set of the records. A declared value is a number with a basis in `bases`. A basis names a declared
+    value only. The time-to-halt has two homes, firm.TP-AGT-012.M3 and time_to_halt_s in the risk-appetite file. The
+    two must agree."""
+    fv_file = yaml.safe_load(Path(firm_file).read_text(encoding="utf-8"))
+    fv, bases = fv_file["values"], fv_file.get("bases") or {}
+    keys = set()
+    for p in Path(records).glob("TP-*.yaml"):
+        keys |= {t["firm_value_key"] for t in yaml.safe_load(p.read_text(encoding="utf-8"))["thresholds"] if t.get("firm_value_key")}
+    declared = {k for k, v in fv.items() if v is not None}
+    problems = []
+    if set(fv) != keys:
+        problems.append("the firm-values file does not list exactly the firm_value_key set of the records")
+    if not all(isinstance(fv[k], (int, float)) and not isinstance(fv[k], bool) and str(bases.get(k) or "").strip()
+               for k in declared):
+        problems.append("a firm value is set with no basis, or is not a number")
+    if not set(bases) <= declared:
+        problems.append("a basis names a firm value that is not declared")
+    ra = yaml.safe_load(Path(risk_file).read_text(encoding="utf-8"))["fee_refund"]
+    if fv.get("firm.TP-AGT-012.M3") != ra.get("time_to_halt_s"):
+        problems.append("firm.TP-AGT-012.M3 differs from time_to_halt_s in risk_appetite.yaml")
+    return problems, keys, declared
 
 
 EXTERNAL_EXAMPLES = (("copilot_studio", "directline"), ("responses_agent", "openai-responses"), ("a2a_agent", "a2a"),
@@ -271,13 +297,11 @@ def main():
         external_checks(tmp)
 
     print("5. firm values")
-    fv = yaml.safe_load((REPO / "targets" / "srd1" / "firm_values.yaml").read_text(encoding="utf-8"))["values"]
-    keys = set()
-    for p in (REPO / "records").glob("TP-*.yaml"):
-        keys |= {t["firm_value_key"] for t in yaml.safe_load(p.read_text(encoding="utf-8"))["thresholds"] if t.get("firm_value_key")}
-    expect(set(fv) == keys, "the firm-values file does not list exactly the firm_value_key set of the records")
-    expect(all(v is None for v in fv.values()), "a firm value is set before any run")
-    print(f"   {len(keys)} keys, all null")
+    problems, keys, declared = firm_value_problems()
+    for p in problems:
+        expect(False, p)
+    print(f"   {len(keys)} keys, {len(declared)} declared with a basis ({', '.join(sorted(declared)) or 'none'}), "
+          f"{len(keys) - len(declared)} null")
 
     print("6. sweep")
     rc, out = run(["tools/sweep_barred.py", "--faias", faias])
