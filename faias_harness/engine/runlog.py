@@ -848,7 +848,8 @@ def result_logs(paths):
     """Return the run log files that `results` reads, and a line for each folder with no run log. A path that is a
     file is a log. A folder gives its run_log.jsonl, or else the run_log.jsonl of each of its sub-folders, in sorted
     order. A sub-folder with no run_log.jsonl gets a line too, so that a missing log is named. A sub-folder that holds
-    a self-test log is not a run folder, so it is left out (preflight finds the self-test log there)."""
+    a self-test log and no run_log.jsonl is not a run folder, so it is left out (preflight finds the self-test log
+    there)."""
     logs, missing = [], []
     for p in map(Path, paths):
         if not p.is_dir():
