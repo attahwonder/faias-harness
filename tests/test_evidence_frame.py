@@ -526,6 +526,19 @@ class ResultsTableTests(unittest.TestCase):
         self.assertIn("REFUSED changed/run_log.jsonl: FAIL: the signature does not match the log", out.splitlines())
         self.assertIn(f"REFUSED {empty}: no run_log.jsonl in this folder or its sub-folders", out.splitlines())
 
+    def test_a_sub_folder_with_no_log_is_named(self):
+        with tempfile.TemporaryDirectory() as d:
+            parent = Path(d) / "parent"
+            shutil.copytree(EXAMPLES / "tp-sec-001_spike", parent / "a")
+            (parent / "b").mkdir()
+            (parent / "notes.txt").write_text("not a folder", encoding="utf-8")
+            rc, out = call(["results", "--log", str(parent), "--pubkey", str(EXAMPLE_PUBKEY)])
+        self.assertEqual(rc, 1, out)
+        self.assertTrue(out.startswith("results: 1 logs verified"), out)
+        self.assertIn("1 refused.", out.splitlines()[0])
+        self.assertEqual([r["log"] for r in table_rows(out)], ["a/run_log.jsonl"])
+        self.assertIn(f"REFUSED {parent / 'b'}: no run_log.jsonl in this sub-folder", out.splitlines())
+
 
 def sec006_settings():
     raw = raw_settings(procedure="TP-SEC-006", mode="explore",

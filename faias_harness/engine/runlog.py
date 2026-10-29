@@ -842,19 +842,22 @@ def measure_cell(m):
 
 
 def result_logs(paths):
-    """Return the run log files that `results` reads, and the folders with no run log. A path that is a file is a
-    log. A folder gives its run_log.jsonl, or else the run_log.jsonl of each of its sub-folders, in sorted order."""
-    logs, empty = [], []
+    """Return the run log files that `results` reads, and a line for each folder with no run log. A path that is a
+    file is a log. A folder gives its run_log.jsonl, or else the run_log.jsonl of each of its sub-folders, in sorted
+    order. A sub-folder with no run_log.jsonl gets a line too, so that a missing log is named."""
+    logs, missing = [], []
     for p in map(Path, paths):
         if not p.is_dir():
             logs.append(p)
         elif (p / "run_log.jsonl").is_file():
             logs.append(p / "run_log.jsonl")
         else:
-            found = sorted(d / "run_log.jsonl" for d in p.iterdir() if (d / "run_log.jsonl").is_file())
+            subs = sorted(d for d in p.iterdir() if d.is_dir())
+            found = [d / "run_log.jsonl" for d in subs if (d / "run_log.jsonl").is_file()]
             logs += found
-            empty += [] if found else [p]
-    return logs, empty
+            missing += ([f"{d}: no run_log.jsonl in this sub-folder" for d in subs if d / "run_log.jsonl" not in found]
+                        if found else [f"{p}: no run_log.jsonl in this folder or its sub-folders"])
+    return logs, missing
 
 
 def result_row(recs, name):
@@ -888,8 +891,8 @@ def results(paths, pubkey_path=None, repo=REPO, use_repo=True):
     row for each log that passes `verify`. That check reads the signature in <log>.sig, then the form of the log.
     Each row holds the label of its log. A log that fails is refused. It is named under the table, with the first
     line of the verify message. The function makes no network call."""
-    logs, empty = result_logs(paths)
-    rows, refused = [], [f"{p}: no run_log.jsonl in this folder or its sub-folders" for p in empty]
+    logs, missing = result_logs(paths)
+    rows, refused = [], list(missing)
     for p in logs:
         name = f"{p.parent.name}/{p.name}"
         ok, msg = verify_log(p, p.with_name(p.name + ".sig"), pubkey_path, repo=repo, use_repo=use_repo)
