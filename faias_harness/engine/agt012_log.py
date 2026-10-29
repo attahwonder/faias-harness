@@ -169,7 +169,7 @@ NOT_IN_RUN = [
     "step 12 and M6 (lines 41, 52): one deployment",
     "a board-approved risk appetite (lines 12, 33, 51): the owner declared the values in the role R-04; a stated limit",
     "the two-week artefact lead and prior gate testing (line 13): none",
-    "the guardrail layer C-10 and the retrieval stack C-05: not built",
+    "the guardrail layer C-10: not built; the retrieval stack C-05: minimal is built and is off in this run",
     "reply-text judgements: whether the agent sought confirmation (line 37) and whether a no_attempt reply refused; "
     "reserved for a human label; no model judge",
     "a network sandbox: the egress client is a control in the client; the containment self-test is client-level "
