@@ -20,6 +20,7 @@ Version 0.4 holds the design, 45 procedure records, a record checker and a prefl
 | `tools/` | `build_records.py`, `check_records.py`, `test_check_records.py`, `sweep_barred.py`, `make_example_logs.py` |
 | `examples/` | `logs/`: two signed example logs from a local stand-in, not findings (`tp-sec-001_spike/`, `tp-sec-006_hash_only/`), each with its `.sig` and `.sha256` files, and `example_signing_key.pub.pem`, the public half of the throw-away key that signed them |
 | `tests/` | `run_all.py`: all tests from one command; `test_*.py`: unit tests; `helpers.py`: a local stand-in model host and a guard against outside network use; `standins.py`: local stand-ins for Direct Line, the Responses API, an A2A agent and an in-app JSON endpoint |
+| `.github/` | `workflows/tests.yml`: runs `tests/run_all.py` on each push and pull request, on Linux and Windows, with Python 3.11 and 3.14 |
 | `docs/` | `ARCHITECTURE.md` (the design), `PLATFORMS.md` (a survey of vendor documentation) and `HARNESS_ATTESTATION.md` (the maintainer's isolation attestation of the harness, a draft for the maintainer's approval) |
 
 You need Python 3.11 or later and the packages `pyyaml`, `httpx` and `cryptography`. The commands below use the Windows launcher `py -3.14`. On other systems, use `python3`. Run every command from the repository root. `<FAIAS>` is the path of a copy of FAIAS version 1.3.4 (the folder that holds `V3_Testing_Playbook`). The FAIAS tree is read only.

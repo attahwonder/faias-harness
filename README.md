@@ -1,5 +1,7 @@
 # FAIAS harness
 
+[![tests](https://github.com/attahwonder/faias-harness/actions/workflows/tests.yml/badge.svg)](https://github.com/attahwonder/faias-harness/actions/workflows/tests.yml)
+
 An open-source test harness for FAIAS, the Financial AI Independent Assurance Standard. The harness is planned to run the FAIAS test procedures against an AI system in a test environment. A firm describes its own system in a target profile. The harness reaches that system through one target interface. This repository holds version 0.6. It has the design, the procedure records, a record checker and a preflight. It also has a run engine for two procedures. One is TP-SEC-001 with its full item set (see "Engine" below). The other is TP-SEC-006 (see "TP-SEC-006"). Channel adapters let the engine reach a deployed staging agent for TP-SEC-001 (see "External runs"). The other parts are an MCP tool emulator (see "Tool emulator") and a testability report (see "Testability report").
 
 ## Status: version 0.6
@@ -115,6 +117,8 @@ All tests. They need a copy of FAIAS version 1.3.4 (the folder that holds `V3_Te
 ```
 py -3.14 -X utf8 tests/run_all.py --faias <path to the FAIAS v1.3.4 folder>
 ```
+
+The workflow `.github/workflows/tests.yml` runs the same command on each push and pull request. It runs on Linux and Windows, with Python 3.11 and 3.14. It clones FAIAS at tag v1.3.4 from GitHub. It uses no secret and no key. The badge at the top shows the result of its last run.
 
 Rebuild the records. This does not change `records/capability_needs.yaml`, which is an input file that a person keeps:
 

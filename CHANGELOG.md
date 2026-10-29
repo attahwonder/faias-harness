@@ -2,7 +2,7 @@
 
 ## Unreleased
 
-A first-hour kit. It has two example logs and the commands that check them. The scorers, item sets, thresholds and record files do not change.
+A first-hour kit and a workflow for continuous integration. The kit has two example logs and the commands that check them. The scorers, item sets, thresholds and record files do not change.
 
 - `examples/logs/` holds two signed example logs. One is a TP-SEC-001 run on the spike set. The other is a TP-SEC-006 run with `store_replies: hash_only`. Both ran on SRD-1 minimal against the local stand-in for the model host. The label of each ends with "example from a local stand-in; not a finding". A throw-away Ed25519 key signed them. Its public half is `examples/logs/example_signing_key.pub.pem`. Each log has its `.sig` and `.sha256` files.
 - `tools/make_example_logs.py` makes the two logs again, with a new throw-away key. It makes the key in a temporary folder outside the repository. Before it ends, it writes zeros over the private key file and deletes the folder. It makes no network call.
@@ -10,6 +10,7 @@ A first-hour kit. It has two example logs and the commands that check them. The 
 - `tests/test_evidence_frame.py` reads the two example logs from the repository, so it needs no `FAIAS_HARNESS_RUNS` for them. It verifies each log with the public key in the folder, with and without the repository. It scores the TP-SEC-001 log again, and an edited copy. It checks the SHA-256 files. The two live-log tests still read `FAIAS_HARNESS_RUNS`, and their note names the example tests.
 - `tools/sweep_barred.py` no longer reads a digest as a key-like string. In a JSON line, the pattern for 40 or more hex characters skips the value of a digest field. A digest field is named `sha256`, `hash` or `head`, ends in `_sha256`, `_hash` or `_head`, or is `git_commit`. Its value must be exactly 40 or 64 lower-case hex characters. A `sha256sum` line in a `.sha256` file is a digest too. The sweep still reads every other key and string, and the other key patterns read the whole line. `tests/test_sweep.py` tests both cases. The key patterns that the TP-SEC-006 static inspection uses do not change.
 - README section "Check the harness in your first hour". Its first four steps need no key, no model and no network call. The fifth clones FAIAS and runs all tests.
+- `.github/workflows/tests.yml` runs `tests/run_all.py` on each push and pull request. It runs on Linux and Windows, with Python 3.11 and 3.14. It clones FAIAS at tag v1.3.4 from github.com and installs the three packages from pypi.org. It uses no secret and no key. The token of the job can read the repository only. The README shows the badge of the workflow.
 
 ## 0.6.0 (28 October 2026)
 
