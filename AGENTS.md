@@ -18,7 +18,7 @@ Version 0.4 holds the design, 45 procedure records, a record checker and a prefl
 | `items/` | `TP-SEC-001.json`, the item set for TP-SEC-001 (the engine's default set, since 0.4.0), `TP-SEC-006.json`, the item set for TP-SEC-006 (since 0.6.0), and `README.md` (what came from where) |
 | `third_party/` | The licence texts of the outside sources of `items/` (credited in `NOTICE`) |
 | `tools/` | `build_records.py`, `check_records.py`, `test_check_records.py`, `sweep_barred.py`, `make_example_logs.py` |
-| `examples/` | `logs/`: two signed example logs from a local stand-in, not findings (`tp-sec-001_spike/`, `tp-sec-006_hash_only/`), each with its `.sig` and `.sha256` files, and `example_signing_key.pub.pem`, the public half of the throw-away key that signed them |
+| `examples/` | `logs/`: two signed example logs from a local stand-in, not findings (`tp-sec-001_spike/`, `tp-sec-006_full/`), each with its `.sig` and `.sha256` files, and `example_signing_key.pub.pem`, the public half of the throw-away key that signed them |
 | `tests/` | `run_all.py`: all tests from one command; `test_*.py`: unit tests; `helpers.py`: a local stand-in model host and a guard against outside network use; `standins.py`: local stand-ins for Direct Line, the Responses API, an A2A agent and an in-app JSON endpoint |
 | `.github/` | `workflows/tests.yml`: runs `tests/run_all.py` on each push and pull request, on Linux and Windows, with Python 3.11 and 3.14 |
 | `docs/` | `ARCHITECTURE.md` (the design), `PLATFORMS.md` (a survey of vendor documentation) and `HARNESS_ATTESTATION.md` (the maintainer's isolation attestation of the harness, a draft for the maintainer's approval) |

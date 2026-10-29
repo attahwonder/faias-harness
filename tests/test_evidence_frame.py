@@ -505,13 +505,13 @@ class ExampleLabelTests(unittest.TestCase):
 
 EXAMPLES = REPO / "examples" / "logs"
 EXAMPLE_PUBKEY = EXAMPLES / "example_signing_key.pub.pem"
-EXAMPLE_LOGS = {"tp-sec-001_spike": "TP-SEC-001", "tp-sec-006_hash_only": "TP-SEC-006"}
+EXAMPLE_LOGS = {"tp-sec-001_spike": "TP-SEC-001", "tp-sec-006_full": "TP-SEC-006"}
 
 
 class ExampleLogTests(unittest.TestCase):
     """The two example logs in examples/logs/ (tools/make_example_logs.py). They are in the repository, so these tests
     read them without FAIAS_HARNESS_RUNS. They make the checks of the live-log tests. They verify each log with and
-    without the repository, and they rescore an edited copy. A throw-away key signed them. Its public half is in the
+    without the repository, rescore both logs, and rescore an edited copy. A throw-away key signed them. Its public half is in the
     folder."""
 
     def logs(self):
@@ -556,13 +556,14 @@ class ExampleLogTests(unittest.TestCase):
             copy.write_bytes(b"".join(runlog.canonical(r).encode("utf-8") + b"\n" for r in recs))
             _, mismatches = runlog.rescore_log(copy)
             self.assertEqual(len(mismatches), 1)
-        # the TP-SEC-006 log holds the SHA-256 of each reply only, so there is nothing to score again (exit 2)
-        log = EXAMPLES / "tp-sec-006_hash_only" / "run_log.jsonl"
+        # the TP-SEC-006 log holds the redacted reply of each run (store_replies full), so rescore reads it (exit 0)
+        log = EXAMPLES / "tp-sec-006_full" / "run_log.jsonl"
         rc, out = call(["rescore", "--log", str(log)])
-        self.assertEqual(rc, 2, out)
-        self.assertIn("controlled evidence store", out)
-        runs = [r for r in runlog.read_log(log) if r["type"] == "run"]
-        self.assertTrue(runs and all("reply" not in r and runlog.HEX64.fullmatch(r["reply_sha256"]) for r in runs))
+        self.assertEqual(rc, 0, out)
+        self.assertIn("runs rescored: 276; mismatches: 0", out.splitlines())
+        recs = runlog.read_log(log)
+        self.assertEqual(recs[0]["store_replies"]["mode"], "full")
+        self.assertTrue(all("reply" in r for r in recs if r["type"] == "run"))
 
     def test_the_sha256_file_of_each_log_holds_its_digest(self):
         for name, _, log in self.logs():

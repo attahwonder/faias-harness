@@ -78,7 +78,7 @@ Steps 1 to 4 need no key, no model and no network call. Install the three packag
    py -3.14 -X utf8 -m faias_harness.engine.runlog stamp --log examples/logs/tp-sec-001_spike/run_log.jsonl
    ```
 
-   Each `verify` prints `PASS` and exits with 0. Each of the four commands also prints the label of the log on a line that starts with `label:`. `rescore` prints `mismatches: 0` and exits with 0. `stamp` writes `run_log.jsonl.sha256` next to the log and prints the `ots stamp` command. It runs no command. The repository holds that file already, so `stamp` writes the same bytes again. Run the same four commands on `examples/logs/tp-sec-006_hash_only/`. There, `rescore` exits with 2. That log holds the SHA-256 of each reply, not the reply, so there is nothing to score again.
+   Each `verify` prints `PASS` and exits with 0. Each of the four commands also prints the label of the log on a line that starts with `label:`. `rescore` prints `mismatches: 0` and exits with 0. `stamp` writes `run_log.jsonl.sha256` next to the log and prints the `ots stamp` command. It runs no command. The repository holds that file already, so `stamp` writes the same bytes again. Run the same four commands on `examples/logs/tp-sec-006_full/`. They give the same results. That log holds the redacted text of each reply (`store_replies: full`), so `rescore` can score each reply again. A log made with `store_replies: hash_only` holds the SHA-256 of each reply only, and then `rescore` exits with 2 by design.
 
 5. Check the records against FAIAS, and run all tests. This step needs one download, a clone of the FAIAS repository at tag v1.3.4:
 
@@ -88,7 +88,7 @@ Steps 1 to 4 need no key, no model and no network call. Install the three packag
    py -3.14 -X utf8 tests/run_all.py --faias <that folder>
    ```
 
-**The example logs.** `tools/make_example_logs.py` made them. It ran SRD-1 minimal against the local stand-in for the model host of `tests/helpers.py`. The stand-in is a script on the local machine with fixed replies. No model gave a reply. The run in `tp-sec-001_spike/` is TP-SEC-001 on the 20 spike items, 3 runs each. In 6 of the 60 runs, on three items, the stand-in gives what the item asks for. So the log holds both outcomes. The run in `tp-sec-006_hash_only/` is TP-SEC-006 with `store_replies: hash_only`. The stand-in refuses each request. The label of each log ends with "example from a local stand-in; not a finding". The logs say nothing about the security of SRD-1 or of any model. A throw-away Ed25519 key signed both logs. It is not the run-signing key of a real run. Its public half is `examples/logs/example_signing_key.pub.pem`. The script made the key in a temporary folder outside the repository. It deleted that folder, with the private half, after it signed the two logs. The signature shows that each log has not changed since then. `tests/test_evidence_frame.py` checks both logs in the same ways as the commands above.
+**The example logs.** `tools/make_example_logs.py` made them. It ran SRD-1 minimal against the local stand-in for the model host of `tests/helpers.py`. The stand-in is a script on the local machine with fixed replies. No model gave a reply. The run in `tp-sec-001_spike/` is TP-SEC-001 on the 20 spike items, 3 runs each. In 6 of the 60 runs, on three items, the stand-in gives what the item asks for. So the log holds both outcomes. The run in `tp-sec-006_full/` is TP-SEC-006 with `store_replies: full`. The stand-in refuses each request. The label of each log ends with "example from a local stand-in; not a finding". The logs say nothing about the security of SRD-1 or of any model. A throw-away Ed25519 key signed both logs. It is not the run-signing key of a real run. Its public half is `examples/logs/example_signing_key.pub.pem`. The script made the key in a temporary folder outside the repository. It deleted that folder, with the private half, after it signed the two logs. The signature shows that each log has not changed since then. `tests/test_evidence_frame.py` checks both logs in the same ways as the commands above.
 
 ## Run the preflight and the tests
 
@@ -217,6 +217,8 @@ Write `<run_log.jsonl>.sha256` and print the OpenTimestamps command to run. The 
 ```
 py -3.14 -X utf8 -m faias_harness.engine.runlog stamp --log <run_log.jsonl>
 ```
+
+If a log header holds a label, `verify`, `rescore` and `stamp` print it on a line that starts with `label:`. The label says what the log is, for example "example from a local stand-in; not a finding".
 
 ## TP-SEC-006
 
