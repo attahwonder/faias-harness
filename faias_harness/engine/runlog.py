@@ -51,10 +51,15 @@ Three more commands, none of which makes a network call:
                                      checks the signature and the form without the item set and the record of this
                                      checkout; the items hash is checked against the log itself
   stamp    --log <log>               writes <log>.sha256 and prints the OpenTimestamps command to run
+
+When the header of the log holds a label, `verify`, `rescore` and `stamp` print it on a line `label: <label>`. For
+`verify`, that line comes after the PASS or FAIL line. For `rescore` and `stamp`, it is the first line. So the output
+of each command shows an example log for what it is.
 """
 import argparse
 import base64
 import hashlib
+import ipaddress
 import json
 import os
 import re
@@ -137,10 +142,43 @@ NOT_IN_RUN = [
     "human labels or a model judge (the scorer is not calibrated; items that only a judge can mark are not in the set)",
 ]
 NOT_IN_SPIKE = ["the clean-baseline arm of 25 requests"] + NOT_IN_RUN[:4] + ["a corpus of 100 or more items (the spike has 20)"]
+# The words at the end of the label of an example log. tools/make_example_logs.py makes such logs with `example` of
+# spike.execute and run_sec006.execute. Such a run refuses a model host off the local machine. The form check refuses
+# an example log whose egress allow-list names a host off the local machine.
+EXAMPLE_LABEL = "example from a local stand-in; not a finding"
 
 
 def not_in_run(item_set):
     return NOT_IN_SPIKE if item_set == "spike" else NOT_IN_RUN
+
+
+def example_label(label):
+    """The label of an example log. It is the label of the run, then EXAMPLE_LABEL."""
+    return f"{label}; {EXAMPLE_LABEL}"
+
+
+def is_local(entry):
+    """True when a host name, an address, or a host:port entry of an egress allow-list is on the local machine."""
+    for host in (str(entry), str(entry).rpartition(":")[0]):
+        host = host.strip("[]").lower()
+        if host == "localhost":
+            return True
+        try:
+            if ipaddress.ip_address(host).is_loopback:
+                return True
+        except ValueError:
+            pass
+    return False
+
+
+def example_problems(h):
+    """An example log (its label ends with EXAMPLE_LABEL) must allow hosts on the local machine only."""
+    if not str(h.get("label") or "").endswith(EXAMPLE_LABEL):
+        return []
+    allow = (h.get("egress") or {}).get("allow") or []
+    if not allow or not all(is_local(e) for e in allow):
+        return ["header: an example log names a host off the local machine in its egress allow-list"]
+    return []
 
 
 def canonical(obj):
@@ -531,8 +569,9 @@ def check_log(path, repo=REPO, use_repo=True):
         problems.append("header: the variant does not match the schema")
     if item_set not in sec001.LABELS:
         return problems + ["header: the item set is unknown"]
-    if h.get("label") != sec001.LABELS[item_set]:
+    if h.get("label") not in (sec001.LABELS[item_set], example_label(sec001.LABELS[item_set])):
         problems.append(f"header: the label '{sec001.LABELS[item_set]}' is missing")
+    problems += example_problems(h)
     runs = [r for r in recs if r.get("type") == "run"]
     if use_repo:
         items, baseline = sec001.load_items(item_set, repo=repo)
@@ -745,6 +784,17 @@ def stamp_log(log_path):
     return out, f'ots stamp "{log_path}"'
 
 
+def label_line(log_path):
+    """The line "label: <label>" when the header (line 1) of the log holds a label, or None. It checks nothing."""
+    try:
+        with open(log_path, encoding="utf-8") as f:
+            h = json.loads(f.readline())
+    except (OSError, ValueError):
+        return None
+    label = h.get("label") if isinstance(h, dict) else None
+    return f"label: {label}" if isinstance(label, str) and label else None
+
+
 def main(argv=None):
     ap = argparse.ArgumentParser(prog="faias_harness.engine.runlog",
                                  description="Run-signing key, sign, verify, rescore and stamp.")
@@ -767,6 +817,9 @@ def main(argv=None):
     e = sub.add_parser("stamp", help="write <log>.sha256 and print the OpenTimestamps command (no network call)")
     e.add_argument("--log", required=True)
     args = ap.parse_args(argv)
+    label = label_line(args.log) if args.cmd in ("verify", "rescore", "stamp") else None
+    if label and args.cmd in ("rescore", "stamp"):
+        print(label)
     if args.cmd == "rescore":
         try:
             lines, mismatches = rescore_log(args.log)
@@ -802,7 +855,8 @@ def main(argv=None):
         print(f"signature file: {sign_log(args.log, args.key)}")
         return 0
     ok, msg = verify_log(args.log, args.sig, args.pubkey, use_repo=not args.no_repo)
-    print(msg)
+    first, _, rest = msg.partition("\n")
+    print("\n".join(x for x in (first, label, rest) if x))
     return 0 if ok else 1
 
 

@@ -243,7 +243,8 @@ def _run_inspect(target, runner, run_dir, runs_per_item, items, model_name="srd1
 
 
 def execute(settings, *, run_dir, sign_key, confirmation, probes=None, base_url=None, env=None,
-            clock_ns=time.time_ns, repo=REPO, prior_spent_usd=0.0, variant="standard", engine="inspect", gate=None):
+            clock_ns=time.time_ns, repo=REPO, prior_spent_usd=0.0, variant="standard", engine="inspect", gate=None,
+            example=False):
     """Run the engine on the item set of the settings. Return a RunResult. `base_url` and `env` are for tests; a real run uses the defaults.
 
     `prior_spent_usd` is the cost of the probe calls. It counts against the cap.
@@ -251,6 +252,8 @@ def execute(settings, *, run_dir, sign_key, confirmation, probes=None, base_url=
     `engine` is "inspect" (the default: Inspect drives the pass) or "direct" (a plain loop, for tests without Inspect).
     With `tools_enabled` (since 0.6) the run serves SRD-1's tool through the emulator (toolrun.ToolRun). `gate` is
     for tests: a RefundGate with the test's own values, in place of the risk-appetite file.
+    `example` (tools/make_example_logs.py) adds runlog.EXAMPLE_LABEL to the label. It refuses a model host that is not
+    on the local machine.
     """
     build, gw, orch_mod, trace_mod = _srd1()
     if variant not in runlog.VARIANTS:
@@ -261,6 +264,8 @@ def execute(settings, *, run_dir, sign_key, confirmation, probes=None, base_url=
         raise RuntimeError("the run engine inspect_ai is not installed")
     system_prompt = orch_mod.load_system_prompt(orch_mod.PROMPT_VARIANTS[variant])
     base_url = base_url or gw.OPENROUTER_BASE
+    if example and not runlog.is_local(urlsplit(base_url).hostname or ""):
+        raise ValueError("an example run needs a model host on the local machine (a local stand-in)")
     run_dir = Path(run_dir)
     run_dir.mkdir(parents=True, exist_ok=True)
     tools_on = bool(getattr(settings, "tools_enabled", False))
@@ -289,6 +294,8 @@ def execute(settings, *, run_dir, sign_key, confirmation, probes=None, base_url=
                                  variant=variant, engine=engine,
                                  tools=tool_run.header(srd1.orchestrator.definitions_sha256) if tool_run else None)
     header["redaction"] = REDACTION_NOTE
+    if example:
+        header["label"] = runlog.example_label(header["label"])
     runlog.lock_header(header, clock_ns())
     log = runlog.RunLog(log_path)
     try:
@@ -318,7 +325,7 @@ def execute(settings, *, run_dir, sign_key, confirmation, probes=None, base_url=
         chain_ok, chain_problems = trace_mod.verify_chain(srd1.trace.path, expected_head=srd1.trace.head)
         egress.close()
         summary = {
-            "type": "summary", "label": sec001.LABELS[settings.item_set], "status": status, "error": error,
+            "type": "summary", "label": header["label"], "status": status, "error": error,
             "runs_recorded": len(runs), "measures_complete": status == "complete",
             "measures": sec001.compute_measures(runs, settings.m4_value, settings.runs_per_item),
             "results_table": sec001.results_table(runs),

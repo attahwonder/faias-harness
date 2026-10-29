@@ -6,6 +6,8 @@ Some tests read the signed live run logs, which are not in the repository. They 
 in the folders that the variable FAIAS_HARNESS_RUNS names (separated by the path separator: ';' on Windows). Each
 folder may hold run_log.jsonl itself or in its sub-folders. Without such logs, those tests check nothing. Each
 prints a "[test note]" line with the number of logs that it read, and tests/run_all.py shows that line.
+
+The two example logs in examples/logs/ are in the repository. ExampleLogTests reads them without that variable.
 """
 import contextlib
 import hashlib
@@ -23,12 +25,13 @@ from unittest import mock
 
 import httpx
 
+from faias_harness import settings as settings_mod
 from faias_harness.adapters.base import ChannelError
 from faias_harness.egress import EgressClient
 from faias_harness.engine import external, runlog, sec001, spike
 from faias_harness.errors import GatewayError
 from targets.srd1.app.gateway import CapMeter, Gateway, estimate_tokens
-from tests.helpers import FAKE_KEY_VALUE, KEY_ENV, StandInModelHost, make_settings, no_outside_network
+from tests.helpers import FAKE_KEY_VALUE, KEY_ENV, StandInModelHost, make_settings, no_outside_network, raw_settings
 
 REPO = Path(__file__).resolve().parents[1]
 ENV = {KEY_ENV: FAKE_KEY_VALUE}
@@ -406,7 +409,8 @@ class LiveLogTests(unittest.TestCase):
             src = ("FAIAS_HARNESS_RUNS" if os.environ.get("FAIAS_HARNESS_RUNS") else
                    "runs/ of the checkout (FAIAS_HARNESS_RUNS is not set)")
             why = f"no folder in {src} holds run_log.jsonl"
-        note(f"live logs: {what} read 0 logs, because {why}; this test checks nothing")
+        note(f"live logs: {what} read 0 logs, because {why}; this test checks nothing (ExampleLogTests checks the "
+             "two example logs in examples/logs/)")
 
     def test_every_live_log_still_verifies_with_and_without_the_repository(self):
         self.read("verify and verify --no-repo", self.dirs)
@@ -436,6 +440,171 @@ class LiveLogTests(unittest.TestCase):
             copy.write_text("\n".join(lines) + "\n", encoding="utf-8")
             _, mismatches = runlog.rescore_log(copy)
             self.assertEqual(len(mismatches), 1)
+
+
+def sec006_settings():
+    raw = raw_settings(procedure="TP-SEC-006", mode="explore",
+                       reviewer_values={"M3": {"value": 0.25, "reason": "test value for the unit tests"},
+                                        "M4": {"value": 0.1, "reason": "test value for the unit tests"}})
+    raw.pop("item_set")
+    assert not settings_mod.validate(raw), settings_mod.validate(raw)
+    return settings_mod.from_raw(raw)
+
+
+class ExampleLabelTests(unittest.TestCase):
+    """The label of an example log (tools/make_example_logs.py). A run adds it only against a model host on the local
+    machine. The form check refuses it on a log whose egress allow-list names a host off the local machine."""
+
+    def test_an_example_run_has_the_label_in_the_header_and_the_summary(self):
+        with tempfile.TemporaryDirectory() as d:
+            priv, pub = runlog.make_key(Path(d) / "keys", repo=REPO)
+            with StandInModelHost(respond) as host, no_outside_network():
+                res = spike.execute(make_settings(cap_usd=10.0), run_dir=Path(d) / "run", sign_key=priv,
+                                    confirmation=CONFIRM, base_url=host.base_url, env=ENV, engine="direct",
+                                    example=True)
+            recs = runlog.read_log(res.log_path)
+            want = "engine spike, not a finding; example from a local stand-in; not a finding"
+            self.assertEqual((res.status, recs[0]["label"], recs[-1]["label"]), ("complete", want, want))
+            self.assertEqual(runlog.example_label(sec001.LABEL), want)
+            ok, msg = runlog.verify_log(res.log_path, res.sig_path, pub)
+            self.assertTrue(ok, msg)
+            ok, msg = runlog.verify_log(res.log_path, res.sig_path, pub, use_repo=False)
+            self.assertTrue(ok, msg)
+            edited = Path(d) / "edited.jsonl"
+            for allow, problem in ((["openrouter.ai"], True), ([], True), (["127.0.0.1:9", "localhost:9"], False)):
+                h = json.loads(json.dumps(recs[0]))
+                h["egress"]["allow"] = allow
+                edited.write_bytes(b"".join(runlog.canonical(r).encode("utf-8") + b"\n" for r in [h] + recs[1:]))
+                self.assertEqual("header: an example log names a host off the local machine in its egress "
+                                 "allow-list" in runlog.check_log(edited), problem, allow)
+            h = json.loads(json.dumps(recs[0]))
+            h["label"] = sec001.LABEL + "; example"
+            edited.write_bytes(b"".join(runlog.canonical(r).encode("utf-8") + b"\n" for r in [h] + recs[1:]))
+            self.assertIn(f"header: the label '{sec001.LABEL}' is missing", runlog.check_log(edited))
+
+    def test_an_example_run_refuses_a_model_host_off_the_local_machine_before_it_writes(self):
+        from faias_harness.engine import run_sec006
+        runs = ((spike.execute, make_settings(cap_usd=10.0)), (run_sec006.execute, sec006_settings()))
+        for execute, settings in runs:
+            for base_url in ("https://openrouter.ai/api/v1", None):
+                with self.subTest(execute=execute.__module__, base_url=base_url), tempfile.TemporaryDirectory() as d, \
+                        no_outside_network(), self.assertRaises(ValueError) as e:
+                    try:
+                        execute(settings, run_dir=Path(d) / "run", sign_key=Path(d) / "no_key.pem",
+                                confirmation=CONFIRM, base_url=base_url, env=ENV, engine="direct", example=True)
+                    finally:
+                        self.assertFalse((Path(d) / "run").exists())
+                self.assertIn("a model host on the local machine", str(e.exception))
+
+    def test_which_hosts_are_on_the_local_machine(self):
+        for entry in ("127.0.0.1:5000", "127.0.0.1", "localhost:80", "::1", "::1:8080", "[::1]:8080"):
+            self.assertTrue(runlog.is_local(entry), entry)
+        for entry in ("openrouter.ai", "192.0.2.1:80", "127.0.0.1.example.invalid:80", "", "examplehost", "::2"):
+            self.assertFalse(runlog.is_local(entry), entry)
+
+
+EXAMPLES = REPO / "examples" / "logs"
+EXAMPLE_PUBKEY = EXAMPLES / "example_signing_key.pub.pem"
+EXAMPLE_LOGS = {"tp-sec-001_spike": "TP-SEC-001", "tp-sec-006_full": "TP-SEC-006"}
+
+
+class ExampleLogTests(unittest.TestCase):
+    """The two example logs in examples/logs/ (tools/make_example_logs.py). They are in the repository, so these tests
+    read them without FAIAS_HARNESS_RUNS. They make the checks of the live-log tests. They verify each log with and
+    without the repository, rescore both logs, and rescore an edited copy. A throw-away key signed them. Its public half is in the
+    folder."""
+
+    def logs(self):
+        for name, tp in EXAMPLE_LOGS.items():
+            yield name, tp, EXAMPLES / name / "run_log.jsonl"
+
+    def test_each_example_log_verifies_with_the_shipped_key_with_and_without_the_repository(self):
+        for name, tp, log in self.logs():
+            with self.subTest(log=name):
+                sig = log.with_name("run_log.jsonl.sig")
+                ok, msg = runlog.verify_log(log, sig, EXAMPLE_PUBKEY)
+                self.assertTrue(ok, msg)
+                self.assertIn("(pinned public key)", msg)
+                ok, msg = runlog.verify_log(log, sig, EXAMPLE_PUBKEY, use_repo=False)
+                self.assertTrue(ok, msg)
+                self.assertEqual(msg.splitlines()[-1], "repository item set: not checked")
+                self.assertEqual(json.loads(sig.read_text(encoding="utf-8"))["public_key_pem"].encode("ascii"),
+                                 EXAMPLE_PUBKEY.read_bytes())
+                self.assertEqual(runlog.read_log(log)[0]["procedure"]["tp"], tp)
+
+    def test_each_example_log_has_the_example_label_and_local_hosts_only(self):
+        for name, _, log in self.logs():
+            with self.subTest(log=name):
+                recs = runlog.read_log(log)
+                h, s = recs[0], recs[-1]
+                self.assertTrue(h["label"].endswith("; example from a local stand-in; not a finding"), h["label"])
+                self.assertEqual((s["type"], s["label"], s["status"]), ("summary", h["label"], "complete"))
+                self.assertTrue(h["egress"]["allow"] and all(runlog.is_local(e) for e in h["egress"]["allow"]))
+                self.assertEqual(runlog.example_problems(h), [])
+
+    def test_rescore_of_the_example_logs_and_of_an_edited_copy(self):
+        log = EXAMPLES / "tp-sec-001_spike" / "run_log.jsonl"
+        lines, mismatches = runlog.rescore_log(log)
+        self.assertEqual(mismatches, [], lines)
+        self.assertIn("runs rescored: 60; mismatches: 0", lines)
+        recs = runlog.read_log(log)
+        self.assertEqual(sum(1 for r in recs if r.get("type") == "run" and r["score"]["success"]), 6)
+        with tempfile.TemporaryDirectory() as d:
+            copy = Path(d) / "run_log.jsonl"
+            i = next(n for n, r in enumerate(recs) if r.get("type") == "run" and r["score"]["success"])
+            recs[i]["score"]["success"] = False
+            copy.write_bytes(b"".join(runlog.canonical(r).encode("utf-8") + b"\n" for r in recs))
+            _, mismatches = runlog.rescore_log(copy)
+            self.assertEqual(len(mismatches), 1)
+        # the TP-SEC-006 log holds the redacted reply of each run (store_replies full), so rescore reads it (exit 0)
+        log = EXAMPLES / "tp-sec-006_full" / "run_log.jsonl"
+        rc, out = call(["rescore", "--log", str(log)])
+        self.assertEqual(rc, 0, out)
+        self.assertIn("runs rescored: 276; mismatches: 0", out.splitlines())
+        recs = runlog.read_log(log)
+        self.assertEqual(recs[0]["store_replies"]["mode"], "full")
+        self.assertTrue(all("reply" in r for r in recs if r["type"] == "run"))
+
+    def test_the_sha256_file_of_each_log_holds_its_digest(self):
+        for name, _, log in self.logs():
+            with self.subTest(log=name):
+                self.assertEqual(log.with_name("run_log.jsonl.sha256").read_bytes(),
+                                 f"{hashlib.sha256(log.read_bytes()).hexdigest()}  run_log.jsonl\n".encode("ascii"))
+
+    def test_verify_rescore_and_stamp_print_the_label_of_the_log(self):
+        for name, _, log in self.logs():
+            with self.subTest(log=name):
+                want = "label: " + runlog.read_log(log)[0]["label"]
+                verify = ["verify", "--log", str(log), "--sig", str(log.with_name("run_log.jsonl.sig")),
+                          "--pubkey", str(EXAMPLE_PUBKEY)]
+                rc, out = call(verify)
+                lines = out.splitlines()
+                self.assertEqual((rc, lines[0][:5], lines[1:]), (0, "PASS:", [want]), out)
+                rc, out = call(verify + ["--no-repo"])
+                lines = out.splitlines()
+                self.assertEqual((rc, lines[0][:5], lines[1], lines[-1]),
+                                 (0, "PASS:", want, "repository item set: not checked"), out)
+                rc, out = call(["rescore", "--log", str(log)])
+                self.assertEqual(out.splitlines()[0], want, out)
+                with tempfile.TemporaryDirectory() as d:
+                    copy = Path(d) / "run_log.jsonl"
+                    shutil.copyfile(log, copy)
+                    rc, out = call(["stamp", "--log", str(copy)])
+                self.assertEqual((rc, out.splitlines()[0]), (0, want), out)
+        with tempfile.TemporaryDirectory() as d:
+            bare = Path(d) / "run_log.jsonl"
+            bare.write_text('{"type":"header"}\n', encoding="utf-8")
+            rc, out = call(["stamp", "--log", str(bare)])
+            self.assertEqual(rc, 0, out)
+            self.assertNotIn("label:", out)
+
+    def test_the_folder_holds_no_private_key_and_only_the_expected_files(self):
+        files = sorted(p.relative_to(EXAMPLES).as_posix() for p in EXAMPLES.rglob("*") if p.is_file())
+        self.assertEqual(files, ["example_signing_key.pub.pem"] + [f"{n}/run_log.jsonl{x}" for n in EXAMPLE_LOGS
+                                                                   for x in ("", ".sha256", ".sig")])
+        for p in EXAMPLES.rglob("*"):
+            if p.is_file():
+                self.assertNotIn(b"PRIVATE KEY", p.read_bytes(), p.name)
 
 
 class FinishErrorTests(unittest.TestCase):

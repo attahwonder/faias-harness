@@ -20,7 +20,8 @@ Steps:
      signature, end to end against a local stand-in model host; no outside network). They also cover TP-AGT-012,
      TP-DAT-009, the retrieval of SRD-1 and the local tool emulator. Each failed test is named on
      a "failed:" line. The "[test note]" lines of
-     the tests follow the count: for example, how many signed live logs the live-log tests read (FAIAS_HARNESS_RUNS)
+     the tests follow the count: for example, how many signed live logs the live-log tests read (FAIAS_HARNESS_RUNS).
+     The two example logs in examples/logs/ are read without that variable.
   8. the containment self-test (python -m faias_harness.selftest) into a temporary folder: result PASS, 0 guard trips;
      the step prints the probe count
 

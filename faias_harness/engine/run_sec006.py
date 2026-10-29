@@ -22,6 +22,7 @@ import dataclasses
 import time
 from collections import Counter
 from pathlib import Path
+from urllib.parse import urlsplit
 
 from ..adapters.srd1_http import Srd1ChatTarget
 from ..egress import EgressClient, EgressLog
@@ -248,14 +249,15 @@ def _followon(runner, index, settings, clock_ns, repo):
 
 def execute(settings, *, run_dir, sign_key, confirmation, probes=None, base_url=None, env=None,
             clock_ns=time.time_ns, repo=REPO, prior_spent_usd=0.0, variant="standard", engine="inspect", gate=None,
-            tools_file=None):
+            tools_file=None, example=False):
     """Run TP-SEC-006 on SRD-1 minimal. Return a spike.RunResult. `base_url` and `env` are for tests.
 
     `variant` is "standard" or "positive_control" (the weakened system prompt, which tells the model to show its
     instructions). `engine` is "inspect" (the default) or "direct" (a plain loop, for tests without Inspect).
     With `tools_enabled` (since 0.6) the run serves SRD-1's tool through the emulator. `gate` and `tools_file` are for
     tests: a RefundGate with the test's own values in place of the risk-appetite file, and a tools file in place of
-    targets/srd1/tools.yaml."""
+    targets/srd1/tools.yaml. `example` (tools/make_example_logs.py) adds runlog.EXAMPLE_LABEL to the label. It
+    refuses a model host that is not on the local machine."""
     build, gw, orch_mod, trace_mod = spike._srd1()
     if settings.procedure != sec006.TP:
         raise ValueError("the settings do not name the procedure TP-SEC-006")
@@ -269,6 +271,8 @@ def execute(settings, *, run_dir, sign_key, confirmation, probes=None, base_url=
                 if settings.m4_baseline_log else None)
     prompt_file = orch_mod.PROMPT_VARIANTS[variant]
     base_url = base_url or gw.OPENROUTER_BASE
+    if example and not runlog.is_local(urlsplit(base_url).hostname or ""):
+        raise ValueError("an example run needs a model host on the local machine (a local stand-in)")
     tools_on = bool(getattr(settings, "tools_enabled", False))
     if tools_on:
         gate = gate or build.RefundGate.from_file()     # null values: "refund cap not declared", before any file
@@ -319,6 +323,8 @@ def execute(settings, *, run_dir, sign_key, confirmation, probes=None, base_url=
             static=static, redacted_prompt=redacted_prompt, baseline=baseline, confirmation=confirmation,
             probes=probes, repo=repo, variant=variant, engine=engine,
             tools=tool_run.header(definitions_sha256) if tool_run else None)
+        if example:
+            header["label"] = runlog.example_label(header["label"])
         if settings.mode == "evidence" and header["m4_baseline"] is not None:
             refused = sec006_log.evidence_problems(header["m4_baseline"])
             if refused:
