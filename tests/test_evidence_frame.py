@@ -607,6 +607,81 @@ class ExampleLogTests(unittest.TestCase):
                 self.assertNotIn(b"PRIVATE KEY", p.read_bytes(), p.name)
 
 
+class MakeExampleLogsTests(unittest.TestCase):
+    """tools/make_example_logs.py makes the logs again with a new throw-away key when the sweep finds a hit in a new
+    file, at most TRIES times. It wipes each key, and it copies nothing until a try is clean. The runs are stood in
+    for here; ExampleLogTests reads the real logs."""
+
+    @classmethod
+    def setUpClass(cls):
+        import importlib.util
+        spec = importlib.util.spec_from_file_location("faias_make_example_logs", REPO / "tools" / "make_example_logs.py")
+        cls.tool = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(cls.tool)
+
+    def run_tool(self, hits_per_try):
+        """Run main with stood-in runs. `hits_per_try` gives the sweep's hits of each try in turn."""
+        keys, folders, tries = [], [], iter(hits_per_try)
+        real_key = runlog.make_key
+
+        def make_key(folder, repo=None):
+            priv, pub = real_key(folder, repo=repo)
+            keys.append(priv)
+            folders.append(folder.parent)
+            return priv, pub
+
+        def make_once(tmp, priv, pub):
+            made = []
+            for name, _, _ in self.tool.RUNS:
+                (tmp / name).mkdir()
+                for f in self.tool.FILES:
+                    (tmp / name / f).write_text(f"{name} {f}\n", encoding="utf-8")
+                made.append((name, tmp / name, "PASS"))
+            return made
+
+        out = Path(tempfile.mkdtemp())
+        self.addCleanup(shutil.rmtree, out, True)
+        text = io.StringIO()
+        with mock.patch.object(self.tool.runlog, "make_key", make_key), \
+                mock.patch.object(self.tool, "make_once", make_once), \
+                mock.patch.object(self.tool, "sweep_hits", lambda paths: next(tries)), \
+                contextlib.redirect_stdout(text):
+            try:
+                code = self.tool.main(["--out", str(out)])
+            except SystemExit as e:
+                code = str(e)
+        return code, text.getvalue(), out, keys, folders
+
+    def test_a_hit_makes_the_logs_again_with_a_new_key(self):
+        code, text, out, keys, folders = self.run_tool([["run_log.jsonl.sig:1: barred term"], []])
+        self.assertEqual(code, 0, text)
+        self.assertEqual(len(keys), 2)
+        self.assertEqual(len(set(map(str, keys))), 2)
+        self.assertIn("try 1: the sweep found 1 hit(s) in the new files (run_log.jsonl.sig:1: barred term). The "
+                      "script makes both logs again with a new key.", text)
+        self.assertFalse(any(f.exists() for f in folders))                   # each key and its folder are gone
+        files = sorted(p.relative_to(out).as_posix() for p in out.rglob("*") if p.is_file())
+        self.assertEqual(files, ["example_signing_key.pub.pem"] + [f"{n}/{f}" for n, _, _ in self.tool.RUNS
+                                                                   for f in sorted(self.tool.FILES)])
+
+    def test_after_the_last_try_nothing_is_copied(self):
+        hit = ["run_log.jsonl.sig:1: barred term"]
+        code, text, out, keys, folders = self.run_tool([hit] * self.tool.TRIES)
+        self.assertIn(f"the sweep found a hit in each of {self.tool.TRIES} tries", code)
+        self.assertEqual(len(keys), self.tool.TRIES)
+        self.assertFalse(any(f.exists() for f in folders))
+        self.assertEqual(list(out.iterdir()), [])
+
+    def test_the_sweep_rules_find_a_barred_term_in_a_signature_file(self):
+        with tempfile.TemporaryDirectory() as d:
+            sig = Path(d) / "run_log.jsonl.sig"
+            term = "veJ"[::-1]                       # stored reversed, as the sweep stores it
+            sig.write_text(json.dumps({"signature_b64": "AAAA" + term + "BBBB"}) + "\n", encoding="utf-8")
+            self.assertEqual(self.tool.sweep_hits([sig]), ["run_log.jsonl.sig:1: barred term"])
+            sig.write_text(json.dumps({"signature_b64": "AAAABBBB"}) + "\n", encoding="utf-8")
+            self.assertEqual(self.tool.sweep_hits([sig]), [])
+
+
 class FinishErrorTests(unittest.TestCase):
     """Finish reason "error" is no_result, and the gateway retries it as a processed failure."""
 

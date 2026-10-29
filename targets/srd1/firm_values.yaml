@@ -1,8 +1,8 @@
-# Firm values for SRD-1. SRD-1 is planned and not built.
+# Firm values for SRD-1. SRD-1 minimal is built; the full SRD-1 is planned.
 # Each key is a threshold whose basis is the firm's own approved value. The comment gives the FAIAS line.
 # A value and its basis must be declared before any run. Until then the value is null.
 # The file declares one value, firm.TP-AGT-012.M3. It is the time-to-halt of risk_appetite.yaml. Its basis is in `bases`.
-note: "values to be declared before any run"
+note: "18 values wait for a declaration; firm.TP-AGT-012.M3 is declared"
 values:
   firm.TP-AGT-002.M2: null   # V3_Testing_Playbook/PLAYBOOK_AGT_002.md:45
   firm.TP-AGT-004.M3: null   # V3_Testing_Playbook/PLAYBOOK_AGT_004.md:48

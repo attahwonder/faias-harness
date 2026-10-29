@@ -36,6 +36,30 @@ DEFAULT_DELAYS_MS = (0, 50, 200, 800, 2000)     # the containment delay schedule
 GATE_LAYER = {"standard": "orchestrator", "positive_control": "prompt", "prompt_free_gate": "orchestrator"}
 # Each containment run sends two messages. They are the refund and one more message, which the switch refuses.
 CONTAINMENT_MESSAGES = 2
+# The second home of the time-to-halt: the firm value firm.TP-AGT-012.M3 of SRD-1's profile.
+FIRM_VALUES_FILE = "targets/srd1/firm_values.yaml"
+HALT_KEY = "firm.TP-AGT-012.M3"
+BANK_FILE = "targets/srd1/data/synthetic_bank.yaml"
+
+
+def halt_home_problems(time_to_halt_s, firm_file):
+    """Why the two homes of the time-to-halt disagree (empty if they agree). The homes are time_to_halt_s of
+    risk_appetite.yaml and firm.TP-AGT-012.M3 of the firm-values file. The engine runs this before the lock when the
+    gate is the declared one, so M3 never carries a label that the firm value does not support."""
+    import yaml
+    values = (yaml.safe_load(Path(firm_file).read_text(encoding="utf-8")) or {}).get("values") or {}
+    if values.get(HALT_KEY) != time_to_halt_s:
+        return [f"the time-to-halt of risk_appetite.yaml ({time_to_halt_s}) differs from {HALT_KEY} of "
+                f"{Path(firm_file).name} ({values.get(HALT_KEY)})"]
+    return []
+
+
+def item_set_problems(repo=REPO, cap=None, limit=None):
+    """The problems of the item file of `repo` against the store and the gate's values (agt012.check_item_set).
+    The preflight and the engine call it before a run, so an edited item file does not run unchecked."""
+    from ..emulators import handlers
+    store, _ = handlers.load_store(Path(repo) / BANK_FILE)
+    return agt012.check_item_set(agt012.load_set(repo), store, cap, limit, repo=repo)
 
 
 def plan(settings, repo=REPO):
@@ -221,6 +245,7 @@ class _Runner:
             self.bypasses += 1
             self.log.write({"type": "bypass", "item": item.id, "run": n, "t_ns": self.clock_ns(),
                             "bypass_detail": facts["bypass_detail"],
+                            "duplicate_execution": facts["duplicate_execution"],    # a retry, not the gate's sum
                             "escalated": f"printed at {runlog.iso()}; the engagement lead is the operator"})
             print(f"BYPASS {item.id}/{n}: {facts['bypass_detail']} (escalated at once; the run continues)")
             if self.halt_on_bypass:
@@ -403,10 +428,19 @@ def execute(settings, *, run_dir, sign_key, confirmation, items=None, probes=Non
     gate_problems = selftest.gate_problems(agt012.TP, isolation_status, settings.mode)
     if gate_problems:
         raise RuntimeError("TP-AGT-012 is gated: " + "; ".join(gate_problems))
+    declared = gate is None                             # the gate of the declared values (risk_appetite.yaml)
     gate = gate or build.RefundGate.from_file()         # null values raise GateNotDeclared before any file
     if objective_s is None:                             # the declared time-to-halt (risk_appetite.yaml); may be null
         objective_s = gate.time_to_halt_s
+        if declared:
+            problems = halt_home_problems(gate.time_to_halt_s, Path(repo) / FIRM_VALUES_FILE)
+            if problems:
+                raise RuntimeError("TP-AGT-012: the run is refused before the lock: " + "; ".join(problems))
     if items is None:
+        problems = item_set_problems(repo, gate.cap_gbp, gate.session_limit_gbp)
+        if problems:
+            raise RuntimeError("TP-AGT-012: the item file has problems; the run is refused before the lock: "
+                               + "; ".join(problems))
         items = agt012.load_items(repo)
     base_url = base_url or gw.OPENROUTER_BASE
     run_dir = Path(run_dir)
@@ -446,9 +480,11 @@ def execute(settings, *, run_dir, sign_key, confirmation, items=None, probes=Non
         action_classes = [{"class": a["class"], "tool": a["tool"], "gate": a["gate"],
                            "layer": structural["declared_layer"], "cap": gate.cap_gbp, "limit": gate.session_limit_gbp}
                           for a in gate_mod.IRREVERSIBLE_ACTIONS]
+        declaration = gate_mod.load_risk_appetite()[0]      # who declared the values, and when, from the file
         risk_appetite = {"cap_gbp": gate.cap_gbp, "session_limit_gbp": gate.session_limit_gbp,
                          "time_to_halt_s": objective_s, "source": gate.source, "sha256": gate.sha256,
-                         "declared_by": "R-04 (the owner)", "declaration_ref": "D-7",
+                         "declared_by": declaration.get("declared_by"), "declared_on": declaration.get("declared_on"),
+                         "declaration_ref": "D-7",
                          "basis": "synthetic; set from first principles; no real bank's figure"}
         isolation = {"selftest": {"sha256": _selftest_sha(isolation_status), "time": (isolation_status or {}).get("time"),
                                   "commit": (isolation_status or {}).get("commit"),

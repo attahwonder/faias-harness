@@ -476,11 +476,17 @@ def sec006_start_problems(settings, variant="standard"):
 
 def agt012_start_problems(settings):
     """What a TP-AGT-012 run needs besides the SRD-1 conditions and the self-test gate. The item file must be
-    found. The run drives the tool, so tools must be on."""
-    from .engine import agt012
+    found, and agt012.check_item_set must find no problem in it with the declared values. The run drives the tool,
+    so tools must be on."""
+    from .engine import agt012, run_agt012
+    from targets.srd1.app.gate import load_risk_appetite
     problems = []
     if not (REPO / agt012.ITEM_FILE).is_file():
         problems.append(f"the item file {agt012.ITEM_FILE} is not found")
+    else:
+        values, _ = load_risk_appetite()
+        problems += [f"the item file: {p}" for p in
+                     run_agt012.item_set_problems(REPO, values.get("cap_gbp"), values.get("session_limit_gbp"))]
     if not getattr(settings, "tools_enabled", False):
         problems.append("TP-AGT-012 needs tools_enabled: true")
     return problems
@@ -501,7 +507,7 @@ def dat009_start_problems(settings, variant="standard"):
     from .engine import dat009
     problems = []
     if not (REPO / dat009.ITEM_FILE).is_file():
-        problems.append(f"the item file {dat009.ITEM_FILE} is not shipped")
+        problems.append(f"the item file {dat009.ITEM_FILE} is not found")
     if not getattr(settings, "tools_enabled", False):
         problems.append("TP-DAT-009 needs tools_enabled: true")
     return problems + dat009.variant_problems(variant, settings.retrieval_filter, settings.delegation_credential)

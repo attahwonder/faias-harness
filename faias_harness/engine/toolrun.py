@@ -1,5 +1,6 @@
-"""Serve SRD-1's tool for one engine run with tools on (since 0.6). Three engines use it: spike.execute (TP-SEC-001),
-run_sec006.execute (TP-SEC-006) and run_agt012.execute (TP-AGT-012).
+"""Serve SRD-1's tool for one engine run with tools on (since 0.6). Four engines use it: spike.execute (TP-SEC-001),
+run_sec006.execute (TP-SEC-006), run_agt012.execute (TP-AGT-012) and run_dat009.execute (TP-DAT-009, with the tools
+file targets/srd1/tools_retrieval.yaml).
 
 The run starts the harness's MCP tool emulator on 127.0.0.1 with SRD-1's tools file (targets/srd1/tools.yaml) and
 its synthetic store, and keeps the tool ledger in the run folder. It generates a key for the emulator in this

@@ -25,8 +25,9 @@ The steps, in order:
      teardown as done.
 
 A run record holds the request of a tier 1 or tier 2 item. For a tier 3 item, it holds the SHA-256 of each turn.
-Each tool argument in its lines is a SHA-256, except on_behalf_of. The customer's message in its lines is a SHA-256 too. Each
-reply in its lines is redacted of the staged placeholders of SRD-1's system prompt. The run returns the item ID to
+Each tool argument in its lines is a SHA-256, except on_behalf_of where SRD-1 set it. The customer's message in its
+lines is a SHA-256 too. Each reply in its lines is redacted of the staged placeholders of SRD-1's system prompt. The
+reply of a tier 3 item also loses each copy of a turn of the item. The run returns the item ID to
 the Inspect solver, so the Inspect log holds no reply. The Inspect sample of a tier 3 item shows its technique and
 hash only (dat009.Item.text).
 
@@ -43,7 +44,7 @@ from ..egress import EgressClient, EgressLog
 from ..emulators import mcp_tools
 from ..errors import CapReached
 from . import dat009, dat009_log, runlog, sec006, spike, toolrun
-from .run_agt012 import _selftest_sha, _turn_facts      # one rule in one place, so the facts are those of TP-AGT-012
+from .run_agt012 import _selftest_sha, _session_calls, _turn_facts     # one rule in one place, as for TP-AGT-012
 
 REPO = Path(__file__).resolve().parents[2]
 TARGET_DIR, TARGET_README = spike.TARGET_DIR, spike.TARGET_README
@@ -100,14 +101,19 @@ class _Runner:
     Call `use` before each arm. After a stop, `one` sends nothing.
 
     With `halt_on_mismatch` (evidence mode), a call from a host other than the locked one stops the run. The call is
-    recorded first, as in the other engines (spike.host_tally)."""
+    recorded first, as in the other engines (spike.host_tally). The calls are those of every `turn` and `turn_error`
+    line (run_agt012._session_calls). `tools` is the run's tool list (the header's `tools.names`), and a record holds
+    a name that is not in it as its SHA-256. `target_turns` maps each item to its target turns (the manifest)."""
 
-    def __init__(self, log, matrix, keys, placeholders, clock_ns, halt_on_crossing=False, halt_on_mismatch=False):
+    def __init__(self, log, matrix, keys, placeholders, clock_ns, halt_on_crossing=False, halt_on_mismatch=False,
+                 tools=(), target_turns=None):
         self.log, self.matrix, self.keys, self.placeholders = log, matrix, keys, tuple(placeholders)
         self.clock_ns, self.halt_on_crossing, self.halt_on_mismatch = clock_ns, halt_on_crossing, halt_on_mismatch
+        self.tools, self.known_refs = tuple(tools), tuple(matrix.get("customers") or ())
+        self.target_turns = dict(target_turns or {})
         self.status, self.error = "complete", None
         self.facts, self.crossings, self.hosts, self.models = [], 0, Counter(), Counter()
-        self.cost, self.calls, self.mismatches, self.host_not_reported = 0.0, 0, 0, 0
+        self.calls, self.mismatches, self.host_not_reported = 0, 0, 0
         self.last_no_result, self.last_score = False, None
         self.arm, self.emulator = None, None
 
@@ -123,18 +129,22 @@ class _Runner:
         self.log.write({"type": "run_stopped", "item": item.id, "arm": self.arm, "run": n, "t_ns": t_ns,
                         "reason": self.status, "error": self.error, **extra})
 
-    def _lines(self, trace):
+    def _lines(self, trace, item):
         """The lines of the record, which are the kinds that the scorer reads. Each tool argument and customer
-        message is its SHA-256, and each reply is redacted. Returns (lines, the redaction counts of each reply)."""
-        lines = dat009.hash_arguments([e for e in trace if e.get("kind") in RECORD_KINDS])
-        counts, earlier = [], []
+        message is its SHA-256, and each reply is redacted. A reply of a tier 3 item also loses each copy of a turn
+        of the item (dat009.redact_turns). Returns (lines, the redaction counts of each reply, the tier 3 turns
+        removed from each reply)."""
+        lines = dat009.hash_arguments([e for e in trace if e.get("kind") in RECORD_KINDS], self.tools, self.known_refs)
+        counts, removed, earlier = [], [], []
         for line in lines:
             if line.get("kind") == "turn" and isinstance(line.get("reply"), str):
                 raw = line["reply"]
                 line["reply"], c = sec006.redact(raw, self.placeholders, earlier=tuple(earlier))
+                line["reply"], n = dat009.redact_turns(line["reply"], item.turns if item.tier == "T3" else ())
                 counts.append(c)
+                removed.append(n)
                 earlier.append(raw)
-        return lines, counts
+        return lines, counts, removed
 
     def one(self, target, item, n):
         self.last_no_result, self.last_score = False, None
@@ -163,21 +173,24 @@ class _Runner:
             self._stop(item, n, t_ns)
             return None
         ledger = [] if self.emulator is None else dat009.hash_arguments(
-            [x for x in mcp_tools.read_ledger(self.emulator.ledger.path, tool=dat009.TOOL) if x["seq"] > before])
-        lines, counts = self._lines(trace)
-        calls, blocked, finish_reason = _turn_facts(lines)
+            [x for x in mcp_tools.read_ledger(self.emulator.ledger.path, tool=dat009.TOOL) if x["seq"] > before],
+            self.tools, self.known_refs)
+        lines, counts, removed = self._lines(trace, item)
+        _, blocked, finish_reason = _turn_facts(lines)
+        calls, unreported = _session_calls(lines)     # the calls of the turn_error lines too
         facts = dat009.score_run(item.customer_ref, self.arm, lines, ledger, self.matrix, self.keys,
-                                 turn_error=turn_error)
+                                 turn_error=turn_error, target_turns=self.target_turns.get(item.id, ()))
         self.facts.append({"item": item.id, "tier": item.tier, "direction": item.direction, "arm": self.arm,
                            "run": n, **facts})
         halt, served = False, None
         for c in calls:
             self.hosts[str(c.get("served_host"))] += 1
             self.models[str(c.get("model_served"))] += 1
-            self.cost += c.get("cost_usd") or 0.0
             self.calls += 1
             if spike.host_tally(self, c.get("host_ok")) and not halt:
                 halt, served = True, c.get("served_host")
+        for _ in range(unreported):
+            spike.host_tally(self, None)
         rec = {"type": "run", "item": item.id, "tier": item.tier, "direction": item.direction,
                "technique": item.technique, "arm": self.arm, "customer_ref": item.customer_ref,
                "target_doc_ids": list(item.target_doc_ids), "run": n, "t_ns": t_ns, "time": runlog.iso(t_ns)}
@@ -186,7 +199,7 @@ class _Runner:
         else:
             rec["request"] = list(item.turns)
         rec.update(calls=calls, trace_lines=lines, ledger_lines=ledger, turn_error=turn_error, blocked=blocked,
-                   finish_reason=finish_reason, placeholders=counts, **facts)
+                   finish_reason=finish_reason, placeholders=counts, tier3_turns_removed=removed, **facts)
         self.log.write(rec)
         self.last_no_result = facts["outcome"] == "no_result"
         self.last_score = {"value": 1 if facts["crossing"] else 0, "kind": facts["outcome"],
@@ -376,7 +389,9 @@ def execute(settings, *, run_dir, sign_key, confirmation, items=None, probes=Non
         log.write(header)
         runlog.wait_past_lock(header, clock_ns)
         runner = _Runner(log, matrix, keys, sec006.find_placeholders([first.orchestrator.system_prompt]), clock_ns,
-                         halt_on_crossing=settings.halt_on_crossing, halt_on_mismatch=settings.mode == "evidence")
+                         halt_on_crossing=settings.halt_on_crossing, halt_on_mismatch=settings.mode == "evidence",
+                         tools=(header.get("tools") or {}).get("names") or (),
+                         target_turns={m["id"]: m["target_turns"] for m in header["corpus"]["manifest"]})
         engine_runs = {}
         for arm in arms_run:
             if runner.stopped:
@@ -423,7 +438,7 @@ def _summary(runner, settings, arms, elog, engine, engine_runs, declared_stage, 
         "measures": measures, "results_table": dat009.results_table(facts),
         "denial_reconciliation": {k: measures["M5"][k] for k in ("denials_expected", "denials_logged", "reconciled",
                                                                  "runs_unreconciled")},
-        "crossings": runner.crossings, "cost_usd": round(runner.cost, 8), "model_calls": cap.calls,
+        "crossings": runner.crossings, "cost_usd": round(cap.spent_usd, 8), "model_calls": cap.calls,
         "cap_usd": settings.cap_usd, "served_hosts": dict(runner.hosts), "served_models": dict(runner.models),
         "host_mismatches": runner.mismatches, "host_not_reported": runner.host_not_reported,
         "arms": per_arm,
