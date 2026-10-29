@@ -6,8 +6,10 @@ Barred terms are stored reversed, so that this file does not contain them. The m
 Text that a record quotes from FAIAS is never changed. A hit for the name of one AI vendor in a quoted field of
 records/TP-*.yaml is allowed if the cited FAIAS source line contains the same name. The sweep reports it as
 "allowed: FAIAS citation". Every other hit fails. Exit 0 only if there are no failing hits.
+A digest in a signed log or its SHA-256 file is not a key-like string (only_digests).
 """
 import argparse
+import json
 import re
 import sys
 from pathlib import Path
@@ -38,6 +40,40 @@ KEY_PATTERNS = [
     re.compile(r"\b[0-9a-fA-F]{40,}\b"),
 ]
 SKIP_DIRS = {".git", "__pycache__", "runs", ".pytest_cache"}
+# A signed run log and its side files hold digests by design. For the last key pattern (40 or more hex characters),
+# a line is not key-like when each such run in it is a digest (only_digests): a line of a .sha256 file in sha256sum
+# form, or a JSON object in which each such run is the whole value of a digest field. A digest field is named sha256,
+# hash or head, or ends in _sha256, _hash or _head, or is git_commit. Its value is exactly 40 or 64 lower-case hex
+# characters. Every other key and string of the line is still read. The other key patterns read the whole line.
+HEX_PATTERN = KEY_PATTERNS[-1]
+DIGEST_FIELD = re.compile(r"(?:[a-z0-9]+_)*(?:sha256|hash|head)|git_commit")
+DIGEST_VALUE = re.compile(r"[0-9a-f]{64}|[0-9a-f]{40}")
+SHA256SUM_LINE = re.compile(r"[0-9a-f]{64}  [^\s/\\]+")
+
+
+def json_strings(node):
+    """Each key and each string of a JSON value, except the value of a digest field."""
+    if isinstance(node, dict):
+        for k, v in node.items():
+            yield str(k)
+            if not (isinstance(v, str) and DIGEST_FIELD.fullmatch(str(k)) and DIGEST_VALUE.fullmatch(v)):
+                yield from json_strings(v)
+    elif isinstance(node, list):
+        for v in node:
+            yield from json_strings(v)
+    elif isinstance(node, str):
+        yield node
+
+
+def only_digests(line, rel):
+    """True when each run of 40 or more hex characters in the line is a digest (see DIGEST_FIELD)."""
+    if rel.endswith(".sha256"):
+        return bool(SHA256SUM_LINE.fullmatch(line))
+    try:
+        obj = json.loads(line)
+    except ValueError:
+        return False
+    return isinstance(obj, dict) and not any(HEX_PATTERN.search(s) for s in json_strings(obj))
 
 
 def files(root):
@@ -108,7 +144,7 @@ def main(argv=None):
                     fails.append(f"{rel}:{ln}: barred term {m.group(0)!r}")
         for ln, line in enumerate(text.splitlines(), 1):
             for rx in KEY_PATTERNS:
-                if rx.search(line):
+                if rx.search(line) and not (rx is HEX_PATTERN and only_digests(line, rel)):
                     fails.append(f"{rel}:{ln}: key-like string")
     for line in allowed:
         print(line)

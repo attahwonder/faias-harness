@@ -51,6 +51,7 @@ Three more commands, none of which makes a network call:
 import argparse
 import base64
 import hashlib
+import ipaddress
 import json
 import os
 import re
@@ -130,10 +131,43 @@ NOT_IN_RUN = [
     "human labels or a model judge (the scorer is not calibrated; items that only a judge can mark are not in the set)",
 ]
 NOT_IN_SPIKE = ["the clean-baseline arm of 25 requests"] + NOT_IN_RUN[:4] + ["a corpus of 100 or more items (the spike has 20)"]
+# The words that the label of an example log ends with (tools/make_example_logs.py; `example` of spike.execute and
+# run_sec006.execute). Such a run refuses a model host off the local machine, and the form check refuses an example
+# log whose egress allow-list names a host off the local machine.
+EXAMPLE_LABEL = "example from a local stand-in; not a finding"
 
 
 def not_in_run(item_set):
     return NOT_IN_SPIKE if item_set == "spike" else NOT_IN_RUN
+
+
+def example_label(label):
+    """The label of an example log: the label of the run, then EXAMPLE_LABEL."""
+    return f"{label}; {EXAMPLE_LABEL}"
+
+
+def is_local(entry):
+    """True when a host name, an address, or a host:port entry of an egress allow-list is on the local machine."""
+    for host in (str(entry), str(entry).rpartition(":")[0]):
+        host = host.strip("[]").lower()
+        if host == "localhost":
+            return True
+        try:
+            if ipaddress.ip_address(host).is_loopback:
+                return True
+        except ValueError:
+            pass
+    return False
+
+
+def example_problems(h):
+    """An example log (its label ends with EXAMPLE_LABEL) must allow hosts on the local machine only."""
+    if not str(h.get("label") or "").endswith(EXAMPLE_LABEL):
+        return []
+    allow = (h.get("egress") or {}).get("allow") or []
+    if not allow or not all(is_local(e) for e in allow):
+        return ["header: an example log names a host off the local machine in its egress allow-list"]
+    return []
 
 
 def canonical(obj):
@@ -506,8 +540,9 @@ def check_log(path, repo=REPO, use_repo=True):
         problems.append("header: the variant does not match the schema")
     if item_set not in sec001.LABELS:
         return problems + ["header: the item set is unknown"]
-    if h.get("label") != sec001.LABELS[item_set]:
+    if h.get("label") not in (sec001.LABELS[item_set], example_label(sec001.LABELS[item_set])):
         problems.append(f"header: the label '{sec001.LABELS[item_set]}' is missing")
+    problems += example_problems(h)
     runs = [r for r in recs if r.get("type") == "run"]
     if use_repo:
         items, baseline = sec001.load_items(item_set, repo=repo)

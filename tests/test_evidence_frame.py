@@ -23,12 +23,13 @@ from unittest import mock
 
 import httpx
 
+from faias_harness import settings as settings_mod
 from faias_harness.adapters.base import ChannelError
 from faias_harness.egress import EgressClient
 from faias_harness.engine import external, runlog, sec001, spike
 from faias_harness.errors import GatewayError
 from targets.srd1.app.gateway import CapMeter, Gateway, estimate_tokens
-from tests.helpers import FAKE_KEY_VALUE, KEY_ENV, StandInModelHost, make_settings, no_outside_network
+from tests.helpers import FAKE_KEY_VALUE, KEY_ENV, StandInModelHost, make_settings, no_outside_network, raw_settings
 
 REPO = Path(__file__).resolve().parents[1]
 ENV = {KEY_ENV: FAKE_KEY_VALUE}
@@ -436,6 +437,67 @@ class LiveLogTests(unittest.TestCase):
             copy.write_text("\n".join(lines) + "\n", encoding="utf-8")
             _, mismatches = runlog.rescore_log(copy)
             self.assertEqual(len(mismatches), 1)
+
+
+def sec006_settings():
+    raw = raw_settings(procedure="TP-SEC-006", mode="explore",
+                       reviewer_values={"M3": {"value": 0.25, "reason": "test value for the unit tests"},
+                                        "M4": {"value": 0.1, "reason": "test value for the unit tests"}})
+    raw.pop("item_set")
+    assert not settings_mod.validate(raw), settings_mod.validate(raw)
+    return settings_mod.from_raw(raw)
+
+
+class ExampleLabelTests(unittest.TestCase):
+    """The label of an example log (tools/make_example_logs.py). A run adds it only against a model host on the local
+    machine. The form check refuses it on a log whose egress allow-list names a host off the local machine."""
+
+    def test_an_example_run_has_the_label_in_the_header_and_the_summary(self):
+        with tempfile.TemporaryDirectory() as d:
+            priv, pub = runlog.make_key(Path(d) / "keys", repo=REPO)
+            with StandInModelHost(respond) as host, no_outside_network():
+                res = spike.execute(make_settings(cap_usd=10.0), run_dir=Path(d) / "run", sign_key=priv,
+                                    confirmation=CONFIRM, base_url=host.base_url, env=ENV, engine="direct",
+                                    example=True)
+            recs = runlog.read_log(res.log_path)
+            want = "engine spike, not a finding; example from a local stand-in; not a finding"
+            self.assertEqual((res.status, recs[0]["label"], recs[-1]["label"]), ("complete", want, want))
+            self.assertEqual(runlog.example_label(sec001.LABEL), want)
+            ok, msg = runlog.verify_log(res.log_path, res.sig_path, pub)
+            self.assertTrue(ok, msg)
+            ok, msg = runlog.verify_log(res.log_path, res.sig_path, pub, use_repo=False)
+            self.assertTrue(ok, msg)
+            edited = Path(d) / "edited.jsonl"
+            for allow, problem in ((["openrouter.ai"], True), ([], True), (["127.0.0.1:9", "localhost:9"], False)):
+                h = json.loads(json.dumps(recs[0]))
+                h["egress"]["allow"] = allow
+                edited.write_bytes(b"".join(runlog.canonical(r).encode("utf-8") + b"\n" for r in [h] + recs[1:]))
+                self.assertEqual("header: an example log names a host off the local machine in its egress "
+                                 "allow-list" in runlog.check_log(edited), problem, allow)
+            h = json.loads(json.dumps(recs[0]))
+            h["label"] = sec001.LABEL + "; example"
+            edited.write_bytes(b"".join(runlog.canonical(r).encode("utf-8") + b"\n" for r in [h] + recs[1:]))
+            self.assertIn(f"header: the label '{sec001.LABEL}' is missing", runlog.check_log(edited))
+
+    def test_an_example_run_refuses_a_model_host_off_the_local_machine_before_it_writes(self):
+        from faias_harness.engine import run_sec006
+        runs = ((spike.execute, make_settings(cap_usd=10.0)), (run_sec006.execute, sec006_settings()))
+        for execute, settings in runs:
+            for base_url in ("https://openrouter.ai/api/v1", None):
+                with self.subTest(execute=execute.__module__, base_url=base_url), tempfile.TemporaryDirectory() as d, \
+                        no_outside_network(), self.assertRaises(ValueError) as e:
+                    try:
+                        execute(settings, run_dir=Path(d) / "run", sign_key=Path(d) / "no_key.pem",
+                                confirmation=CONFIRM, base_url=base_url, env=ENV, engine="direct", example=True)
+                    finally:
+                        self.assertFalse((Path(d) / "run").exists())
+                self.assertIn("a model host on the local machine", str(e.exception))
+
+    def test_which_hosts_are_on_the_local_machine(self):
+        for entry in ("127.0.0.1:5000", "127.0.0.1", "localhost:80", "::1", "::1:8080", "[::1]:8080"):
+            self.assertTrue(runlog.is_local(entry), entry)
+        for entry in ("openrouter.ai", "192.0.2.1:80", "127.0.0.1.example.invalid:80", "", "examplehost", "::2"):
+            self.assertFalse(runlog.is_local(entry), entry)
 
 
 class FinishErrorTests(unittest.TestCase):

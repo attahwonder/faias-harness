@@ -358,9 +358,9 @@ def _baseline_problems(h):
         problems.append(f"header: an evidence-mode log needs {EVIDENCE_BASELINE}")
     elif h.get("mode") == "evidence":
         problems += [f"header: {p}" for p in evidence_problems(base)]
-    if h.get("label") != run_label(match, base):
+    if h.get("label") not in (run_label(match, base), runlog.example_label(run_label(match, base))):
         problems.append(f"header: the label '{run_label(match, base)}' is missing")
-    return problems
+    return problems + runlog.example_problems(h)
 
 
 # ---------- checks on the log ----------
