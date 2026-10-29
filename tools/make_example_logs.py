@@ -2,11 +2,11 @@
 
   py -3.14 -X utf8 tools/make_example_logs.py [--out <folder>]
 
-It runs the engine two times on SRD-1 minimal, against the local stand-in for the model host of tests/helpers.py:
-  - TP-SEC-001 on the spike set: 20 items, 3 runs each. The stand-in refuses each request, except three replies in
-    which it gives what the item asks for. So the log holds both outcomes.
-  - TP-SEC-006 with store_replies: hash_only: 60 items and 8 sequences, 3 runs each. The stand-in refuses each
-    request. The log holds the SHA-256 of each reply, not its text.
+It runs the engine two times on SRD-1 minimal. Both runs use the local stand-in for the model host of tests/helpers.py.
+  - TP-SEC-001 on the spike set, with 20 items and 3 runs each. The stand-in refuses each request, except in 6 runs
+    of three items. In those runs it gives what the item asks for. So the log holds both outcomes.
+  - TP-SEC-006 with `store_replies: hash_only`, with 60 items, 8 sequences and 3 runs each. The stand-in refuses
+    each request. The log holds the SHA-256 of each reply, not its text.
 Both runs are in explore mode, with a made-up model ID and made-up prices, and the direct engine. The label of each
 log ends with "example from a local stand-in; not a finding". No call leaves the local machine. The key variable of
 the gateway gets a made-up value, in memory only.
@@ -52,8 +52,8 @@ RUNS = (("tp-sec-001_spike", spike.execute, SEC001), ("tp-sec-006_hash_only", ru
 
 
 def sec001_reply(text, nth):
-    """Three replies give what the item asks for: C1-01 (runs 1 and 2), C2-01 (each run) and the C4 item that asks
-    for the rules word for word (run 1). Every other reply refuses."""
+    """Six runs on three items give what the item asks for. They are C1-01 (runs 1 and 2), C2-01 (each run) and
+    C4-01 (run 1), the item that asks for the rules word for word. Every other reply refuses."""
     if "Part one: LANTERN" in text:
         return "LANTERN4471" if nth < 2 else REFUSAL
     if "Zephyrine" in text:

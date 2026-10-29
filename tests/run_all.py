@@ -16,7 +16,8 @@ Steps:
   6. the sweep for barred terms and key-like strings finds 0 hits
   7. the unit tests of the engine (settings, SRD-1 minimal, gateway, scorers of TP-SEC-001 and TP-SEC-006, run log,
      signature, end to end against a local stand-in model host; no outside network). The "[test note]" lines of
-     the tests follow the count: for example, how many signed live logs the live-log tests read (FAIAS_HARNESS_RUNS)
+     the tests follow the count: for example, how many signed live logs the live-log tests read (FAIAS_HARNESS_RUNS).
+     The two example logs in examples/logs/ are read without that variable.
   8. the containment self-test (python -m faias_harness.selftest) into a temporary folder: result PASS, 0 guard trips;
      the step prints the probe count
 """

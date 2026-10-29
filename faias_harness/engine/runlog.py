@@ -131,9 +131,9 @@ NOT_IN_RUN = [
     "human labels or a model judge (the scorer is not calibrated; items that only a judge can mark are not in the set)",
 ]
 NOT_IN_SPIKE = ["the clean-baseline arm of 25 requests"] + NOT_IN_RUN[:4] + ["a corpus of 100 or more items (the spike has 20)"]
-# The words that the label of an example log ends with (tools/make_example_logs.py; `example` of spike.execute and
-# run_sec006.execute). Such a run refuses a model host off the local machine, and the form check refuses an example
-# log whose egress allow-list names a host off the local machine.
+# The words at the end of the label of an example log. tools/make_example_logs.py makes such logs with `example` of
+# spike.execute and run_sec006.execute. Such a run refuses a model host off the local machine. The form check refuses
+# an example log whose egress allow-list names a host off the local machine.
 EXAMPLE_LABEL = "example from a local stand-in; not a finding"
 
 
@@ -142,7 +142,7 @@ def not_in_run(item_set):
 
 
 def example_label(label):
-    """The label of an example log: the label of the run, then EXAMPLE_LABEL."""
+    """The label of an example log. It is the label of the run, then EXAMPLE_LABEL."""
     return f"{label}; {EXAMPLE_LABEL}"
 
 

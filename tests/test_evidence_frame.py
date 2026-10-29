@@ -6,6 +6,8 @@ Some tests read the signed live run logs, which are not in the repository. They 
 in the folders that the variable FAIAS_HARNESS_RUNS names (separated by the path separator: ';' on Windows). Each
 folder may hold run_log.jsonl itself or in its sub-folders. Without such logs, those tests check nothing. Each
 prints a "[test note]" line with the number of logs that it read, and tests/run_all.py shows that line.
+
+The two example logs in examples/logs/ are in the repository. ExampleLogTests reads them without that variable.
 """
 import contextlib
 import hashlib
@@ -407,7 +409,8 @@ class LiveLogTests(unittest.TestCase):
             src = ("FAIAS_HARNESS_RUNS" if os.environ.get("FAIAS_HARNESS_RUNS") else
                    "runs/ of the checkout (FAIAS_HARNESS_RUNS is not set)")
             why = f"no folder in {src} holds run_log.jsonl"
-        note(f"live logs: {what} read 0 logs, because {why}; this test checks nothing")
+        note(f"live logs: {what} read 0 logs, because {why}; this test checks nothing (ExampleLogTests checks the "
+             "two example logs in examples/logs/)")
 
     def test_every_live_log_still_verifies_with_and_without_the_repository(self):
         self.read("verify and verify --no-repo", self.dirs)
@@ -498,6 +501,82 @@ class ExampleLabelTests(unittest.TestCase):
             self.assertTrue(runlog.is_local(entry), entry)
         for entry in ("openrouter.ai", "192.0.2.1:80", "127.0.0.1.example.invalid:80", "", "examplehost", "::2"):
             self.assertFalse(runlog.is_local(entry), entry)
+
+
+EXAMPLES = REPO / "examples" / "logs"
+EXAMPLE_PUBKEY = EXAMPLES / "example_signing_key.pub.pem"
+EXAMPLE_LOGS = {"tp-sec-001_spike": "TP-SEC-001", "tp-sec-006_hash_only": "TP-SEC-006"}
+
+
+class ExampleLogTests(unittest.TestCase):
+    """The two example logs in examples/logs/ (tools/make_example_logs.py). They are in the repository, so these tests
+    read them without FAIAS_HARNESS_RUNS. They make the checks of the live-log tests. They verify each log with and
+    without the repository, and they rescore an edited copy. A throw-away key signed them. Its public half is in the
+    folder."""
+
+    def logs(self):
+        for name, tp in EXAMPLE_LOGS.items():
+            yield name, tp, EXAMPLES / name / "run_log.jsonl"
+
+    def test_each_example_log_verifies_with_the_shipped_key_with_and_without_the_repository(self):
+        for name, tp, log in self.logs():
+            with self.subTest(log=name):
+                sig = log.with_name("run_log.jsonl.sig")
+                ok, msg = runlog.verify_log(log, sig, EXAMPLE_PUBKEY)
+                self.assertTrue(ok, msg)
+                self.assertIn("(pinned public key)", msg)
+                ok, msg = runlog.verify_log(log, sig, EXAMPLE_PUBKEY, use_repo=False)
+                self.assertTrue(ok, msg)
+                self.assertEqual(msg.splitlines()[-1], "repository item set: not checked")
+                self.assertEqual(json.loads(sig.read_text(encoding="utf-8"))["public_key_pem"].encode("ascii"),
+                                 EXAMPLE_PUBKEY.read_bytes())
+                self.assertEqual(runlog.read_log(log)[0]["procedure"]["tp"], tp)
+
+    def test_each_example_log_has_the_example_label_and_local_hosts_only(self):
+        for name, _, log in self.logs():
+            with self.subTest(log=name):
+                recs = runlog.read_log(log)
+                h, s = recs[0], recs[-1]
+                self.assertTrue(h["label"].endswith("; example from a local stand-in; not a finding"), h["label"])
+                self.assertEqual((s["type"], s["label"], s["status"]), ("summary", h["label"], "complete"))
+                self.assertTrue(h["egress"]["allow"] and all(runlog.is_local(e) for e in h["egress"]["allow"]))
+                self.assertEqual(runlog.example_problems(h), [])
+
+    def test_rescore_of_the_example_logs_and_of_an_edited_copy(self):
+        log = EXAMPLES / "tp-sec-001_spike" / "run_log.jsonl"
+        lines, mismatches = runlog.rescore_log(log)
+        self.assertEqual(mismatches, [], lines)
+        self.assertIn("runs rescored: 60; mismatches: 0", lines)
+        recs = runlog.read_log(log)
+        self.assertEqual(sum(1 for r in recs if r.get("type") == "run" and r["score"]["success"]), 6)
+        with tempfile.TemporaryDirectory() as d:
+            copy = Path(d) / "run_log.jsonl"
+            i = next(n for n, r in enumerate(recs) if r.get("type") == "run" and r["score"]["success"])
+            recs[i]["score"]["success"] = False
+            copy.write_bytes(b"".join(runlog.canonical(r).encode("utf-8") + b"\n" for r in recs))
+            _, mismatches = runlog.rescore_log(copy)
+            self.assertEqual(len(mismatches), 1)
+        # the TP-SEC-006 log holds the SHA-256 of each reply only, so there is nothing to score again (exit 2)
+        log = EXAMPLES / "tp-sec-006_hash_only" / "run_log.jsonl"
+        rc, out = call(["rescore", "--log", str(log)])
+        self.assertEqual(rc, 2, out)
+        self.assertIn("controlled evidence store", out)
+        runs = [r for r in runlog.read_log(log) if r["type"] == "run"]
+        self.assertTrue(runs and all("reply" not in r and runlog.HEX64.fullmatch(r["reply_sha256"]) for r in runs))
+
+    def test_the_sha256_file_of_each_log_holds_its_digest(self):
+        for name, _, log in self.logs():
+            with self.subTest(log=name):
+                self.assertEqual(log.with_name("run_log.jsonl.sha256").read_bytes(),
+                                 f"{hashlib.sha256(log.read_bytes()).hexdigest()}  run_log.jsonl\n".encode("ascii"))
+
+    def test_the_folder_holds_no_private_key_and_only_the_expected_files(self):
+        files = sorted(p.relative_to(EXAMPLES).as_posix() for p in EXAMPLES.rglob("*") if p.is_file())
+        self.assertEqual(files, ["example_signing_key.pub.pem"] + [f"{n}/run_log.jsonl{x}" for n in EXAMPLE_LOGS
+                                                                   for x in ("", ".sha256", ".sig")])
+        for p in EXAMPLES.rglob("*"):
+            if p.is_file():
+                self.assertNotIn(b"PRIVATE KEY", p.read_bytes(), p.name)
 
 
 class FinishErrorTests(unittest.TestCase):

@@ -16,6 +16,7 @@ An open-source test harness for FAIAS, the Financial AI Independent Assurance St
 - **One tool in SRD-1 (0.6).** With `tools_enabled: true` in the settings, SRD-1 minimal can call one tool, `fee_refund`, through the emulator. Its orchestrator checks a kill switch (C-18), the customer's entitlement (C-07) and a refund gate (C-09) before each call. Tools are off by default. The refund cap and the session limit are null until the owner declares them. With null values, SRD-1 does not enable its tool. It is tested against a local stand-in only. No live run has used it.
 - **Containment self-test (0.6).** `python -m faias_harness.selftest` runs 19 probes under a guard. The probes cover each path from the harness to a host outside the local machine, and each path to publish. They also cover the binds of the two local servers, the static scan and SRD-1's tool. A static scan compares the code with a declared list of sites. The command writes a log that can be signed, and `rerun` checks it again. It needs no key and no model, and it calls no outside host. It is a client-level and process-level test, not a network sandbox (see "Containment self-test").
 - **Run-log commands (0.6).** `rescore` scores each reply of a signed log again and prints each difference. `verify --no-repo` checks a signed log without the item set and the record of this checkout. `stamp` writes the SHA-256 file of a log and prints the OpenTimestamps command. None of them makes a network call (see "Engine").
+- **Example logs.** `examples/logs/` holds two signed example logs, one of TP-SEC-001 and one of TP-SEC-006. Each is an example from a local stand-in, not a finding. See "Check the harness in your first hour".
 - **Testability report (0.6).** It writes the preflight result of a profile as a report, and it can sign the report (`faias_harness/testability.py`). Its `verify` command checks the signature and the form. It makes no network call (see "Testability report").
 - **Platform survey.** `docs/PLATFORMS.md` lists what the public documentation of six agent platforms says about the seven capabilities. On 16 October 2026, a script found the quote of 84 of 87 survey rows on the vendor page. The survey is documentation only. It is not an adapter and not a test.
 
@@ -43,6 +44,49 @@ These rules come first. They bind every use of the harness.
 The harness reaches every system through one **target interface** with seven **capabilities**: `conversation`, `traces`, `tool_routing`, `state_read`, `data_seeding`, `config_read` and `control`. A **target profile** lists the capabilities that a system offers. The **preflight** compares the profile with what each procedure needs. SRD-1 has no private path: it uses the same interface as any other system.
 
 Read `docs/ARCHITECTURE.md` for the full design, the profile schema, the design rules and the draft status of the capability needs. Section 13 is about external runs. Section 14 is about the tool emulator. Section 17 is about the containment self-test. Read `docs/PLATFORMS.md` for the survey of platform documentation. Read `AGENTS.md` if you work on this repository, as a person or as a software agent.
+
+## Check the harness in your first hour
+
+Steps 1 to 4 need no key, no model and no network call. Install the three packages first (`python -m pip install pyyaml httpx cryptography`). Then run the commands from the repository root. They use the Windows launcher `py -3.14`. On other systems, use `python3`. Put each new folder outside the repository.
+
+1. Preflight on an example profile. It prints which procedures the profile can run, and it exits with 0:
+
+   ```
+   py -3.14 -X utf8 -m faias_harness.preflight --profile targets/examples/chat_only.yaml
+   ```
+
+2. Write a testability report for the same profile. Its lever table says that `config_read` moves 8 procedures to `full`, and `control` moves 1:
+
+   ```
+   py -3.14 -X utf8 -m faias_harness.testability --profile targets/examples/chat_only.yaml --out <new folder>
+   ```
+
+3. Run the containment self-test. Its last line ends with `result: PASS`:
+
+   ```
+   py -3.14 -X utf8 -m faias_harness.selftest --out <new folder>
+   ```
+
+4. Check the two example logs in `examples/logs/`. Each log is an example from a local stand-in, not a finding (see below). Verify each signature with the public key in the folder. The second `verify` does not read the item set and the record of this checkout. Then score each reply again, and write the SHA-256 file:
+
+   ```
+   py -3.14 -X utf8 -m faias_harness.engine.runlog verify --log examples/logs/tp-sec-001_spike/run_log.jsonl --sig examples/logs/tp-sec-001_spike/run_log.jsonl.sig --pubkey examples/logs/example_signing_key.pub.pem
+   py -3.14 -X utf8 -m faias_harness.engine.runlog verify --log examples/logs/tp-sec-001_spike/run_log.jsonl --sig examples/logs/tp-sec-001_spike/run_log.jsonl.sig --pubkey examples/logs/example_signing_key.pub.pem --no-repo
+   py -3.14 -X utf8 -m faias_harness.engine.runlog rescore --log examples/logs/tp-sec-001_spike/run_log.jsonl
+   py -3.14 -X utf8 -m faias_harness.engine.runlog stamp --log examples/logs/tp-sec-001_spike/run_log.jsonl
+   ```
+
+   Each `verify` prints `PASS` and exits with 0. `rescore` prints `mismatches: 0` and exits with 0. `stamp` writes `run_log.jsonl.sha256` next to the log and prints the `ots stamp` command. It runs no command. The repository holds that file already, so `stamp` writes the same bytes again. Run the same four commands on `examples/logs/tp-sec-006_hash_only/`. There, `rescore` exits with 2. That log holds the SHA-256 of each reply, not the reply, so there is nothing to score again.
+
+5. Check the records against FAIAS, and run all tests. This step needs one download, a clone of the FAIAS repository at tag v1.3.4:
+
+   ```
+   git clone --depth 1 --branch v1.3.4 https://github.com/attahwonder/faias-standard <new folder>
+   py -3.14 -X utf8 tools/check_records.py --faias <that folder>
+   py -3.14 -X utf8 tests/run_all.py --faias <that folder>
+   ```
+
+**The example logs.** `tools/make_example_logs.py` made them. It ran SRD-1 minimal against the local stand-in for the model host of `tests/helpers.py`. The stand-in is a script on the local machine with fixed replies. No model gave a reply. The run in `tp-sec-001_spike/` is TP-SEC-001 on the 20 spike items, 3 runs each. In 6 of the 60 runs, on three items, the stand-in gives what the item asks for. So the log holds both outcomes. The run in `tp-sec-006_hash_only/` is TP-SEC-006 with `store_replies: hash_only`. The stand-in refuses each request. The label of each log ends with "example from a local stand-in; not a finding". The logs say nothing about the security of SRD-1 or of any model. A throw-away Ed25519 key signed both logs. It is not the run-signing key of a real run. Its public half is `examples/logs/example_signing_key.pub.pem`. The script made the key in a temporary folder outside the repository. It deleted that folder, with the private half, after it signed the two logs. The signature shows that each log has not changed since then. `tests/test_evidence_frame.py` checks both logs in the same ways as the commands above.
 
 ## Run the preflight and the tests
 

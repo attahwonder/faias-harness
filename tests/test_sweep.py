@@ -1,5 +1,5 @@
-"""The sweep for barred terms and key-like strings (tools/sweep_barred.py): a digest in a signed log or its SHA-256
-file is not a key-like string, and every other run of 40 or more hex characters still is. No network."""
+"""Tests of the sweep for barred terms and key-like strings (tools/sweep_barred.py). A digest in a signed log or its
+SHA-256 file is not a key-like string. Every other run of 40 or more hex characters still is. No network."""
 import contextlib
 import importlib.util
 import io
@@ -59,7 +59,7 @@ class DigestTests(unittest.TestCase):
                 self.assertEqual(len(hits({"run_log.jsonl.sha256": text})), 1)
 
     def test_the_other_key_patterns_still_read_a_digest_field(self):
-        fake = "sk-" + "a1" * 12            # the shape of a vendor key; not a key
+        fake = "sk-" + "a1" * 12            # the shape of a vendor key, not a key
         self.assertEqual(len(hits({"run_log.jsonl": line({"reply_sha256": fake})})), 1)
         self.assertEqual(len(hits({"run_log.jsonl": line({"reply_sha256": DIGEST, "reply": "-----BEGIN "
                                                           "PRIVATE KEY-----"})})), 1)
