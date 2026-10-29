@@ -26,6 +26,7 @@ fails a log in which the placeholder marking appears. LOG_HOLDS states what the 
 X4 sequence turn has the fields `turn` and `turns`. A `followon_set` record, written before the follow-on items are
 sent, holds the follow-on set (or why there is none).
 """
+import json
 from pathlib import Path
 
 from . import runlog, sec001, sec006
@@ -46,10 +47,9 @@ STORE_NOTES = {
     "full": "each run record holds the request and the reply, redacted: each placeholder is replaced by a token. "
             "SRD-1's prompt is synthetic and public, so the log may hold disclosed prompt text. " + LOG_HOLDS,
     "hash_only": "each run record holds the SHA-256 of the reply as received and the scorer outcome, not the text; "
-                 "a follow-on request is held as its SHA-256. A rescore needs the replies from the controlled "
-                 "evidence store (PLAYBOOK_SEC_006.md line 68) and the prompt. The harness has no command for that "
-                 "yet. A reviewer redacts the stored replies and scores them with sec006.score_reply against the "
-                 "prompt from config_read",
+                 "a follow-on request is held as its SHA-256. A rescore needs the replies as received and the "
+                 "configuration that config_read returned, from the controlled evidence store (PLAYBOOK_SEC_006.md "
+                 "line 68): runlog rescore --log <log> --replies <store> (docs/ARCHITECTURE.md, section 16)",
 }
 SCORER_STATUS = {
     "calibrated": False,
@@ -532,19 +532,50 @@ def check(recs, repo=runlog.REPO, use_repo=True):
 
 # ---------- rescore ----------
 
-def rescore(recs, repo=runlog.REPO):
+NO_STORE = ("not rescored: the log holds the reply hashes only (store_replies: hash_only). A rescore needs the "
+            "replies as received and the configuration that config_read returned, from the controlled evidence store: "
+            "rescore --log <log> --replies <store> (docs/ARCHITECTURE.md, section 16).")
+
+
+def _markers(recs):
+    """The marker of each follow-on item, from the followon_set record. Both store modes keep the markers."""
+    markers = {}
+    for r in recs:
+        if r.get("type") == "followon_set":
+            markers = {i.get("id"): i.get("marker", "") for i in r.get("items") or []}
+    return markers
+
+
+def _run_name(item, run, turn=None):
+    return f"{item}/{run}" + (f"/turn {turn}" if turn else "")
+
+
+def _score_now(r, reply, index, markers):
+    """The score of one redacted reply, as the engine scores it (run_sec006._Runner._record)."""
+    if r.get("class") == sec006.FOLLOW_ON:
+        it = sec006.Item(r.get("item"), sec006.FOLLOW_ON, "", "", r.get("request") or "",
+                         marker=markers.get(r.get("item"), ""))
+        s = sec006.score_followon(it, reply)
+        return {"success": s.success, "kind": s.kind, "evidence": s.evidence}
+    return sec006.score_reply(reply, index).as_dict()
+
+
+def rescore(recs, repo=runlog.REPO, replies=None):
     """Score each stored reply again with the scorer of this checkout. Returns (lines, mismatches), or (lines, None)
-    when the log does not hold the replies (store_replies hash_only)."""
+    when nothing is rescored. A log with store_replies hash_only holds no reply. Then `replies` names the store
+    file of the replies (rescore_from_store). Without it, nothing is rescored."""
     h, runs = recs[0], [r for r in recs if r.get("type") == "run"]
     used = runlog.sha256_hex((Path(repo) / SCORER_FILE).read_bytes())
     logged = (h.get("code") or {}).get("scorer_sha256")
     lines = [f"scorer used: {SCORER_FILE} of this checkout, sha256 {used}",
              f"scorer in the log: sha256 {logged} ({'equal to' if logged == used else 'differs from'} the scorer used)"]
     if (h.get("store_replies") or {}).get("mode") == "hash_only":
-        lines.append("not rescored: the log holds the reply hashes only (store_replies: hash_only). A rescore needs "
-                     "the replies from the controlled evidence store and the prompt. The harness has no command for "
-                     "that yet. A reviewer redacts the stored replies and scores them with sec006.score_reply against "
-                     "the prompt from config_read.")
+        if replies is None:
+            return lines + [NO_STORE], None
+        return rescore_from_store(recs, replies, lines)
+    if replies is not None:
+        lines.append("not rescored: --replies is for a log with store_replies hash_only. This log holds its redacted "
+                     "replies, so rescore it without --replies.")
         return lines, None
     keys = (h.get("corpus") or {}).get("scorer_keys") or {}
     prompt = keys.get("prompt_redacted")
@@ -553,26 +584,132 @@ def rescore(recs, repo=runlog.REPO):
         return lines, None
     index = sec006.PromptIndex(prompt)
     lines.append("prompt from: the redacted prompt in the log (corpus.scorer_keys)")
-    markers = {}
-    for r in recs:
-        if r.get("type") == "followon_set":
-            markers = {i.get("id"): i.get("marker", "") for i in r.get("items") or []}
+    markers = _markers(recs)
     mismatches = []
     for r in runs:
-        where = f"{r.get('item')}/{r.get('run')}" + (f"/turn {r['turn']}" if r.get("turn") else "")
-        reply = r.get("reply") or ""
-        if r.get("class") == sec006.FOLLOW_ON:
-            it = sec006.Item(r.get("item"), sec006.FOLLOW_ON, "", "", r.get("request") or "",
-                             marker=markers.get(r.get("item"), ""))
-            s = sec006.score_followon(it, reply)
-            got = {"success": s.success, "kind": s.kind, "evidence": s.evidence}
-        else:
-            got = sec006.score_reply(reply, index).as_dict()
+        got = _score_now(r, r.get("reply") or "", index, markers)
         recorded = {k: (r.get("score") or {}).get(k) for k in got}
         if got != recorded:
-            mismatches.append(f"{where}: recorded {runlog.canonical(recorded)}; now {runlog.canonical(got)}")
+            mismatches.append(f"{_run_name(r.get('item'), r.get('run'), r.get('turn'))}: recorded "
+                              f"{runlog.canonical(recorded)}; now {runlog.canonical(got)}")
     lines.append(f"runs rescored: {len(runs)}; mismatches: {len(mismatches)}")
     return lines + ["MISMATCH " + m for m in mismatches], mismatches
+
+
+# ---------- rescore from the store of a hash_only run ----------
+
+def read_store(path):
+    """Read a store file. The operator keeps it in the controlled evidence store (PLAYBOOK_SEC_006.md line 68).
+    The format and the reasons for it are in docs/ARCHITECTURE.md, section 16. Return the config object and a list
+    of (line number, (item, run, turn), reply). Raise ValueError for a line that is not of the format, with its
+    number. Also raise it for a store with no config line or with two."""
+    config, replies = None, []
+    for n, line in enumerate(Path(path).read_bytes().decode("utf-8").split("\n"), 1):
+        if not line.strip():
+            continue
+        try:
+            e = json.loads(line)
+        except ValueError:
+            raise ValueError(f"store line {n} is not JSON") from None
+        kind = e.get("type") if isinstance(e, dict) else None
+        if kind == "config" and isinstance(e.get("config"), dict):
+            if config is not None:
+                raise ValueError(f"store line {n} is a second config line")
+            config = e["config"]
+        elif (kind == "reply" and isinstance(e.get("item"), str) and type(e.get("run")) is int
+              and (e.get("turn") is None or type(e.get("turn")) is int) and isinstance(e.get("reply"), str)):
+            replies.append((n, (e["item"], e["run"], e.get("turn")), e["reply"]))
+        else:
+            raise ValueError(f"store line {n} is not a config line or a reply line of the store format")
+    if config is None:
+        raise ValueError("the store has no config line")
+    return config, replies
+
+
+def store_keys(h, config):
+    """Return the placeholders and the prompt index of a hash_only run. They are built again from the configuration
+    in the store, as the engine built them (run_sec006.execute). Raise ValueError when the configuration is not the
+    one that the log records. The SHA-256 of the prompt must be that of the log. So must the placeholder record
+    (counts, sources and lines) and the SHA-256 of the redacted prompt."""
+    prompt = config.get("prompt")
+    if not isinstance(prompt, str) or runlog.sha256_hex(prompt) != (h.get("config") or {}).get("prompt_sha256"):
+        raise ValueError("the prompt in the store does not have the SHA-256 that the log holds (config.prompt_sha256)")
+    sources = sec006.config_sources(config)
+    found, logged = sec006.placeholder_record(sources), h.get("placeholders") or {}
+    if any(found[k] != logged.get(k) for k in ("credential", "endpoint", "where")):
+        raise ValueError("the placeholders in the configuration of the store are not those of the placeholder record "
+                         "of the log")
+    placeholders = sec006.find_placeholders(t for _, t in sources)
+    redacted, _ = sec006.redact(prompt, placeholders)
+    if runlog.sha256_hex(redacted) != ((h.get("corpus") or {}).get("scorer_keys") or {}).get("prompt_redacted_sha256"):
+        raise ValueError("the redacted prompt does not have the SHA-256 that the log holds (corpus.scorer_keys)")
+    return placeholders, sec006.PromptIndex(redacted)
+
+
+def rescore_from_store(recs, path, lines=()):
+    """Rescore a hash_only log from the store file at `path`. Each reply line goes to its run record by the key (item,
+    run, turn). Its SHA-256 must be the reply hash of that record. The reply is then redacted and scored as the engine
+    did it (run_sec006._Runner._record). The redaction uses the placeholders of the configuration in the store. For a
+    sequence turn, it also uses the earlier replies of the conversation. The check compares the score and the
+    placeholder counts of each record, because M1 counts them.
+
+    Return (lines, differences). Return (lines, None) when the store cannot be read. Do the same when its
+    configuration is not the one that the log records. A difference is a refused store line, a run record with no
+    store line, or a changed score or count. A sequence turn after a turn with no verified reply is not rescored. It
+    is named, but the difference is the earlier turn."""
+    h, runs = recs[0], [r for r in recs if r.get("type") == "run"]
+    lines = list(lines)
+    try:
+        config, entries = read_store(path)
+        placeholders, index = store_keys(h, config)
+    except OSError as e:
+        return lines + [f"not rescored: the store file cannot be read ({type(e).__name__})"], None
+    except ValueError as e:
+        return lines + [f"not rescored: {e}"], None
+    except (TypeError, AttributeError):
+        return lines + ["not rescored: the config line of the store is not of the form that config_read returns"], None
+    lines.append("prompt from: the config line of the store. The SHA-256 of the prompt, the placeholder record and "
+                 "the SHA-256 of the redacted prompt are those of the log")
+    by_key = {(r.get("item"), r.get("run"), r.get("turn")): r for r in runs}
+    refused, seen, verified = [], set(), {}
+    for n, key, reply in entries:
+        name, r = f"store line {n} ({_run_name(*key)})", by_key.get(key)
+        if r is None:
+            refused.append(f"{name}: the log has no run record with this key")
+            continue
+        if key in seen:
+            refused.append(f"{name}: a second reply line for this run record")
+        elif runlog.sha256_hex(reply) != r.get("reply_sha256"):
+            refused.append(f"{name}: its SHA-256 is not the reply hash that the log holds for this run")
+        else:
+            verified[key] = reply
+        seen.add(key)
+    markers = _markers(recs)
+    missing, mismatches, skipped, rescored = [], [], [], 0
+    for r in runs:
+        key = (r.get("item"), r.get("run"), r.get("turn"))
+        if key not in seen:
+            missing.append(f"{_run_name(*key)}: the store has no reply line for this run record")
+        if key not in verified:
+            continue
+        earlier = tuple(verified.get((key[0], key[1], t)) for t in range(1, key[2] or 1))
+        if None in earlier:
+            skipped.append(f"{_run_name(*key)}: an earlier turn of its conversation has no verified reply in the store")
+            continue
+        redacted, counts = sec006.redact(verified[key], placeholders, earlier)
+        now = _score_now(r, redacted, index, markers)
+        got = {"score": now, "placeholders": counts}
+        recorded = {"score": {k: (r.get("score") or {}).get(k) for k in now}, "placeholders": r.get("placeholders")}
+        rescored += 1
+        if got != recorded:
+            mismatches.append(f"{_run_name(*key)}: recorded {runlog.canonical(recorded)}; now {runlog.canonical(got)}")
+    differences = refused + missing + mismatches
+    lines += [f"store: {len(entries)} reply lines; refused: {len(refused)}; run records with no reply line: "
+              f"{len(missing)}",
+              f"runs rescored: {rescored} of {len(runs)}; mismatches: {len(mismatches)}",
+              f"differences: {len(differences)}"]
+    return (lines + ["REFUSED " + x for x in refused] + ["NOT IN STORE " + x for x in missing]
+            + ["MISMATCH " + x for x in mismatches] + ["NOT RESCORED " + x for x in skipped]), differences
 
 
 def summary_line(recs):

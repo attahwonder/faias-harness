@@ -42,7 +42,7 @@ Schema 7 (version 0.7) is the log of a TP-AGT-012 run (engine/agt012_log.py). Sc
 TP-DAT-009 run (engine/dat009_log.py). Each has the frame of schema 4, and `check_log`, `rescore` and `verify
 --no-repo` hand it to its module.
 
-Three more commands, none of which makes a network call:
+Four more commands, none of which makes a network call:
 
   rescore  --log <log>               scores each run's reply again with the scorer of this checkout; exit 1 on a
                                      difference from the recorded score; exit 2 for a log that holds the reply
@@ -52,8 +52,16 @@ Three more commands, none of which makes a network call:
                                      checkout; the items hash is checked against the log itself
   stamp    --log <log>               writes <log>.sha256 and prints the OpenTimestamps command to run
 
+  results  --log <log or folder> ...
+
+`rescore` takes `--replies <store>` for a TP-SEC-006 log with store_replies hash_only. The store file holds the
+replies as received (sec006_log.rescore_from_store). Without it, such a log gives exit 2. `results` runs `verify` on
+each log and prints one table, with a row for each log that passes. A log that fails is refused and named under the
+table, and the exit code is 1.
+
 When the header of the log holds a label, `verify`, `rescore` and `stamp` print it on a line `label: <label>`. For
-`verify`, that line comes after the PASS or FAIL line. For `rescore` and `stamp`, it is the first line. So the output
+`verify`, that line comes after the PASS or FAIL line. For `rescore` and `stamp`, it is the first line. `results`
+puts the label of each log in its row. So the output
 of each command shows an example log for what it is.
 """
 import argparse
@@ -714,17 +722,21 @@ def _no_repo_lines(log_path):
 
 # ---------- rescore, stamp ----------
 
-def rescore_log(log_path, repo=REPO):
+def rescore_log(log_path, repo=REPO, replies=None):
     """Score each run's reply again with the scorer that this process runs, and compare with the recorded score.
 
     The marker and product of each item come from the scorer keys in the log (schemas 4 and 5), or else from the
     item set of the checkout. A clean-baseline run is never scored: its recorded score must be the baseline score.
     Returns (lines to print, mismatches). Makes no network call. A TP-SEC-006 log (schema 6) is rescored by
-    sec006_log.rescore; mismatches is None when that log holds the reply hashes only."""
+    sec006_log.rescore. When that log holds the reply hashes only, `replies` names the store file of the replies.
+    Without it, mismatches is None. Only such a log takes `replies`."""
     recs = read_log(log_path)
     if recs[0].get("schema") == SCHEMA_SEC006:
         from . import sec006_log
-        return sec006_log.rescore(recs, repo=repo)
+        return sec006_log.rescore(recs, repo=repo, replies=replies)
+    if replies is not None:
+        return [f"not rescored: --replies is for a TP-SEC-006 log with store_replies hash_only, and this log is of "
+                f"schema {recs[0].get('schema')}"], None
     if recs[0].get("schema") == SCHEMA_AGT012:
         from . import agt012_log
         return agt012_log.rescore(recs, repo=repo)
@@ -798,6 +810,105 @@ def label_line(log_path):
     return f"label: {label}" if isinstance(label, str) and label else None
 
 
+# ---------- results, one table over N signed logs ----------
+RESULT_VALUES = ("rate", "item_rate", "value", "uplift")
+RESULT_CHECKS = ("within_threshold", "within_bar", "within", "materially_higher")
+RESULT_STATES = ("applicable", "in_run", "status", "result")
+MEASURE_KEY = re.compile(r"M(\d+)")
+
+
+def _fmt(v):
+    """Return a value as the text of a table cell. A float has 4 decimal places at most. A string stays as it is.
+    Any other value is JSON."""
+    if isinstance(v, float):
+        return f"{v:.4f}".rstrip("0").rstrip(".")
+    return v if isinstance(v, str) else json.dumps(v)
+
+
+def measure_cell(m):
+    """Return one measure of a summary as a short cell. The cell shows the first of RESULT_VALUES in the measure, or
+    in its `overall` block. It adds the upper95 and the first of RESULT_CHECKS. A measure with no value field also
+    shows the first of RESULT_STATES. The summary of the log holds the rest."""
+    if not isinstance(m, dict):
+        return _fmt(m)
+    b, pre = (m["overall"], "overall ") if isinstance(m.get("overall"), dict) else (m, "")
+    parts = [f"{pre}{k} {_fmt(b[k])}" for k in RESULT_VALUES if k in b][:1]
+    has_value = bool(parts)
+    parts += [f"upper95 {_fmt(b['upper95'])}"] if "upper95" in b else []
+    parts += [f"{k} {_fmt(b[k])}" for k in RESULT_CHECKS if k in b][:1]
+    if not has_value:
+        parts += [f"{k} {_fmt(b[k])}" for k in RESULT_STATES if k in b][:1]
+    return "; ".join(parts) or "in the summary"
+
+
+def result_logs(paths):
+    """Return the run log files that `results` reads, and the folders with no run log. A path that is a file is a
+    log. A folder gives its run_log.jsonl, or else the run_log.jsonl of each of its sub-folders, in sorted order."""
+    logs, empty = [], []
+    for p in map(Path, paths):
+        if not p.is_dir():
+            logs.append(p)
+        elif (p / "run_log.jsonl").is_file():
+            logs.append(p / "run_log.jsonl")
+        else:
+            found = sorted(d / "run_log.jsonl" for d in p.iterdir() if (d / "run_log.jsonl").is_file())
+            logs += found
+            empty += [] if found else [p]
+    return logs, empty
+
+
+def result_row(recs, name):
+    """Return the row of one log, as a dict by column name. It holds the name, procedure, label, model, variant,
+    items, k and status of the log. It also holds the outcome counts of the summary and a cell for each measure of
+    the summary."""
+    h = recs[0]
+    s = recs[-1] if recs[-1].get("type") == "summary" else {}
+    corpus, model = h.get("corpus") or {}, h.get("model") or {}
+    outcomes = s.get("outcomes")
+    row = {"log": name, "procedure": (h.get("procedure") or {}).get("tp") or "not recorded",
+           "label": h.get("label") or "no label in the log",
+           "model": model.get("pinned_id") or (f"{model['declared_id']} (declared, not pinned)"
+                                               if model.get("declared_id") else "not recorded"),
+           "variant": (h.get("variant") or {}).get("name") or "not recorded",
+           "items": _fmt(corpus.get("items", len(corpus.get("manifest") or []))),
+           "k": _fmt(corpus.get("runs_per_item")), "status": s.get("status") or "no summary",
+           "outcomes": (", ".join(f"{k} {v}" for k, v in sorted(outcomes.items())) if isinstance(outcomes, dict)
+                        else "not in the summary")}
+    for k, m in (s.get("measures") or {}).items():
+        if MEASURE_KEY.fullmatch(k):
+            row[k] = measure_cell(m)
+    return row
+
+
+RESULT_COLUMNS = ("log", "procedure", "label", "model", "variant", "items", "k", "status", "outcomes")
+
+
+def results(paths, pubkey_path=None, repo=REPO, use_repo=True):
+    """Return one Markdown table over the run logs at `paths` (result_logs), and the refused logs. The table has a
+    row for each log that passes `verify`. That check reads the signature in <log>.sig, then the form of the log.
+    Each row holds the label of its log. A log that fails is refused. It is named under the table, with the first
+    line of the verify message. The function makes no network call."""
+    logs, empty = result_logs(paths)
+    rows, refused = [], [f"{p}: no run_log.jsonl in this folder or its sub-folders" for p in empty]
+    for p in logs:
+        name = f"{p.parent.name}/{p.name}"
+        ok, msg = verify_log(p, p.with_name(p.name + ".sig"), pubkey_path, repo=repo, use_repo=use_repo)
+        if not ok:
+            refused.append(f"{name}: {msg.splitlines()[0]}")
+            continue
+        rows.append(result_row(read_log(p), name))
+    measures = sorted({k for r in rows for k in r if MEASURE_KEY.fullmatch(k)}, key=lambda k: int(k[1:]))
+    cols = RESULT_COLUMNS + tuple(measures)
+    pin = "the pinned public key" if pubkey_path else "the public key in each signature file (not pinned)"
+    lines = [f"results: {len(rows)} logs verified ({pin}; {'with' if use_repo else 'without'} the repository), "
+             f"{len(refused)} refused. Each row is one log, with its label. The label says what the log is.",
+             "", "| " + " | ".join(cols) + " |", "|" + "---|" * len(cols)]
+    lines += ["| " + " | ".join(str(r.get(c, "-")).replace("|", "\\|") for c in cols) + " |" for r in rows]
+    if refused:
+        lines += [""] + [f"REFUSED {x}" for x in refused]
+    return lines, refused
+
+
 def main(argv=None):
     ap = argparse.ArgumentParser(prog="faias_harness.engine.runlog",
                                  description="Run-signing key, sign, verify, rescore and stamp.")
@@ -814,18 +925,31 @@ def main(argv=None):
     c.add_argument("--no-repo", action="store_true",
                    help="check without the record and the item set of this checkout")
     d = sub.add_parser("rescore", help="score each reply again and compare with the recorded score (exit 1 on a "
-                                       "difference; exit 2 for a TP-SEC-006 log with store_replies hash_only, which "
-                                       "holds no reply: the harness has no command to rescore it)")
+                                       "difference; exit 2 when nothing is rescored, for example a TP-SEC-006 log "
+                                       "with store_replies hash_only and no --replies)")
     d.add_argument("--log", required=True)
+    d.add_argument("--replies", help="for a TP-SEC-006 log with store_replies hash_only: the store file of the "
+                                     "replies as received (docs/ARCHITECTURE.md, section 16)")
     e = sub.add_parser("stamp", help="write <log>.sha256 and print the OpenTimestamps command (no network call)")
     e.add_argument("--log", required=True)
+    f = sub.add_parser("results", help="verify N run logs and print one table, a row for each log that passes "
+                                       "(exit 1 when a log is refused)")
+    f.add_argument("--log", required=True, nargs="+", action="extend",
+                   help="run log files, or folders that hold run_log.jsonl or sub-folders with it")
+    f.add_argument("--pubkey")
+    f.add_argument("--no-repo", action="store_true",
+                   help="verify without the record and the item set of this checkout")
     args = ap.parse_args(argv)
+    if args.cmd == "results":
+        lines, refused = results(args.log, args.pubkey, use_repo=not args.no_repo)
+        print("\n".join(lines))
+        return 1 if refused else 0
     label = label_line(args.log) if args.cmd in ("verify", "rescore", "stamp") else None
     if label and args.cmd in ("rescore", "stamp"):
         print(label)
     if args.cmd == "rescore":
         try:
-            lines, mismatches = rescore_log(args.log)
+            lines, mismatches = rescore_log(args.log, replies=args.replies)
         except (OSError, ValueError, KeyError, IndexError, TypeError) as e:
             print(f"cannot rescore the log ({type(e).__name__})")
             return 2

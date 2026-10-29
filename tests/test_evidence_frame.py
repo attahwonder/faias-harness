@@ -441,6 +441,91 @@ class LiveLogTests(unittest.TestCase):
             _, mismatches = runlog.rescore_log(copy)
             self.assertEqual(len(mismatches), 1)
 
+    def test_results_table_over_the_live_logs_and_the_example_logs(self):
+        self.read("results over the live logs and the 2 example logs", self.dirs)
+        if not self.dirs:
+            return
+        rc, out = call(["results", "--log"] + [str(d / "run_log.jsonl") for d in self.dirs] + [str(EXAMPLES)])
+        self.assertEqual(rc, 0, out)
+        lines = out.splitlines()
+        self.assertTrue(lines[0].startswith(f"results: {len(self.dirs) + 2} logs verified"), lines[0])
+        rows = table_rows(out)
+        self.assertEqual(len(rows), len(self.dirs) + 2)
+        for d in self.dirs:
+            row = next(r for r in rows if r["log"] == f"{d.name}/run_log.jsonl")
+            self.assertEqual(row["label"], runlog.read_log(d / "run_log.jsonl")[0]["label"])
+
+
+def table_rows(out):
+    """The rows of the table that `results` prints, each as a dict from the column name to the cell."""
+    rows = [line[2:-2].split(" | ") for line in out.splitlines() if line.startswith("| ")]
+    return [dict(zip(rows[0], r)) for r in rows[1:]]
+
+
+class ResultsTableTests(unittest.TestCase):
+    """`runlog results` prints one table over N signed logs. A log that fails `verify` is refused and named, and the
+    table holds the rest. Each row holds the label of its log."""
+
+    def test_a_measure_cell_of_each_procedure(self):
+        cases = [
+            ({"C1": {"rate": 1.0}, "overall": {"rate": 0.9692307692307692, "upper95": 0.99, "within_threshold": False}},
+             "overall rate 0.9692; upper95 0.99; within_threshold false"),                    # TP-SEC-001 M1
+            ({"rate": None, "within_threshold": None}, "rate null; within_threshold null"),     # a stopped run
+            ({"value": 0.42857142857142855, "within_bar": True, "bar": 1.0}, "value 0.4286; within_bar true"),
+            ({"applicable": False, "bar": 0.1, "reason": "no disclosure"}, "applicable false"),  # TP-SEC-006 M4
+            ({"applicable": True, "uplift": 1.0, "materially_higher": True}, "uplift 1; materially_higher true"),
+            ({"in_run": False, "reason": "no monitoring"}, "in_run false"),                        # TP-SEC-006 M6
+            ({"item_rate": 0.25, "upper95": 0.5, "within_threshold": False, "bypass_runs": 3},
+             "item_rate 0.25; upper95 0.5; within_threshold false"),                              # TP-AGT-012 M1
+            ({"largest_time_to_last_action_ms": 12.5, "within": None}, "within null"),          # TP-AGT-012 M3
+            ({"in_run": False, "within_threshold": None}, "within_threshold null; in_run false"),  # TP-DAT-009 M6
+            ({"declared_stage": "pre_model"}, "in the summary"),
+            (3, "3"),
+        ]
+        for m, want in cases:
+            with self.subTest(want=want):
+                self.assertEqual(runlog.measure_cell(m), want)
+
+    def test_results_over_the_example_logs_and_a_changed_copy(self):
+        rc, out = call(["results", "--log", str(EXAMPLES), "--pubkey", str(EXAMPLE_PUBKEY)])
+        self.assertEqual(rc, 0, out)
+        self.assertTrue(out.startswith("results: 2 logs verified (the pinned public key; with the repository), 0 "
+                                       "refused."), out)
+        rows = table_rows(out)
+        self.assertEqual([r["log"] for r in rows], [f"{n}/run_log.jsonl" for n in EXAMPLE_LOGS])
+        self.assertEqual(list(rows[0])[9:], ["M1", "M2", "M3", "M4", "M5", "M6"])
+        for row, (name, tp) in zip(rows, EXAMPLE_LOGS.items()):
+            recs = runlog.read_log(EXAMPLES / name / "run_log.jsonl")
+            h, s = recs[0], recs[-1]
+            with self.subTest(log=name):
+                self.assertEqual(
+                    [row[c] for c in ("procedure", "label", "model", "variant", "items", "k", "status", "outcomes")],
+                    [tp, h["label"], h["model"]["pinned_id"], h["variant"]["name"], str(h["corpus"]["items"]),
+                     str(h["corpus"]["runs_per_item"]), s["status"],
+                     ", ".join(f"{k} {v}" for k, v in sorted(s["outcomes"].items()))])
+                for m in ("M1", "M2", "M3", "M4", "M5", "M6"):
+                    want = runlog.measure_cell(s["measures"][m]) if m in s["measures"] else "-"
+                    self.assertEqual(row[m], want, m)
+        # The TP-SEC-001 example, read at its summary. The overall M1 rate is 3 of 20 items.
+        m1 = runlog.read_log(EXAMPLES / "tp-sec-001_spike" / "run_log.jsonl")[-1]["measures"]["M1"]["overall"]
+        self.assertEqual((m1["successful_items"], m1["items"]), (3, 20))
+        self.assertTrue(rows[0]["M1"].startswith("overall rate 0.15; upper95 "), rows[0]["M1"])
+        with tempfile.TemporaryDirectory() as d:
+            changed, empty = Path(d) / "changed", Path(d) / "empty"
+            changed.mkdir()
+            empty.mkdir()
+            for f in ("run_log.jsonl", "run_log.jsonl.sig"):
+                shutil.copyfile(EXAMPLES / "tp-sec-001_spike" / f, changed / f)
+            log = changed / "run_log.jsonl"
+            log.write_bytes(log.read_bytes().replace(b'"defended"', b'"attacked"', 1))
+            rc, out = call(["results", "--log", str(log), str(EXAMPLES), str(empty), "--pubkey", str(EXAMPLE_PUBKEY)])
+        self.assertEqual(rc, 1, out)
+        self.assertTrue(out.startswith("results: 2 logs verified"), out)
+        self.assertIn("2 refused.", out.splitlines()[0])
+        self.assertEqual(len(table_rows(out)), 2)
+        self.assertIn("REFUSED changed/run_log.jsonl: FAIL: the signature does not match the log", out.splitlines())
+        self.assertIn(f"REFUSED {empty}: no run_log.jsonl in this folder or its sub-folders", out.splitlines())
+
 
 def sec006_settings():
     raw = raw_settings(procedure="TP-SEC-006", mode="explore",

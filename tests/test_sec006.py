@@ -295,6 +295,14 @@ def holds_mark(text):
     return bool(sec006.CREDENTIAL_MARK.search(text) or sec006.ENDPOINT_MARK.search(text))
 
 
+def call_main(argv):
+    """Run the run-log command line. Return its exit code and what it printed."""
+    buf = io.StringIO()
+    with contextlib.redirect_stdout(buf):
+        rc = runlog.main(argv)
+    return rc, buf.getvalue()
+
+
 def upper95_blocks(node, path="."):
     """Each dict in `node` that has the key upper95, with its path."""
     if isinstance(node, dict):
@@ -566,7 +574,7 @@ class EndToEndTests(unittest.TestCase):
                                     confirmation=CONFIRM, base_url=host.base_url, env=ENV, engine=ENGINE,
                                     variant="positive_control")
         cls.baseline, cls.baseline_pc = str(base.log_path), str(base_pc.log_path)
-        cls.results = {}
+        cls.results, cls.configs = {}, {}
 
     @classmethod
     def tearDownClass(cls):
@@ -576,10 +584,19 @@ class EndToEndTests(unittest.TestCase):
         if name not in self.results:
             settings = sec006_settings(**{"cap_usd": 10.0, "mode": "evidence", "m4_baseline_log": self.baseline,
                                           "m4_baseline_pubkey": str(self.pub), **changes})
-            with StandInModelHost(model, with_messages=True) as host, no_outside_network():
+            configs, read_config = [], Srd1ChatTarget.read_config
+
+            def keep(target, kind):         # what config_read returned, as an operator keeps it in the evidence store
+                out = read_config(target, kind)
+                if kind == "prompt":
+                    configs.append(out)
+                return out
+            with StandInModelHost(model, with_messages=True) as host, no_outside_network(), \
+                    mock.patch.object(Srd1ChatTarget, "read_config", keep):
                 res = run_sec006.execute(settings, run_dir=self.dir / name, sign_key=self.priv, confirmation=CONFIRM,
                                          base_url=host.base_url, env=ENV, engine=ENGINE, variant=variant)
             self.results[name] = (res, runlog.read_log(res.log_path), len(host.requests))
+            self.configs[name] = configs[0]
         return self.results[name]
 
     def spike_label(self, match=True):
@@ -690,9 +707,12 @@ class EndToEndTests(unittest.TestCase):
             self.assertEqual(block.get("upper95_note"), sec001.UPPER95_NOTE, path)
         self.assert_verifies(res)
 
+    def hash_only(self):
+        return self.run_sec006("hash_only", variant="positive_control", store_replies="hash_only",
+                               m4_baseline_log=self.baseline_pc)
+
     def test_hash_only_holds_no_reply_text_and_rescore_needs_the_controlled_store(self):
-        res, recs, _ = self.run_sec006("hash_only", variant="positive_control", store_replies="hash_only",
-                                       m4_baseline_log=self.baseline_pc)
+        res, recs, _ = self.hash_only()
         h = recs[0]
         self.assertEqual((h["mode"], h["baseline_match"], h["label"]), ("evidence", True, self.spike_label()))
         runs = [r for r in recs if r["type"] == "run"]
@@ -709,8 +729,110 @@ class EndToEndTests(unittest.TestCase):
             rc = runlog.main(["rescore", "--log", str(res.log_path)])
         self.assertEqual(rc, 2)
         self.assertIn("controlled evidence store", buf.getvalue())
-        self.assertIn("The harness has no command for that yet", buf.getvalue())
-        self.assertIn("The harness has no command for that yet", h["store_replies"]["note"])
+        self.assertIn("rescore --log <log> --replies <store>", buf.getvalue())
+        self.assertIn("rescore --log <log> --replies <store>", h["store_replies"]["note"])
+
+    def store_lines(self, name):
+        """Return the store of a hash_only run, as an operator keeps it. It has the config line (what config_read
+        returned) and a reply line for each run record. The replies as received come from SRD-1's own trace store,
+        by the trace_seq of each run record."""
+        res, recs, _ = self.results[name]
+        replies = {e["seq"]: e.get("reply") for e in tr.read_entries(res.run_dir / "target" / "srd1_trace.jsonl")
+                   if e["kind"] == "turn"}
+        return [{"type": "config", "config": self.configs[name]}] + [
+            {"type": "reply", "item": r["item"], "run": r["run"], "turn": r.get("turn"),
+             "reply": replies[r["trace_seq"]] or ""} for r in recs if r["type"] == "run"]
+
+    def rescore_with(self, log, lines, name="store.jsonl"):
+        store = self.dir / name
+        store.write_text("".join(json.dumps(x, ensure_ascii=False) + "\n" for x in lines), encoding="utf-8")
+        return call_main(["rescore", "--log", str(log), "--replies", str(store)])
+
+    def test_rescore_from_the_store_of_a_hash_only_run(self):
+        """`rescore --replies <store>` matches each reply line to its run record by item, run and turn. It checks the
+        SHA-256 of each reply against the log, redacts the reply and scores it again. The stand-in run discloses, so
+        the redaction, the scorer, the sequences and the follow-on set are all in play."""
+        res, recs, _ = self.hash_only()
+        runs = [r for r in recs if r["type"] == "run"]
+        self.assertTrue(any(any(r["placeholders"].values()) for r in runs))
+        self.assertTrue(any(r["class"] == "F" for r in runs) and any(r.get("turn") for r in runs))
+        lines = self.store_lines("hash_only")
+        rc, out = self.rescore_with(res.log_path, lines)
+        self.assertEqual(rc, 0, out)
+        self.assertIn(f"runs rescored: {len(runs)} of {len(runs)}; mismatches: 0", out.splitlines())
+        self.assertIn("differences: 0", out.splitlines())
+        self.assertEqual(out.splitlines()[0], "label: " + recs[0]["label"])
+        # One edited reply. Its SHA-256 is not the one in the log, so its line is refused by name (1 difference).
+        x1 = next(n for n, x in enumerate(lines) if x.get("item", "").startswith("X1-"))
+        edited = json.loads(json.dumps(lines))
+        edited[x1]["reply"] += " edited"
+        rc, out = self.rescore_with(res.log_path, edited)
+        name = f"store line {x1 + 1} ({lines[x1]['item']}/{lines[x1]['run']})"
+        self.assertEqual(rc, 1, out)
+        self.assertIn("differences: 1", out.splitlines())
+        self.assertIn(f"REFUSED {name}: its SHA-256 is not the reply hash that the log holds for this run",
+                      out.splitlines())
+        # A line for a run record that the log does not hold is refused by name. Two swapped replies are refused too,
+        # although each hash is in the log. A reply goes to its run record by the key, not by its hash.
+        rc, out = self.rescore_with(res.log_path, lines + [{**lines[x1], "run": 99}])
+        self.assertEqual(rc, 1, out)
+        self.assertIn(f"REFUSED store line {len(lines) + 1} ({lines[x1]['item']}/99): the log has no run record with "
+                      "this key", out.splitlines())
+        a, b = next((i, j) for i in range(1, len(lines)) for j in range(i + 1, len(lines))
+                    if lines[i]["reply"] != lines[j]["reply"])
+        swapped = json.loads(json.dumps(lines))
+        swapped[a]["reply"], swapped[b]["reply"] = lines[b]["reply"], lines[a]["reply"]
+        rc, out = self.rescore_with(res.log_path, swapped)
+        self.assertEqual((rc, out.count("\nREFUSED ")), (1, 2), out)
+        # A run record with no reply line is named. Take away the first turn of a sequence run. Then the later turns
+        # of that conversation are named as not rescored. The one difference is the turn with no line.
+        rc, out = self.rescore_with(res.log_path, lines[:x1] + lines[x1 + 1:])
+        self.assertEqual(rc, 1, out)
+        self.assertIn(f"NOT IN STORE {lines[x1]['item']}/{lines[x1]['run']}: the store has no reply line for this run "
+                      "record", out.splitlines())
+        first = next(n for n, x in enumerate(lines) if x.get("turn") == 1)
+        turns = sum(1 for x in lines[1:] if (x["item"], x["run"]) == (lines[first]["item"], lines[first]["run"]))
+        rc, out = self.rescore_with(res.log_path, lines[:first] + lines[first + 1:])
+        self.assertEqual((rc, out.count("\nNOT IN STORE "), out.count("\nNOT RESCORED ")), (1, 1, turns - 1), out)
+        self.assertIn("differences: 1", out.splitlines())
+        # An edited score in a copy of the log. The store matches, but the score does not (1 mismatch).
+        copy = self.dir / "hash_only_edited.jsonl"
+        rs = json.loads(json.dumps(recs))
+        i = next(n for n, r in enumerate(rs) if r.get("type") == "run" and r["class"] == "X1"
+                 and r["score"]["disclosure"] != "none")
+        rs[i]["score"]["disclosure"] = "none"
+        copy.write_bytes(b"".join(runlog.canonical(r).encode("utf-8") + b"\n" for r in rs))
+        rc, out = self.rescore_with(copy, lines)
+        self.assertEqual((rc, out.count("\nMISMATCH ")), (1, 1), out)
+
+    def test_rescore_from_a_store_refuses_a_store_that_is_not_of_the_run(self):
+        """Nothing is rescored (exit 2) when the store is not of the run or not of the format. The same is true when
+        the store file is not there. It is also true for --replies with a log that holds its replies."""
+        res, _, _ = self.hash_only()
+        lines = self.store_lines("hash_only")
+        other = [{"type": "config", "config": {**lines[0]["config"], "prompt": PROMPT}}] + lines[1:]
+        for store, why in ((other, "the prompt in the store does not have the SHA-256 that the log holds"),
+                           (lines[1:], "the store has no config line"),
+                           (lines + ["not a line"], f"store line {len(lines) + 1} is not a config line or a reply line"),
+                           (lines + [lines[0]], f"store line {len(lines) + 1} is a second config line")):
+            with self.subTest(why=why):
+                rc, out = self.rescore_with(res.log_path, store)
+                self.assertEqual(rc, 2, out)
+                self.assertIn(f"not rescored: {why}", out)
+        bad_form = [{"type": "config", "config": {**lines[0]["config"], "tools_configured": 7}}] + lines[1:]
+        rc, out = self.rescore_with(res.log_path, bad_form)
+        self.assertEqual(rc, 2, out)
+        self.assertIn("is not of the form that config_read returns", out)
+        rc, out = call_main(["rescore", "--log", str(res.log_path), "--replies", str(self.dir / "absent.jsonl")])
+        self.assertEqual(rc, 2, out)
+        self.assertIn("not rescored: the store file cannot be read (FileNotFoundError)", out)
+        positive, _, _ = self.positive()
+        rc, out = self.rescore_with(positive.log_path, lines)
+        self.assertEqual(rc, 2, out)
+        self.assertIn("This log holds its redacted replies, so rescore it without --replies.", out)
+        rc, out = call_main(["rescore", "--log", self.baseline, "--replies", str(self.dir / "store.jsonl")])
+        self.assertEqual(rc, 2, out)
+        self.assertIn("--replies is for a TP-SEC-006 log with store_replies hash_only", out)
 
     def test_the_form_check_and_rescore_find_seeded_faults(self):
         res, recs, _ = self.positive()

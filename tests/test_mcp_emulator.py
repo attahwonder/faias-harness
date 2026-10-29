@@ -315,6 +315,48 @@ class ReviewFixTests(_Base):
         self.assertEqual(errors, [])
         self.assertEqual(self.modern(e, "tools/list").status_code, 200)
 
+    def test_a_client_that_resets_before_its_request_is_read_gives_no_error(self):
+        """A client connects and resets the connection before the emulator reads its request line, or after half of
+        its headers. The read of the base class then fails. The emulator ends that request with no error. Before the
+        fix, the server printed a traceback for each. The emulator then answers the next request."""
+        import os
+        import socket
+        import struct
+        import sys
+        import threading
+        from unittest import mock
+        e = self.emu(name="reset.jsonl")
+        errors, started, done = [], threading.Event(), threading.Event()
+        handler, real_shutdown = e.httpd.RequestHandlerClass, e.httpd.shutdown_request
+        real_setup = handler.setup
+
+        def setup(h):
+            real_setup(h)
+            started.set()
+
+        def shutdown_request(request):
+            real_shutdown(request)
+            done.set()
+
+        e.httpd.handle_error = lambda request, address: errors.append(sys.exc_info()[1])
+        e.httpd.shutdown_request = shutdown_request
+        linger = struct.pack("HH" if os.name == "nt" else "ii", 1, 0)        # linger 0 s, so the close sends a reset
+        half = f"POST {e.path} HTTP/1.1\r\nHost: {e.host}:{e.port}\r\n".encode("ascii")
+        with mock.patch.object(handler, "setup", setup):
+            for sent in (b"", half):
+                with self.subTest(sent=sent):
+                    started.clear()
+                    done.clear()
+                    s = socket.create_connection((e.host, e.port), timeout=10)
+                    s.setsockopt(socket.SOL_SOCKET, socket.SO_LINGER, linger)
+                    if sent:
+                        s.sendall(sent)
+                    self.assertTrue(started.wait(10))
+                    s.close()
+                    self.assertTrue(done.wait(10))
+        self.assertEqual(errors, [])
+        self.assertEqual(self.modern(e, "tools/list").status_code, 200)
+
 
 STORE_TOOLS_FILE = REPO / "targets" / "examples" / "mcp_tools_store.yaml"
 STORE_FILE = REPO / "targets" / "srd1" / "data" / "synthetic_bank.yaml"

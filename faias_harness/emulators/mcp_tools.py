@@ -336,6 +336,14 @@ class ToolEmulator:
             def log_message(self, *a):
                 pass
 
+            def handle_one_request(self):
+                """A client can reset the connection before the request line or the headers are read. The read
+                then fails. The request ends with no traceback, and the connection closes."""
+                try:
+                    super().handle_one_request()
+                except ConnectionError:
+                    self.close_connection = True
+
             def _send(self, status, body=None, headers=None):
                 """Send the reply. If the client has closed the connection, the write fails. The reply is then
                 lost, the error ends the request, and the connection closes."""

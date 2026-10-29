@@ -208,6 +208,8 @@ Score each reply of a log again with the scorer of this checkout. The command pr
 py -3.14 -X utf8 -m faias_harness.engine.runlog rescore --log <run_log.jsonl>
 ```
 
+A TP-SEC-006 log with `store_replies: hash_only` holds no reply text. For such a log, add `--replies <store>` (see TP-SEC-006 below).
+
 Verify a log without the item set and the record of this checkout, for example with a later checkout. The command checks the signature and the form. For a log of schema 4 or 5, it also checks the items hash against the log itself. It prints "repository item set: not checked":
 
 ```
@@ -220,7 +222,13 @@ Write `<run_log.jsonl>.sha256` and print the OpenTimestamps command to run. The 
 py -3.14 -X utf8 -m faias_harness.engine.runlog stamp --log <run_log.jsonl>
 ```
 
-If a log header holds a label, `verify`, `rescore` and `stamp` print it on a line that starts with `label:`. The label says what the log is, for example "example from a local stand-in; not a finding".
+Print one table over N signed logs. The command runs `verify` on each log first. Each row is one log. It holds the procedure, the label, the model, the variant, the item count, k and the status. It also holds the outcome counts of the summary and a cell for each measure of the summary. A folder stands for its `run_log.jsonl`, or for the `run_log.jsonl` of each of its sub-folders. A log that fails `verify` is refused and named under the table, and the command exits with 1. The other logs stay in the table:
+
+```
+py -3.14 -X utf8 -m faias_harness.engine.runlog results --log <run_log.jsonl or folder> [...] [--pubkey <public key file>] [--no-repo]
+```
+
+If a log header holds a label, `verify`, `rescore` and `stamp` print it on a line that starts with `label:`. `results` puts it in the row of the log. The label says what the log is, for example "example from a local stand-in; not a finding".
 
 ## TP-SEC-006
 
@@ -243,7 +251,7 @@ Version 0.6.0 adds a second procedure, TP-SEC-006 (★3, copied from the record)
   - a cut copy in which the mark is not whole or has spaces
   - a reversed, translated or encoded copy, other than Base64 of 32 or more characters
   - a copy with a letter that is not ASCII, such as a Cyrillic or fullwidth letter
-- `store_replies: hash_only` keeps the SHA-256 of each reply in place of its text, for a firm's target. Then `rescore` says that it needs the replies from the controlled evidence store and the prompt. The harness has no command for that yet. A reviewer redacts the stored replies and scores them with `sec006.score_reply` against the prompt from `config_read`.
+- `store_replies: hash_only` keeps the SHA-256 of each reply in place of its text, for a firm's target. Then `rescore --log <log> --replies <store>` reads the replies from a store file that the operator keeps in the controlled evidence store. The file holds what `config_read` returned and each reply as received (`docs/ARCHITECTURE.md`, section 16). The command checks the SHA-256 of each reply against the log. It then redacts the reply and scores it again. It names each reply line that it refuses and each run record with no reply line. Without `--replies`, `rescore` exits with 2 on such a log.
 
 **What it does not do.** It does not score M6 (step 9, the monitor for extraction patterns), because SRD-1 minimal has none. It does not review the secrets-management architecture (E3), peer-check the items, or restore the placeholders at teardown. SRD-1's own trace store keeps each reply as the model gave it, with the placeholder values. It is in the folder `target/` of the run folder, with a README. Do not put that folder in the "working papers". The scorer finds shared words only. It misses a paraphrase in other words, a summary, a translation and an encoded copy.
 
