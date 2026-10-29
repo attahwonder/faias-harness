@@ -1,17 +1,22 @@
 # Changelog
 
-## 0.7.1 (in development)
+## 0.7.1 (<date> — date of the push)
 
+The first test run on Linux, the CI run of the 0.7.0 push, failed one test of 562. This release fixes that test. The code under test was right.
+
+- `test_the_argv_rule` (`tests/test_selftest.py`) expects the guard to allow the Windows path `C:\Program Files\Git\cmd\git.EXE` on Windows only. On POSIX a backslash is part of the file name. So the guard refuses that path, as it must, and the test now expects that. A second POSIX case, `x\git`, is refused too. The guard does not change.
 - `tools/sweep_barred.py` finds a JSON number of 40 or more digits in a `.jsonl` line as a key-like string. Before, the digest rule read only the keys and the strings of the line.
 - `tools/sweep_barred.py` reads the name part of each `.sha256` line too. A run of 40 or more hex characters there is key-like.
-- `tools/sweep_barred.py` accepts a line `uses: <owner>/<repo>@<40 hex>` in a `.yml` file in `.github/workflows/`. The workflow still pins its two actions by tag. This work made no network call, so it did not read the commit of each tag.
+- `tools/sweep_barred.py` accepts a line `uses: <owner>/<repo>@<40 hex>` in a `.yml` file directly in `.github/workflows/`. The owner part starts with a letter or a digit. A pinned line in a sub-folder of `.github/workflows/` is a hit, because GitHub reads no sub-folder. So is `uses: ./x@<40 hex>`, because a local action takes no ref.
+- The workflow pins its two actions by commit. They are `actions/checkout` v6.1.0 and `actions/setup-python` v6.3.0. These are the commits that the tag v6 of each names, read from the GitHub API on 29 October 2026.
 - After its own write, the trace store (`targets/srd1/app/trace.py`) checks that the file grew by exactly its line. If another writer added a line at the same time, the store reads the file from then on.
 - `faias_harness/engine/dat009.py` reads a `killed_before_tool_call` line as it reads an `unknown_tool` line. On both, the model wrote the arguments. So the run record holds an `on_behalf_of` there as its SHA-256, unless it names a customer of the matrix. `check` fails such a value in text. No TP-DAT-009 run sets the kill switch, so no run of it has written such a line.
 - `is_local` in `faias_harness/engine/runlog.py` splits a `host:port` entry only when the port is ASCII digits. So `localhost:443@evil.example.com` is not on the local machine.
 - When a client closes its connection before the reply, the tool emulator (`faias_harness/emulators/mcp_tools.py`) ends the request with no traceback.
 - A client can also reset the connection before the tool emulator reads the request line or the headers. The emulator then ends the request with no traceback.
+- Each of the two emulator fixes has a test that fails without it. The test of a client that closes at once takes out the second catch. The catch in `_send` alone must then stop the error.
 - `rescore --replies <store>` rescores a TP-SEC-006 log with `store_replies: hash_only`. The store file is the operator's. It holds what `config_read` returned and each reply as received (`docs/ARCHITECTURE.md`, section 16). The command checks the SHA-256 of each reply against the log. It then redacts the reply and scores it again. It names each refused reply line and each run record with no reply line. It exits with 1 on a difference. Before, `rescore` exited with 2 on such a log, and the harness had no command for it. The `store_replies` note of a new `hash_only` header names the option.
-- `runlog results --log <log or folder> ...` runs `verify` on N run logs and prints one table, with a row for each log. A row holds the procedure, the label, the model, the variant, the item count, k and the status. It also holds the outcome counts and a cell for each measure of the summary. A log that fails `verify` is refused and named under the table, and the command exits with 1.
+- `runlog results --log <log or folder> ...` runs `verify` on N run logs and prints one table, with a row for each log. A row holds the procedure, the label, the model, the variant, the item count, k and the status. It also holds the outcome counts and a cell for each measure of the summary. A log that fails `verify` is refused and named under the table, and the command exits with 1. A sub-folder with no `run_log.jsonl` is refused and named in the same way.
 - The two example logs in `examples/logs/` were made again with a new throw-away key. The sweep change moved the hash of `tools/sweep_barred.py` that the TP-SEC-006 log records (`static_inspection.patterns_sha256`).
 
 ## 0.7.0 (29 October 2026)
