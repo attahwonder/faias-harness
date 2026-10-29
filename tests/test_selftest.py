@@ -6,6 +6,7 @@ import contextlib
 import io
 import ipaddress
 import json
+import os
 import re
 import shutil
 import socket
@@ -91,10 +92,14 @@ class GuardTests(unittest.TestCase):
         self.assertEqual((socket.getaddrinfo.__module__, subprocess.Popen.__module__), ("socket", "subprocess"))
 
     def test_the_argv_rule(self):
-        allowed = [["git", "-C", "x", "rev-parse", "HEAD"], [r"C:\Program Files\Git\cmd\git.EXE", "rev-parse", "--short", "HEAD"],
-                   ["/usr/bin/git", "remote", "get-url", "origin"], ["git", "status", "--porcelain"]]
+        allowed = [["git", "-C", "x", "rev-parse", "HEAD"], ["/usr/bin/git", "remote", "get-url", "origin"],
+                   ["git", "status", "--porcelain"]]
         refused = [["git", "push"], ["git", "-C", "x", "push"], ["git", "remote", "add", "o", "u"], "git status --porcelain",
                    ["curl", "-C", "x", "rev-parse"], [], ["python", "-m", "pip"]]
+        # A backslash separates folders on Windows only. On POSIX it is part of the file name, so these two name
+        # files that are not git, and the guard refuses them.
+        by_os = [[r"C:\Program Files\Git\cmd\git.EXE", "rev-parse", "--short", "HEAD"], [r"x\git", "status", "--porcelain"]]
+        (allowed if os.name == "nt" else refused).extend(by_os)
         for a in allowed:
             self.assertTrue(guard_mod.argv_allowed(a), a)
         for a in refused:
