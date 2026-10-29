@@ -277,6 +277,44 @@ class ReviewFixTests(_Base):
         self.assertLess(closed_after, 3.5)
         self.assertEqual(mt.DROP_DEADLINE_S, 2)
 
+    def test_a_refused_client_that_closes_at_once_gives_no_error(self):
+        """A refused client sends its header and then closes the connection with a reset, while the emulator drops
+        the body. The reply then goes to a closed socket. The emulator ends that request with no error. Before the
+        fix, the server printed a traceback. The emulator then answers the next request."""
+        import os
+        import socket
+        import struct
+        import sys
+        import threading
+        from unittest import mock
+        e = self.emu(name="closed.jsonl")
+        errors, dropping, done = [], threading.Event(), threading.Event()
+        handler, real_shutdown = e.httpd.RequestHandlerClass, e.httpd.shutdown_request
+        real_drop = handler._drop_body
+
+        def drop_body(h):
+            dropping.set()
+            return real_drop(h)
+
+        def shutdown_request(request):
+            real_shutdown(request)
+            done.set()
+
+        e.httpd.handle_error = lambda request, address: errors.append(sys.exc_info()[1])
+        e.httpd.shutdown_request = shutdown_request
+        head = (f"POST {e.path} HTTP/1.1\r\nHost: {e.host}:{e.port}\r\nOrigin: https://other.test\r\n"
+                f"Content-Type: application/json\r\nContent-Length: 100\r\n\r\n").encode("ascii")
+        linger = struct.pack("HH" if os.name == "nt" else "ii", 1, 0)        # linger 0 s, so the close sends a reset
+        with mock.patch.object(handler, "_drop_body", drop_body):
+            s = socket.create_connection((e.host, e.port), timeout=10)
+            s.setsockopt(socket.SOL_SOCKET, socket.SO_LINGER, linger)
+            s.sendall(head)
+            self.assertTrue(dropping.wait(10))
+            s.close()
+            self.assertTrue(done.wait(10))
+        self.assertEqual(errors, [])
+        self.assertEqual(self.modern(e, "tools/list").status_code, 200)
+
 
 STORE_TOOLS_FILE = REPO / "targets" / "examples" / "mcp_tools_store.yaml"
 STORE_FILE = REPO / "targets" / "srd1" / "data" / "synthetic_bank.yaml"

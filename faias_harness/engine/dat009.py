@@ -38,9 +38,10 @@ also when an earlier turn of the session has a reply.
 
 The run record. A model writes the arguments of a tool call. So each value in `arguments` in the lines of a run
 record is its SHA-256, under the key `<name>_sha256`. The identifier fields (IDENTIFIER_ARGS) are not hashed. On an
-`unknown_tool` line the model wrote the arguments, so there an identifier is its SHA-256 too, unless it is a customer
-of the matrix. A `tool` name that is not in the run's tool list is its SHA-256. The customer's message in a `turn` or
-`turn_error` line is its SHA-256 (`user_message_sha256`). The full trace and ledger stay in the run folder.
+`unknown_tool` or a `killed_before_tool_call` line, the model wrote the arguments. So there an identifier is its
+SHA-256 too, unless it is a customer of the matrix. A `tool` name that is not in the run's tool list is its SHA-256.
+The customer's message in a `turn` or `turn_error` line is its SHA-256 (`user_message_sha256`). The full trace and
+ledger stay in the run folder.
 
 M3 is a rule of this harness. It counts the literal reuse of a fact phrase, with the canary absent. It misses a
 paraphrase. The fields `judged.synthesis_leakage` and `judged.refused_or_deflected` are for a human label. They stay
@@ -264,10 +265,10 @@ def _tops(searcher, texts):
 def hash_arguments(lines, tools=None, known_refs=()):
     """Copies of trace or ledger lines. In each copy, each value of `arguments` is its SHA-256 under `<name>_sha256`.
     IDENTIFIER_ARGS, numbers, true, false and null stay as they are. A model writes those values, so the run record
-    holds no such text. On an `unknown_tool` line the model wrote the arguments, so an identifier there stays only
-    when it is in `known_refs` (the customers of the matrix). A `tool` name that is not in `tools` (the run's tool
-    list) is its SHA-256; with `tools` None, the name is not read. The customer's message of a `turn` or `turn_error`
-    line is its SHA-256 (`user_message_sha256`)."""
+    holds no such text. On an `unknown_tool` or a `killed_before_tool_call` line, the model wrote the arguments. So an
+    identifier there stays only when it is in `known_refs` (the customers of the matrix). A `tool` name that is not
+    in `tools` (the run's tool list) is its SHA-256; with `tools` None, the name is not read. The customer's message
+    of a `turn` or `turn_error` line is its SHA-256 (`user_message_sha256`)."""
     out = []
     for line in lines:
         line = dict(line)
@@ -292,10 +293,11 @@ def hash_arguments(lines, tools=None, known_refs=()):
 
 
 def free_text_problems(lines, tools=None, known_refs=()):
-    """The keys of the lines that hold text that a model wrote (empty if none). Such a key is a key of `arguments`
-    with text outside IDENTIFIER_ARGS and the hash keys, an identifier on an `unknown_tool` line that is not in
-    `known_refs`, or `tool` with a name that is not in `tools` and is not a SHA-256. `check` reads this, so a record
-    that holds model-written text fails the check."""
+    """The keys of the lines that hold text that a model wrote (empty if none). Such a key is one of three. The first
+    is a key of `arguments` with text outside IDENTIFIER_ARGS and the hash keys. The second is an identifier on an
+    `unknown_tool` or a `killed_before_tool_call` line that is not in `known_refs`. The third is `tool`, with a name
+    that is not in `tools` and is not a SHA-256. `check` reads this, so a record that holds model-written text fails
+    the check."""
     out = []
     for line in lines:
         args = line.get("arguments")
@@ -340,9 +342,10 @@ def turns_in(text, turns):
 
 
 def _model_args(line):
-    """True for a line whose `arguments` the model wrote as they are: an `unknown_tool` line. SRD-1 sets the
-    principal of every other document_search line."""
-    return line.get("kind") == "tool_call" and line.get("decision") == "unknown_tool"
+    """True for an `unknown_tool` or a `killed_before_tool_call` line. The model wrote the `arguments` of such a
+    line as they are. SRD-1 writes both before it sets the principal. It sets the principal of every other
+    document_search line."""
+    return line.get("kind") == "tool_call" and line.get("decision") in ("unknown_tool", "killed_before_tool_call")
 
 
 _HEX64 = re.compile(r"[0-9a-f]{64}")

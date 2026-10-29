@@ -1,6 +1,6 @@
 """Tests of the sweep for barred terms and key-like strings (tools/sweep_barred.py). A digest in a line of a .jsonl,
-.jsonl.sig or .sha256 file is not a key-like string. Every other run of 40 or more hex characters still is. No
-network."""
+.jsonl.sig or .sha256 file is not a key-like string. Nor is the commit that pins an action in a .yml file in
+.github/workflows/. Every other run of 40 or more hex characters still is. No network."""
 import contextlib
 import importlib.util
 import io
@@ -21,6 +21,7 @@ def hits(files):
     """Write the files to a new folder, sweep it, and return the FAIL lines."""
     with tempfile.TemporaryDirectory() as d:
         for name, text in files.items():
+            (Path(d) / name).parent.mkdir(parents=True, exist_ok=True)
             (Path(d) / name).write_text(text, encoding="utf-8")
         buf = io.StringIO()
         with contextlib.redirect_stdout(buf):
@@ -87,6 +88,35 @@ class DigestTests(unittest.TestCase):
         self.assertEqual(len(hits({"run_log.jsonl": line({"reply_sha256": fake})})), 1)
         self.assertEqual(len(hits({"run_log.jsonl": line({"reply_sha256": DIGEST, "reply": "-----BEGIN "
                                                           "PRIVATE KEY-----"})})), 1)
+
+    def test_a_json_number_of_40_or_more_digits_is_key_like(self):
+        digits = "1" * 40
+        for text in ('{"n":%s}\n' % digits, '{"x":0.%s}\n' % digits, '{"x":-%s}\n' % ("9" * 64),
+                     '{"hash":%s}\n' % digits, '{"reply_sha256":"%s","n":%s}\n' % (DIGEST, digits)):
+            with self.subTest(text=text):
+                self.assertEqual(len(hits({"run_log.jsonl": text})), 1)
+        self.assertEqual(hits({"run_log.jsonl": '{"reply_sha256":"%s","n":%s}\n' % (DIGEST, "1" * 39)}), [])
+
+    def test_a_sha256sum_line_with_hex_in_its_name_is_key_like(self):
+        for name in (DIGEST, COMMIT, DIGEST.upper(), COMMIT + ".jsonl"):
+            with self.subTest(name=name):
+                self.assertEqual(len(hits({"run_log.jsonl.sha256": f"{DIGEST}  {name}\n"})), 1)
+        self.assertEqual(hits({"run_log.jsonl.sha256": f"{DIGEST}  {'ab' * 19}a.jsonl\n"}), [])     # 39 hex
+
+    def test_an_action_pinned_by_commit_passes_in_a_workflow_file_only(self):
+        ok = f"      - uses: actions/checkout@{COMMIT}  # v6.0.0\n"
+        self.assertEqual(hits({".github/workflows/tests.yml": ok}), [])
+        self.assertEqual(hits({".github/workflows/tests.yml": f"    uses: actions/setup-python@{COMMIT}\n"}), [])
+        for name in ("tests.yml", ".github/tests.yml", ".github/workflows/tests.yaml", "docs/workflows/tests.yml",
+                     ".github/workflows/notes.md"):
+            with self.subTest(name=name):
+                self.assertEqual(len(hits({name: ok})), 1)
+        for text in (f"      - uses: actions/checkout@{DIGEST}\n", f"      - uses: actions/checkout@{COMMIT.upper()}\n",
+                     f"      - uses: actions/checkout@{COMMIT}  # {COMMIT}\n", f"      - run: echo {COMMIT}\n",
+                     f"      - uses: actions@{COMMIT}\n", f"      - uses: a/b/c@{COMMIT}\n",
+                     f"      - uses: actions/checkout@{COMMIT} {COMMIT}\n"):
+            with self.subTest(text=text):
+                self.assertEqual(len(hits({".github/workflows/tests.yml": text})), 1)
 
 
 if __name__ == "__main__":

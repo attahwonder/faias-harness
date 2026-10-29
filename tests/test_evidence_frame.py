@@ -502,6 +502,13 @@ class ExampleLabelTests(unittest.TestCase):
         for entry in ("openrouter.ai", "192.0.2.1:80", "127.0.0.1.example.invalid:80", "", "examplehost", "::2"):
             self.assertFalse(runlog.is_local(entry), entry)
 
+    def test_the_port_of_a_host_port_entry_is_digits_only(self):
+        for entry in ("localhost:443@evil.example.com", "127.0.0.1:evil.example.com", "[::1]:80@evil.example.com",
+                      "localhost:", "localhost:80/x", "localhost:8O", "localhost:٨٠"):
+            self.assertFalse(runlog.is_local(entry), entry)
+        for entry in ("localhost:443", "LOCALHOST:8080", "127.0.0.1:65535", "[::1]"):
+            self.assertTrue(runlog.is_local(entry), entry)
+
 
 EXAMPLES = REPO / "examples" / "logs"
 EXAMPLE_PUBKEY = EXAMPLES / "example_signing_key.pub.pem"

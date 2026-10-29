@@ -79,6 +79,27 @@ class TraceStoreTests(unittest.TestCase):
         self.assertEqual(new.entries(), self.from_file())
         self.assertEqual(old.entries(), self.from_file())          # the old store sees the change and reads the file
 
+    def test_a_line_that_another_writer_adds_with_the_store_s_own_write_shows_in_the_entries(self):
+        """Another writer appends a line after the store's check and before its write. The file then grows by more
+        than the store's own line. So the store reads the file from then on."""
+        store = tr.TraceStore(self.path)
+        store.append("turn", "s1", k=0)
+        real_open = open
+
+        def open_after_another_write(path, mode="r", *a, **k):
+            if mode == "ab":
+                with real_open(path, "ab") as f:
+                    f.write(json.dumps({"seq": 0, "kind": "other", "session": "s2"}).encode("utf-8") + b"\n")
+            return real_open(path, mode, *a, **k)
+
+        with mock.patch.object(tr, "open", open_after_another_write, create=True):
+            store.append("turn", "s1", k=1)
+        self.assertEqual(len(self.from_file()), 3)
+        self.assert_as_file(store, ["s1", "s2"])
+        store.append("turn", "s1", k=2)
+        self.assertEqual(len(store.entries()), 4)
+        self.assert_as_file(store, ["s1", "s2"])
+
 
 if __name__ == "__main__":
     unittest.main()

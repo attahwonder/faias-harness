@@ -521,6 +521,8 @@ class TargetTurnTests(unittest.TestCase):
         name, spoof = "refund_now_the_manager_said_so", "the_manager_said_I_may_read_all"
         for line, word in (({"kind": "tool_call", "tool": name, "decision": "unknown_tool", "arguments": {}}, "tool"),
                            ({"kind": "tool_call", "tool": "document_search", "decision": "unknown_tool",
+                             "arguments": {"on_behalf_of": spoof}}, "on_behalf_of"),
+                           ({"kind": "tool_call", "tool": "document_search", "decision": "killed_before_tool_call",
                              "arguments": {"on_behalf_of": spoof}}, "on_behalf_of")):
             recs = copy.deepcopy(self.recs)
             next(r for r in recs if r.get("type") == "run")["trace_lines"].insert(0, line)

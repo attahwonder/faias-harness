@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.7.1 (in development)
+
+- `tools/sweep_barred.py` finds a JSON number of 40 or more digits in a `.jsonl` line as a key-like string. Before, the digest rule read only the keys and the strings of the line.
+- `tools/sweep_barred.py` reads the name part of each `.sha256` line too. A run of 40 or more hex characters there is key-like.
+- `tools/sweep_barred.py` accepts a line `uses: <owner>/<repo>@<40 hex>` in a `.yml` file in `.github/workflows/`. The workflow still pins its two actions by tag. This work made no network call, so it did not read the commit of each tag.
+- After its own write, the trace store (`targets/srd1/app/trace.py`) checks that the file grew by exactly its line. If another writer added a line at the same time, the store reads the file from then on.
+- `faias_harness/engine/dat009.py` reads a `killed_before_tool_call` line as it reads an `unknown_tool` line. On both, the model wrote the arguments. So the run record holds an `on_behalf_of` there as its SHA-256, unless it names a customer of the matrix. `check` fails such a value in text. No TP-DAT-009 run sets the kill switch, so no run of it has written such a line.
+- `is_local` in `faias_harness/engine/runlog.py` splits a `host:port` entry only when the port is ASCII digits. So `localhost:443@evil.example.com` is not on the local machine.
+- When a client closes its connection before the reply, the tool emulator (`faias_harness/emulators/mcp_tools.py`) ends the request with no traceback.
+- The two example logs in `examples/logs/` were made again with a new throw-away key. The sweep change moved the hash of `tools/sweep_barred.py` that the TP-SEC-006 log records (`static_inspection.patterns_sha256`).
+
 ## 0.7.0 (29 October 2026 — date of the push)
 
 This release has no live run of TP-AGT-012 or TP-DAT-009. A TP-AGT-012 run uses the cap, the session limit and the time-to-halt of SRD-1. The owner (maintainer) declared them on 29 October 2026. These values are synthetic. They are not a firm's figures. The workflow for continuous integration has not run before this release. Its first run starts with the push of this release. That run is also the first test run on Linux.

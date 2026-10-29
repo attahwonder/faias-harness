@@ -337,6 +337,8 @@ class ToolEmulator:
                 pass
 
             def _send(self, status, body=None, headers=None):
+                """Send the reply. If the client has closed the connection, the write fails. The reply is then
+                lost, the error ends the request, and the connection closes."""
                 data = b"" if body is None else _canonical(body).encode("utf-8")
                 self.send_response(status)
                 if body is not None:
@@ -344,9 +346,12 @@ class ToolEmulator:
                 for k, v in (headers or {}).items():
                     self.send_header(k, v)
                 self.send_header("Content-Length", str(len(data)))
-                self.end_headers()
-                if data:
-                    self.wfile.write(data)
+                try:
+                    self.end_headers()
+                    if data:
+                        self.wfile.write(data)
+                except OSError:
+                    self.close_connection = True
 
             def _refuse(self, status, message, drop_body=True):
                 """Refuse the request and close the connection, so that it cannot fall out of step.

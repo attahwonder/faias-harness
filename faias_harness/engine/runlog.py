@@ -158,8 +158,11 @@ def example_label(label):
 
 
 def is_local(entry):
-    """True when a host name, an address, or a host:port entry of an egress allow-list is on the local machine."""
-    for host in (str(entry), str(entry).rpartition(":")[0]):
+    """True when a host name, an address, or a host:port entry of an egress allow-list is on the local machine. The
+    port of a host:port entry is ASCII digits only, so an entry such as localhost:443@evil.example.com is not local."""
+    entry = str(entry)
+    head, _, port = entry.rpartition(":")
+    for host in (entry, head) if re.fullmatch(r"[0-9]+", port) else (entry,):
         host = host.strip("[]").lower()
         if host == "localhost":
             return True

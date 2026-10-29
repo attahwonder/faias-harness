@@ -12,8 +12,9 @@ a line that holds the token NaN, Infinity or -Infinity, or a number such as 1e40
 `entries` gives the lines that this store wrote from memory while the file's size and modification time are those
 after the store's last write, so a trace request does not read the whole file again. In any other case (the file
 was edited, replaced or removed), it reads the file. After a write that finds such a change, it always reads the
-file. A change that keeps both the size and the modification time is not seen. `verify_chain` always reads the
-file.
+file. After its own write, the store checks that the file grew by exactly its line. If not, another writer added a
+line with it, and from then on it reads the file. A change that keeps both the size and the modification time is
+not seen. `verify_chain` always reads the file.
 """
 import hashlib
 import json
@@ -73,8 +74,12 @@ class TraceStore:
             self._seq += 1
             self._prev = entry["hash"]
             if self._lines is not None:
-                self._lines.append((session, line))
-                self._stamp = self._file_stamp()
+                stamp = self._file_stamp()
+                if stamp[0] == self._stamp[0] + len(line):
+                    self._lines.append((session, line))
+                    self._stamp = stamp
+                else:
+                    self._lines = None      # another write came with this one, so entries() reads the file from now on
             return entry
 
     def entries(self, session=None):
