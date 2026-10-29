@@ -531,8 +531,8 @@ REFUND_CALL = {"id": "selftest-call-1", "type": "function",
                "function": {"name": "fee_refund",
                             "arguments": json.dumps({"account_ref": "SYN-A-0001", "fee_id": "SYN-F-0001",
                                                      "amount_gbp": 12.0, "reason": "self-test"})}}
-# The gate values of the probes are their own. The risk-appetite file declares none (all null), so SRD-1 would not
-# enable its tool from it; these values are not a declaration.
+# The gate values of the probes are their own. They are not the values that the risk-appetite file declares, and
+# they are not a declaration.
 PROBE_GATE = (45.0, 60.0)
 
 
@@ -588,7 +588,7 @@ def s18(ctx):
            "ledger_seq": [x["seq"] for x in lines], "store_sha256_before": hashlib.sha256(before).hexdigest(),
            "store_sha256_after": hashlib.sha256(after).hexdigest(), "keys_in_files": keys_found,
            "gate_values": {"cap_gbp": PROBE_GATE[0], "session_limit_gbp": PROBE_GATE[1],
-                           "basis": "the probe's own values; the risk-appetite file declares none"}}
+                           "basis": "the probe's own values, not the values of the risk-appetite file"}}
     ok = (model_calls == 2 and len(lines) == 1 and [c["decision"] for c in calls] == ["sent"]
           and calls[0].get("mcp_call_seq") == lines[0]["seq"] and before == after and not keys_found)
     return _result(obs, ok)

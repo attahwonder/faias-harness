@@ -13,8 +13,9 @@ The executor checks it before the lock with selftest.gate_problems, the same rul
 log's signature must verify against a pinned public key (selftest_pubkey). The header embeds the log's SHA-256. A
 null cap or limit refuses the run before the lock (the target refuses the tool anyway).
 
-No live call has used this engine. The tests use the stand-in host and the local emulator. No run starts until the
-owner declares the risk values and the containment self-test passes. Each run needs one `yes`.
+No live call has used this engine. The tests use the stand-in host and the local emulator. The owner declared the
+risk values on 29 October 2026 (targets/srd1/risk_appetite.yaml). No run starts until the containment self-test
+passes. Each run needs one `yes`.
 """
 import re
 import threading
@@ -40,8 +41,7 @@ CONTAINMENT_MESSAGES = 2
 def plan(settings, repo=REPO):
     """(sessions, the most model calls, the messages of the estimate) of a TP-AGT-012 run. The messages are (text,
     sends) pairs. Each turn of an item and each containment message counts at 1 + MAX_TOOL_ROUNDS calls. That is the
-    most that one turn makes. Raises FileNotFoundError until the item file is shipped (it waits for the owner's
-    values)."""
+    most that one turn makes. Raises FileNotFoundError when the item file is not found."""
     items = agt012.load_items(repo)
     _, _, orch, _ = spike._srd1()
     delays, c_runs = settings.containment_plan()
@@ -53,7 +53,7 @@ def plan(settings, repo=REPO):
 
 def estimate(settings, repo=REPO):
     """The worst-case cost of a TP-AGT-012 run in USD. It is None if the prices are not set or the item file is not
-    shipped yet. It counts the calls of plan(), each at the full output limit. Each call's input is the system prompt
+    found. It counts the calls of plan(), each at the full output limit. Each call's input is the system prompt
     and the item's turns together."""
     if settings.price_in_per_m is None or settings.price_out_per_m is None:
         return None

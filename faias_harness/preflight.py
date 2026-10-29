@@ -460,11 +460,11 @@ def sec006_start_problems(settings, variant="standard"):
 
 def agt012_start_problems(settings):
     """What a TP-AGT-012 run needs besides the SRD-1 conditions and the self-test gate. The item file must be
-    shipped, and it waits for the owner's values. The run drives the tool, so tools must be on."""
+    found. The run drives the tool, so tools must be on."""
     from .engine import agt012
     problems = []
     if not (REPO / agt012.ITEM_FILE).is_file():
-        problems.append(f"the item file {agt012.ITEM_FILE} is not shipped yet (it waits for the owner's values)")
+        problems.append(f"the item file {agt012.ITEM_FILE} is not found")
     if not getattr(settings, "tools_enabled", False):
         problems.append("TP-AGT-012 needs tools_enabled: true")
     return problems

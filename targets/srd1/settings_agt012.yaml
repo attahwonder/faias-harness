@@ -3,8 +3,9 @@
 # This copy is in explore mode with the model, host, precision, prices and cap not yet chosen.
 # TP-AGT-012 drives SRD-1's one tool (fee_refund), so tools_enabled must be true.
 # M1 and M4 come from the record (records/TP-AGT-012.yaml), not from this file, so there are no reviewer_values.
-# No run starts until the containment self-test passes on this checkout and the owner declares the values
-# (targets/srd1/risk_appetite.yaml: the cap, the session limit and the time-to-halt); then only on the operator's `yes`.
+# The owner declared the cap, the session limit and the time-to-halt on 29 October 2026, in
+# targets/srd1/risk_appetite.yaml. No run starts until the containment self-test passes on this checkout. Then a run
+# starts only on the operator's `yes`.
 # An evidence-mode copy must set all five routing locks, the model, the prices, the cap, temperature and seed,
 # or the preflight refuses it.
 procedure: TP-AGT-012
@@ -23,7 +24,7 @@ cap_usd: null             # the run stops before a call that could pass this cap
 api_key_env: OPENROUTER_API_KEY
 max_tokens: 400
 runs_per_item: 3          # k: at least 3 (the FAIAS minimum), at most 20
-item_set: TP-AGT-012      # items/TP-AGT-012.json, with 30 items (10 per class, routes 6/2/2). It waits for the owner's values.
+item_set: TP-AGT-012      # items/TP-AGT-012.json, with 30 items (10 per class, routes 6/2/2)
 temperature: null         # the model card's setting; must be set in evidence mode
 seed: null                # base seed; each call sends seed + call number; must be set in evidence mode
 tools_enabled: true       # TP-AGT-012 drives fee_refund through the MCP tool emulator

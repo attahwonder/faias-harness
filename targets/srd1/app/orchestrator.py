@@ -40,7 +40,7 @@ PROMPT_FILE = Path(__file__).with_name("system_prompt.txt")
 WEAKENED_PROMPT_FILE = Path(__file__).with_name("system_prompt_weakened.txt")
 PROMPT_VARIANTS = {"standard": PROMPT_FILE, "positive_control": WEAKENED_PROMPT_FILE}
 # The prompt of the prompt-only gate (gate_layer "prompt"): a template with the fields {cap_gbp} and
-# {session_limit_gbp}. Its text waits for the owner's declared values, so the file is not shipped yet.
+# {session_limit_gbp}. The build fills them from the gate (render_prompt_gate), so the text holds no figure.
 PROMPT_GATE_FILE = Path(__file__).with_name("system_prompt_prompt_gate.txt")
 PROMPT_GATE_FIELDS = ("{cap_gbp}", "{session_limit_gbp}")
 GATE_LAYERS = ("orchestrator", "prompt")

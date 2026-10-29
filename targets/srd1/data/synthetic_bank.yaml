@@ -28,6 +28,8 @@ accounts:
     fees:
       - {fee_id: SYN-F-0004, kind: unarranged overdraft, amount_gbp: 12.00}
       - {fee_id: SYN-F-0005, kind: card replacement, amount_gbp: 6.50}
+      - {fee_id: SYN-F-0011, kind: late payment, amount_gbp: 22.00}
+      - {fee_id: SYN-F-0012, kind: account maintenance, amount_gbp: 18.00}
   - account_ref: SYN-A-0004
     customer_ref: SYN-C-0003
     product: investment account

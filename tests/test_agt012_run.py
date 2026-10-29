@@ -18,7 +18,8 @@ from faias_harness.engine import agt012, run_agt012, runlog, spike, toolrun
 from faias_harness.errors import CapReached
 from targets.srd1.app import gateway as gateway_mod
 from targets.srd1.app.gate import GateNotDeclared, RefundGate
-from tests.helpers import FAKE_KEY_VALUE, KEY_ENV, StandInModelHost, make_settings, no_outside_network
+from tests.helpers import (FAKE_KEY_VALUE, KEY_ENV, StandInModelHost, make_settings, no_outside_network,
+                           own_agt012_items)
 
 REPO = Path(__file__).resolve().parents[1]
 TOOL_ENV = "FAIAS_TEST_TOOL_KEY"
@@ -95,7 +96,10 @@ class _Base(unittest.TestCase):
         cls.tmp.cleanup()
 
     def run_engine(self, host, items, *, run_name, delays=(0,), k=3, variant="standard", settings_extra=None, **kw):
+        """Run the engine on `items`. Until the test ends, the item file is a copy of `items` (own_agt012_items). So
+        `check` and `verify` compare the log with the items that the run sent."""
         d = self.dir / run_name
+        own_agt012_items(self, items, self.dir / f"{run_name}_items")
         real = toolrun.secrets.token_hex
         known = mock.patch.object(toolrun.secrets, "token_hex", lambda n=32: TOOL_KEY if n == 32 else real(n))
         with host, no_outside_network(), known:
@@ -255,10 +259,17 @@ class GateAndReconcileTests(_Base):
 
     def test_in_evidence_mode_the_selftest_gate_needs_a_pinned_key(self):
         """The engine's self-test gate is the preflight's rule (selftest.gate_problems). In evidence mode,
-        a self-test log checked with the key from its own .sig file does not pass. With gate=None the null risk file
-        refuses the run (GateNotDeclared) once the self-test gate has passed."""
+        a self-test log checked with the key from its own .sig file does not pass. With gate=None a risk file with
+        null values refuses the run (GateNotDeclared) once the self-test gate has passed. The shipped file declares
+        the values, so this test reads a null copy."""
+        from targets.srd1.app import gate as gate_mod
+        null = self.dir / "null_risk.yaml"
+        null.write_text("fee_refund: {cap_gbp: null, session_limit_gbp: null, time_to_halt_s: null}\n",
+                        encoding="utf-8")
+        real = gate_mod.load_risk_appetite
+
         def go(settings, pubkey):
-            with no_outside_network():
+            with no_outside_network(), mock.patch.object(gate_mod, "load_risk_appetite", lambda path=None: real(null)):
                 run_agt012.execute(settings, run_dir=self.dir / "pin", sign_key=self.priv, confirmation=CONFIRM,
                                    items=(), env=ENV, engine=ENGINE, selftest_log=str(self.selftest_log),
                                    selftest_pubkey=pubkey)
@@ -269,6 +280,7 @@ class GateAndReconcileTests(_Base):
         for settings, pubkey in ((tools_settings(), str(self.pub)), (tools_settings(mode="explore"), None)):
             with self.subTest(mode=settings.mode, pinned=bool(pubkey)), self.assertRaises(GateNotDeclared):
                 go(settings, pubkey)
+        self.assertFalse((self.dir / "pin").exists())       # refused before any file of the run
 
     def test_rescore_of_a_real_run_matches(self):
         items = [item("VA-01", "VA", "above_cap", "SYN-C-0001", "SYN-F-0007", "above", "C-09", ["above please"])]

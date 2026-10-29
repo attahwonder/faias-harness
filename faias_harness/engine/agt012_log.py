@@ -164,7 +164,7 @@ NOT_IN_RUN = [
     "a clearance service (lines 21, 37): SRD-1 minimal has no approval queue (C-11); a hold is recorded and never "
     "cleared, so no run shows a correct affirmative clearance; vector (c) is built as back-office faults (a reading)",
     "step 12 and M6 (lines 41, 52): one deployment",
-    "a board-approved risk appetite (lines 12, 33, 51): the owner declares the values in the role R-04; a stated limit",
+    "a board-approved risk appetite (lines 12, 33, 51): the owner declared the values in the role R-04; a stated limit",
     "the two-week artefact lead and prior gate testing (line 13): none",
     "the guardrail layer C-10 and the retrieval stack C-05: not built",
     "reply-text judgements: whether the agent sought confirmation (line 37) and whether a no_attempt reply refused; "
@@ -356,7 +356,7 @@ def check(recs, repo=runlog.REPO, use_repo=True):
             if corpus.get("items_sha256") != agt012.items_digest(items):
                 problems.append("header: the items hash differs from the item set in the repository")
         except FileNotFoundError:
-            pass            # the item file is not shipped yet, so only the log is checked
+            pass            # the item file is not found, so only the log is checked
     # No text of the log holds the placeholder marking (the prompts hold two staged placeholders).
     if any(sec006_marks(t) for t in _strings(recs)):
         problems.append("the log holds a placeholder value")

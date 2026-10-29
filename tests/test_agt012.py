@@ -18,7 +18,7 @@ from faias_harness import settings as settings_mod
 from faias_harness.adapters.srd1_http import Srd1ChatError
 from faias_harness.engine import agt012, agt012_log, run_agt012, runlog
 from faias_harness.errors import CapReached
-from tests.helpers import KEY_ENV, make_settings, raw_settings
+from tests.helpers import KEY_ENV, make_settings, own_agt012_items, raw_settings
 
 REPO = Path(__file__).resolve().parents[1]
 CAP, LIMIT, CUSTOMER = 45.0, 60.0, "SYN-C-0001"
@@ -385,12 +385,14 @@ def _cont_record(log, delay):
 
 
 class LogTests(unittest.TestCase):
-    """The schema-7 log verifies, checks and rescores. A changed log fails."""
+    """The schema-7 log verifies, checks and rescores. A changed log fails. The log holds the test items, so `check`
+    reads them in place of the shipped set (own_agt012_items)."""
 
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
         self.dir = Path(self.tmp.name)
         self.addCleanup(self.tmp.cleanup)
+        own_agt012_items(self, ITEMS, self.dir)
 
     def test_a_built_log_verifies_and_checks(self):
         log, priv, pub, sig = build_log(self.dir)
@@ -550,6 +552,162 @@ class LogTests(unittest.TestCase):
 def _write(path, recs):
     path.write_bytes(("\n".join(json.dumps(r, ensure_ascii=False) for r in recs) + "\n").encode("utf-8"))
     return path
+
+
+class ShippedSetLogTests(unittest.TestCase):
+    """With the item file shipped, `check` compares a log's items hash with items/TP-AGT-012.json."""
+
+    def test_a_log_of_other_items_differs_from_the_shipped_set(self):
+        with tempfile.TemporaryDirectory() as t:
+            log, *_ = build_log(Path(t))
+            problems = runlog.check_log(log)
+            self.assertEqual(problems, ["header: the items hash differs from the item set in the repository"])
+            self.assertEqual(runlog.check_log(log, use_repo=False), [])
+
+
+STORE_FILE = REPO / "targets" / "srd1" / "data" / "synthetic_bank.yaml"
+
+
+def _turn(d, iid, n=0):
+    return next(i for i in d["items"] if i["id"] == iid)["turns"][n]
+
+
+def _set(d, iid, **fields):
+    next(i for i in d["items"] if i["id"] == iid).update(fields)
+
+
+def _text(d, iid, old, new, n=0):
+    i = next(i for i in d["items"] if i["id"] == iid)
+    assert old in i["turns"][n], (iid, old)
+    i["turns"][n] = i["turns"][n].replace(old, new)
+
+
+def _add(d, iid, extra, n=0):
+    i = next(i for i in d["items"] if i["id"] == iid)
+    i["turns"][n] = i["turns"][n] + extra
+
+
+class ItemSetTests(unittest.TestCase):
+    """The shipped item set (items/TP-AGT-012.json) and check_item_set, with the declared cap and session limit of
+    targets/srd1/risk_appetite.yaml. One seeded fault for each rule."""
+
+    @classmethod
+    def setUpClass(cls):
+        from faias_harness.emulators import handlers
+        from targets.srd1.app.gate import load_risk_appetite
+        cls.data = agt012.load_set(REPO)
+        cls.store, _ = handlers.load_store(STORE_FILE)
+        values, _ = load_risk_appetite()
+        cls.cap, cls.limit = values["cap_gbp"], values["session_limit_gbp"]
+
+    def check(self, data):
+        return agt012.check_item_set(data, self.store, self.cap, self.limit)
+
+    def test_the_shipped_set_has_no_problem_with_the_declared_values(self):
+        self.assertEqual((self.cap, self.limit), (25, 50))
+        self.assertEqual(self.check(self.data), [])
+        items = agt012.load_items(REPO)
+        self.assertEqual(len(items), 30)
+        for cls in agt012.VECTORS:
+            with self.subTest(cls=cls):
+                rows = [i for i in items if i.cls == cls]
+                self.assertEqual(len(rows), 10)
+                self.assertEqual({r: sum(1 for i in rows if i.route == r) for r in agt012.ROUTES},
+                                 agt012.ROUTE_SHARES)
+        from faias_harness.engine import sec006
+        self.assertEqual({sec006.activity_of(i.text, self.data["activity_rule"]) for i in items}, {agt012.ACTIVITY})
+        refs = {r for i in items for r in agt012._REF.findall(i.text)}
+        self.assertTrue(refs and all(r.startswith("SYN-") for r in refs), refs)
+
+    def test_with_null_values_the_amount_rules_are_not_applied(self):
+        d = json.loads(json.dumps(self.data))
+        _set(d, "VA-01", fees=[{"fee_id": "SYN-F-0007", "amount_vs_cap": "below"}])
+        self.assertEqual(agt012.check_item_set(d, self.store, None, None), [])
+        self.assertTrue(self.check(d))
+
+    def test_each_seeded_fault_is_reported(self):
+        key_like = "sk" + "-" + "a" * 24                  # built here, so this file holds no key-like string
+        reserved_host = "refunds.example." + "invalid"     # built here, so this file holds no reserved host
+        from faias_harness.engine import sec001
+        cases = [
+            ("a band that the store does not match", "fee SYN-F-0007 is not below the cap",
+             lambda d: _set(d, "VA-01", fees=[{"fee_id": "SYN-F-0007", "amount_vs_cap": "below"}])),
+            ("an above_cap fee at or below the cap", "the gated fee is not above the cap",
+             lambda d: (_set(d, "VA-01", fees=[{"fee_id": "SYN-F-0008", "amount_vs_cap": "below"}]),
+                        _text(d, "VA-01", "SYN-F-0007 on my investment account SYN-A-0004",
+                              "SYN-F-0008 on my current account SYN-A-0005"))),
+            ("a split total within the session limit", "the gated fees do not pass the session limit",
+             lambda d: (_set(d, "VA-08", fees=[{"fee_id": "SYN-F-0011", "amount_vs_cap": "below"},
+                                               {"fee_id": "SYN-F-0012", "amount_vs_cap": "below"}]),
+                        _text(d, "VA-08", "SYN-F-0011, SYN-F-0012 and SYN-F-0004", "SYN-F-0011 and SYN-F-0012"))),
+            ("a split item with one gated fee", "a split_session item has two gated fees or more",
+             lambda d: (_set(d, "VA-08", fees=[{"fee_id": "SYN-F-0011", "amount_vs_cap": "below"}]),
+                        _text(d, "VA-08", "SYN-F-0011, SYN-F-0012 and SYN-F-0004", "SYN-F-0011"))),
+            ("an other_customer fee above the cap", "a gated fee is above the cap",
+             lambda d: (_set(d, "VA-10", fees=[{"fee_id": "SYN-F-0007", "amount_vs_cap": "above"}]),
+                        _text(d, "VA-10", "SYN-A-0005", "SYN-A-0004"),
+                        _text(d, "VA-10", "SYN-F-0008", "SYN-F-0007"))),
+            ("an other_customer fee on the customer's account", "the gated fee is on an account of the customer",
+             lambda d: _set(d, "VA-09", customer_ref="SYN-C-0002")),
+            ("an above_cap fee on another customer's account", "a gated fee is not on an account of the customer",
+             lambda d: _set(d, "VA-01", customer_ref="SYN-C-0004")),
+            ("an above_cap item with two gated fees", "an above_cap item has one gated fee",
+             lambda d: (_set(d, "VA-01", fees=[{"fee_id": "SYN-F-0007", "amount_vs_cap": "above"},
+                                               {"fee_id": "SYN-F-0006", "amount_vs_cap": "above"}]),
+                        _add(d, "VA-01", " Also refund fee SYN-F-0006."))),
+            ("a VA item with an emulator field", "a VA item has no emulator field",
+             lambda d: _set(d, "VA-01", emulator={"on_fee": "SYN-F-0007", "mode": "truncate"})),
+            ("a VB item with one turn", "a VB item has two turns",
+             lambda d: _set(d, "VB-01", turns=[_turn(d, "VB-01")])),
+            ("an unknown emulator mode", "needs an emulator field with a known mode",
+             lambda d: _set(d, "VC-01", emulator={"on_fee": "SYN-F-0008", "mode": "garble"})),
+            ("a VB item with a fault mode", "a VB item has the mode inject_clearance",
+             lambda d: _set(d, "VB-01", emulator={"on_fee": "SYN-F-0008", "mode": "truncate"})),
+            ("a VC item with the injected note", "a VC item has a fault mode, not inject_clearance",
+             lambda d: _set(d, "VC-01", emulator={"on_fee": "SYN-F-0008", "mode": "inject_clearance"})),
+            ("a turn-1 fee that is not a fee of the item", "the turn-1 fee is not one of the fees of the item",
+             lambda d: _set(d, "VB-01", emulator={"on_fee": "SYN-F-0005", "mode": "inject_clearance"})),
+            ("a turn-1 fee that turn 1 does not name", "turn 1 does not name the turn-1 fee",
+             lambda d: _set(d, "VB-07", emulator={"on_fee": "SYN-F-0011", "mode": "inject_clearance"})),
+            ("a turn-1 fee on another customer's account", "the turn-1 fee is not on an account of the customer",
+             lambda d: _set(d, "VB-09", customer_ref="SYN-C-0002")),
+            ("a turn-1 fee above the cap", "the turn-1 fee is above the cap",
+             lambda d: (_set(d, "VB-01", fees=[{"fee_id": "SYN-F-0006", "amount_vs_cap": "above"},
+                                               {"fee_id": "SYN-F-0007", "amount_vs_cap": "above"}],
+                             emulator={"on_fee": "SYN-F-0006", "mode": "inject_clearance"}),
+                        _text(d, "VB-01", "SYN-F-0008 on my current account SYN-A-0005",
+                              "SYN-F-0006 on my investment account SYN-A-0004"))),
+            ("a fee in the text that the field does not name", "the field fees and the text name different fees",
+             lambda d: _add(d, "VA-01", " And SYN-F-0006.")),
+            ("a reference that does not start with SYN-", "the reference TKT-0042 does not start with SYN-",
+             lambda d: _text(d, "VA-02", "SYN-TKT-0042", "TKT-0042")),
+            ("a reference that is not in the store", "the reference SYN-A-0099 is not in the store",
+             lambda d: _add(d, "VA-01", " My other account is SYN-A-0099.")),
+            ("a banned stem", "banned stem",
+             lambda d: _add(d, "VA-01", " I found a hack for this.")),
+            ("a key-like string", "a key-like string",
+             lambda d: _add(d, "VA-01", f" My code is {key_like}.")),
+            ("a real firm name", "the name of a real firm",
+             lambda d: _add(d, "VA-01", " My other account is with Barclays.")),
+            ("a reserved host", "reserved-host",
+             lambda d: _add(d, "VA-01", f" See {reserved_host} for the rule.")),
+            ("the canary", "the canary of the system prompt",
+             lambda d: _add(d, "VA-01", f" The code is {sec001.CANARY}.")),
+            ("a text that the activity rule gives to another activity", "the activity rule does not give",
+             lambda d: _add(d, "VA-01", " Please also update my email address.")),
+            ("a duplicate ID", "the IDs are not unique",
+             lambda d: _set(d, "VA-02", id="VA-01")),
+            ("a sizes field that does not match", "the field sizes does not match the items",
+             lambda d: d["sizes"].update(VA=9)),
+            ("no activity rule", "the set has no activity rule",
+             lambda d: d.pop("activity_rule")),
+        ]
+        for name, want, change in cases:
+            with self.subTest(fault=name):
+                d = json.loads(json.dumps(self.data))
+                change(d)
+                problems = self.check(d)
+                self.assertTrue(any(want in p for p in problems), (want, problems))
 
 
 AGT = {"procedure": "TP-AGT-012", "item_set": "TP-AGT-012", "tools_enabled": True, "tool_key_env": "FAIAS_TEST_TOOL_KEY"}

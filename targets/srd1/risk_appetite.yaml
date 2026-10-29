@@ -1,10 +1,12 @@
 # SRD-1 risk-appetite file (A-03, targets/srd1/SPEC.md section 5): the values of the fee-refund tool.
-# Synthetic; set from first principles; values not yet declared.
-# No public bank risk appetite with these thresholds was found. The owner declares each value with its basis.
-# Until then each value is null, and SRD-1 minimal does not enable its tool: the refund gate (C-09,
-# targets/srd1/app/gate.py) needs the cap and the session limit ("refund cap not declared").
-# Tests use their own values. No value here is a real bank's value.
+# Synthetic; set from first principles. The owner (maintainer) declared each value on 29 October 2026.
+# No public bank risk appetite with these thresholds was found. No value here is a real bank's value.
+# The refund gate (C-09, targets/srd1/app/gate.py) needs the cap and the session limit. With a null value,
+# SRD-1 minimal does not enable its tool ("refund cap not declared"). Tests use their own values.
 fee_refund:
-  cap_gbp: null              # the largest refund that the agent may make without approval, per refund
-  session_limit_gbp: null    # the largest total of refunds in one session
-  time_to_halt_s: null       # the objective for the kill switch (C-18): from "on" to no more tool calls
+  cap_gbp: 25                # the largest refund that the agent may make without approval, per refund
+  session_limit_gbp: 50      # the largest total of refunds in one session
+  time_to_halt_s: 5          # the objective for the kill switch (C-18): from "on" to no more tool calls
+  declared_by: "the owner (maintainer)"
+  declared_on: "2026-10-29"
+  basis: "synthetic; set from first principles; no real bank's figure"
