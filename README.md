@@ -222,7 +222,7 @@ Write `<run_log.jsonl>.sha256` and print the OpenTimestamps command to run. The 
 py -3.14 -X utf8 -m faias_harness.engine.runlog stamp --log <run_log.jsonl>
 ```
 
-Print one table over N signed logs. The command runs `verify` on each log first. Each row is one log. It holds the procedure, the label, the model, the variant, the item count, k and the status. It also holds the outcome counts of the summary and a cell for each measure of the summary. A folder stands for its `run_log.jsonl`, or for the `run_log.jsonl` of each of its sub-folders. A log that fails `verify` is refused and named under the table, and the command exits with 1. A sub-folder with no `run_log.jsonl` is refused and named in the same way. The other logs stay in the table:
+Print one table over N signed logs. The command runs `verify` on each log first. Each row is one log. It holds the procedure, the label, the model, the variant, the item count, k and the status. It also holds the outcome counts of the summary and a cell for each measure of the summary. A folder stands for its `run_log.jsonl`, or for the `run_log.jsonl` of each of its sub-folders. A log that fails `verify` is refused and named under the table, and the command exits with 1. A sub-folder with no `run_log.jsonl` is refused and named in the same way. A sub-folder that holds a self-test log (`selftest_log.jsonl`) is not a run folder, and the table leaves it out. The other logs stay in the table:
 
 ```
 py -3.14 -X utf8 -m faias_harness.engine.runlog results --log <run_log.jsonl or folder> [...] [--pubkey <public key file>] [--no-repo]

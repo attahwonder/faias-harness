@@ -841,10 +841,14 @@ def measure_cell(m):
     return "; ".join(parts) or "in the summary"
 
 
+SELFTEST_LOG = "selftest_log.jsonl"     # LOG_NAME of faias_harness/selftest, which imports this module
+
+
 def result_logs(paths):
     """Return the run log files that `results` reads, and a line for each folder with no run log. A path that is a
     file is a log. A folder gives its run_log.jsonl, or else the run_log.jsonl of each of its sub-folders, in sorted
-    order. A sub-folder with no run_log.jsonl gets a line too, so that a missing log is named."""
+    order. A sub-folder with no run_log.jsonl gets a line too, so that a missing log is named. A sub-folder that holds
+    a self-test log is not a run folder, so it is left out (preflight finds the self-test log there)."""
     logs, missing = [], []
     for p in map(Path, paths):
         if not p.is_dir():
@@ -852,7 +856,8 @@ def result_logs(paths):
         elif (p / "run_log.jsonl").is_file():
             logs.append(p / "run_log.jsonl")
         else:
-            subs = sorted(d for d in p.iterdir() if d.is_dir())
+            subs = sorted(d for d in p.iterdir()
+                          if d.is_dir() and ((d / "run_log.jsonl").is_file() or not (d / SELFTEST_LOG).is_file()))
             found = [d / "run_log.jsonl" for d in subs if (d / "run_log.jsonl").is_file()]
             logs += found
             missing += ([f"{d}: no run_log.jsonl in this sub-folder" for d in subs if d / "run_log.jsonl" not in found]
@@ -894,7 +899,7 @@ def results(paths, pubkey_path=None, repo=REPO, use_repo=True):
     logs, missing = result_logs(paths)
     rows, refused = [], list(missing)
     for p in logs:
-        name = f"{p.parent.name}/{p.name}"
+        name = f"{p.resolve().parent.name}/{p.name}"
         ok, msg = verify_log(p, p.with_name(p.name + ".sig"), pubkey_path, repo=repo, use_repo=use_repo)
         if not ok:
             refused.append(f"{name}: {msg.splitlines()[0]}")

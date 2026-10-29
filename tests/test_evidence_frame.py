@@ -539,6 +539,25 @@ class ResultsTableTests(unittest.TestCase):
         self.assertEqual([r["log"] for r in table_rows(out)], ["a/run_log.jsonl"])
         self.assertIn(f"REFUSED {parent / 'b'}: no run_log.jsonl in this sub-folder", out.splitlines())
 
+    def test_a_self_test_folder_is_not_a_run_folder(self):
+        from faias_harness import selftest
+        self.assertEqual(runlog.SELFTEST_LOG, selftest.LOG_NAME)
+        with tempfile.TemporaryDirectory() as d:
+            parent = Path(d) / "runs"
+            shutil.copytree(EXAMPLES / "tp-sec-001_spike", parent / "a")
+            (parent / "selftest").mkdir()
+            (parent / "selftest" / selftest.LOG_NAME).write_text("{}\n", encoding="utf-8")
+            rc, out = call(["results", "--log", str(parent), "--pubkey", str(EXAMPLE_PUBKEY)])
+        self.assertEqual(rc, 0, out)
+        self.assertIn("0 refused.", out.splitlines()[0])
+        self.assertEqual([r["log"] for r in table_rows(out)], ["a/run_log.jsonl"])
+
+    def test_a_bare_file_name_gets_its_folder_in_the_row(self):
+        with contextlib.chdir(EXAMPLES / "tp-sec-001_spike"):
+            rc, out = call(["results", "--log", "run_log.jsonl", "--pubkey", str(EXAMPLE_PUBKEY)])
+        self.assertEqual(rc, 0, out)
+        self.assertEqual([r["log"] for r in table_rows(out)], ["tp-sec-001_spike/run_log.jsonl"])
+
 
 def sec006_settings():
     raw = raw_settings(procedure="TP-SEC-006", mode="explore",
