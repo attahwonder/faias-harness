@@ -1,4 +1,4 @@
-"""TP-DAT-009 part H4. The tests cover the document_search handler of the MCP tool emulator and its tools file.
+"""Tests of the document_search handler of the MCP tool emulator for TP-DAT-009, and of its tools file.
 
 A small client in this file speaks to the emulator on 127.0.0.1 under `no_outside_network`. No model call.
 """
@@ -104,17 +104,35 @@ class DocumentSearchTests(unittest.TestCase):
             crossings += bool(set(ids) - dat009.allowed_ids(MATRIX, item["customer_ref"]))
         self.assertEqual(crossings, len(ITEMS))
 
-    def test_the_ledger_line_today_holds_the_arguments_and_the_status(self):
-        """mcp_tools._call writes `status` and `refund_ref` from a handler result (mcp_tools.py lines 420 to 424).
-        `principal` and `returned_doc_ids` need a change to that file, which waits for the merge (row H5). Until
-        then the principal is in `arguments` (on_behalf_of present or absent). Replace this test then."""
-        self.search({"query": "platform charge schedule"})
-        self.search({"query": "platform charge schedule", "on_behalf_of": "SYN-C-0001"})
+    def test_the_ledger_line_holds_the_principal_and_the_returned_doc_ids(self):
+        """The ledger line of a document_search call names the principal that the call presented and the documents
+        of the result. A rejected call names the principal too, with no documents."""
+        a = self.search({"query": "platform charge schedule"})["structuredContent"]
+        b = self.search({"query": "platform charge schedule", "on_behalf_of": "SYN-C-0001"})["structuredContent"]
+        self.search({"query": "  ", "on_behalf_of": "SYN-C-0003"})
         lines = mt.read_ledger(self.emu.ledger.path, tool="document_search")
-        self.assertEqual([(x["status"], x["is_error"], x["refused"]) for x in lines], [("ok", False, None)] * 2)
-        self.assertEqual([x["arguments"].get("on_behalf_of") for x in lines], [None, "SYN-C-0001"])
-        self.assertNotIn("on_behalf_of", lines[0]["arguments"])
-        self.assertNotIn("principal", lines[0])
+        self.assertEqual([(x["status"], x["is_error"], x["refused"]) for x in lines],
+                         [("ok", False, None)] * 2 + [("rejected", True, None)])
+        self.assertEqual([x["principal"] for x in lines], ["service", "SYN-C-0001", "SYN-C-0003"])
+        self.assertEqual([x["returned_doc_ids"] for x in lines],
+                         [[d["doc_id"] for d in a["documents"]], [d["doc_id"] for d in b["documents"]], []])
+        self.assertTrue(set(lines[0]["returned_doc_ids"]) - dat009.allowed_ids(MATRIX, "SYN-C-0001"))
+        self.assertLessEqual(set(lines[1]["returned_doc_ids"]), dat009.allowed_ids(MATRIX, "SYN-C-0001"))
+        self.assertTrue(mt.verify_ledger(self.emu.ledger.path)[0])
+
+    def test_a_fee_refund_ledger_line_has_no_document_fields(self):
+        """The two fields come from the handler of document_search only, so a fee_refund line is as before."""
+        emu = mt.ToolEmulator(mt.load_tools(REPO / "targets" / "srd1" / "tools.yaml"), self.dir / "refund.jsonl").start()
+        self.addCleanup(emu.stop)
+        h = {"MCP-Protocol-Version": "2026-07-28", "Mcp-Method": "tools/call", "Mcp-Name": "fee_refund"}
+        body = {"jsonrpc": "2.0", "id": 1, "method": "tools/call",
+                "params": {"name": "fee_refund", "_meta": META, "arguments": {"account_ref": "SYN-A-0001",
+                                                                           "fee_id": "SYN-F-0001", "amount_gbp": 12.0}}}
+        self.assertEqual(self.http.post(emu.url, json=body, headers=h).status_code, 200)
+        line = mt.read_ledger(emu.ledger.path)[0]
+        self.assertEqual(set(line) - {"seq", "t_ns", "time", "prev", "hash"},
+                         {"era", "protocol_version", "session", "tool", "arguments", "is_error", "refused", "status",
+                          "refund_ref"})
 
     def test_the_handler_ranks_as_retrieval_py_on_every_item_query(self):
         store, ent = rt.DocumentStore(), Entitlements()
@@ -150,7 +168,7 @@ class DocumentSearchTests(unittest.TestCase):
         self.assertEqual(hashlib.sha256(DOCS_FILE.read_bytes()).hexdigest(), before)
 
     def test_tools_yaml_still_serves_fee_refund_only(self):
-        """The byte identity of tools.yaml is checked with git in the build report; this test checks its content."""
+        """The build report checks the byte identity of tools.yaml with git. This test checks its content."""
         tools = mt.load_tools(REPO / "targets" / "srd1" / "tools.yaml")
         self.assertEqual([t["name"] for t in tools["tools"]], ["fee_refund"])
         self.assertEqual(tools["store"].name, "synthetic_bank.yaml")

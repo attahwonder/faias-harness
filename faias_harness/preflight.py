@@ -28,6 +28,10 @@ whether its code manifest matches this checkout. The signature verifies against 
 --selftest-pubkey or the setting `selftest_pubkey` names; with neither, the line says "(key not pinned)". For
 TP-AGT-012 and TP-DAT-009, --start refuses without a verified, passing log of this code. In evidence mode it also
 refuses them without a pinned key. For other procedures the line is information only.
+For TP-DAT-009 (version 0.7) it also prints the filter stage, the delegation credential, the arms and the halt
+setting. The positive control (--positive-control) uses the display filter and the service credential. So --start
+refuses the standard variant with either of them. The refund gate is not read, because the tool arm serves
+document_search only.
 
 With --settings <settings.yaml> of `kind: external` (version 0.5), it checks an external run instead: TP-SEC-001
 against a deployed staging agent, through the channel adapter that the profile names (docs/ARCHITECTURE.md,
@@ -49,7 +53,7 @@ from pathlib import Path
 import yaml
 
 from .profile import REPO, ProfileError, load_profile
-from .settings import AGT012, SEC006, SettingsError, load_settings
+from .settings import AGT012, DAT009, SEC006, SettingsError, load_settings
 
 NEEDS_FILE = REPO / "records" / "capability_needs.yaml"
 RECORDS_DIR = REPO / "records"
@@ -159,8 +163,9 @@ def start_problems(profile, settings=None):
 
 
 def tools_problems(settings):
-    """With tools on (since 0.6): the refund gate needs its declared values. With tools off: none."""
-    if not getattr(settings, "tools_enabled", False):
+    """With tools on (since 0.6): the refund gate needs its declared values. With tools off: none. A TP-DAT-009 run
+    reads no refund gate (its tool arm serves document_search only), so none."""
+    if not getattr(settings, "tools_enabled", False) or settings.procedure == DAT009:
         return []
     from .engine import spike
     spike._srd1()
@@ -229,6 +234,11 @@ def settings_report(settings, estimate_usd):
     elif settings.procedure == AGT012:
         print("M1 and M4: from records/TP-AGT-012.yaml, not from the settings. "
               "M1 from the canvas, M4 reviewer-set; both 0")
+    elif settings.procedure == DAT009:
+        print("M1 to M6: from records/TP-DAT-009.yaml, not from the settings")
+        print(f"Retrieval: filter stage {settings.retrieval_filter}; delegation credential "
+              f"{settings.delegation_credential}; arms {', '.join(settings.arms)}; halt on crossing "
+              f"{settings.halt_on_crossing}")
     else:
         print(f"M4 bar: {m4}; reason: {settings.m4_reason or 'not set'}")
     pin, pout = settings.price_in_per_m, settings.price_out_per_m
@@ -242,7 +252,10 @@ def settings_report(settings, estimate_usd):
             if settings.cap_usd is not None and estimate_usd > settings.cap_usd else ""
         print(f"Worst-case estimate for the whole run: USD {estimate_usd:.4f}; cap: {cap}{note}")
     print(f"Key variable: {settings.api_key_env} is {'present' if settings.key_present() else 'NOT present'}")
-    if getattr(settings, "tools_enabled", False):
+    if settings.procedure == DAT009:
+        print(f"Tools: on for the tool arm only (document_search through the MCP tool emulator; its key is generated "
+              f"in the run and carried in {settings.tool_key_env})")
+    elif getattr(settings, "tools_enabled", False):
         print(f"Tools: on (fee_refund through the MCP tool emulator; its key is generated in the run and carried in "
               f"{settings.tool_key_env})")
         for p in tools_problems(settings):
@@ -403,6 +416,9 @@ def _default_executor(**kw):
     if proc == AGT012:
         from .engine import run_agt012
         return run_agt012.execute(**kw)
+    if proc == DAT009:
+        from .engine import run_dat009
+        return run_dat009.execute(**kw)
     from .engine import spike
     return spike.execute(**kw)
 
@@ -478,6 +494,26 @@ def agt012_sends(settings):
     return f"opens {sessions} sessions and sends at most {calls} model calls"
 
 
+def dat009_start_problems(settings, variant="standard"):
+    """What a TP-DAT-009 run needs besides the SRD-1 conditions and the self-test gate. It needs the item file and
+    tools on for the tool arm. Its variant must agree with the stage and the credential (dat009.variant_problems).
+    The engine checks the same rule."""
+    from .engine import dat009
+    problems = []
+    if not (REPO / dat009.ITEM_FILE).is_file():
+        problems.append(f"the item file {dat009.ITEM_FILE} is not shipped")
+    if not getattr(settings, "tools_enabled", False):
+        problems.append("TP-DAT-009 needs tools_enabled: true")
+    return problems + dat009.variant_problems(variant, settings.retrieval_filter, settings.delegation_credential)
+
+
+def dat009_sends(settings):
+    """The count part of the start line of a TP-DAT-009 run (run_dat009.plan gives both counts)."""
+    from .engine import run_dat009
+    sessions, calls, _ = run_dat009.plan(settings)
+    return f"opens {sessions} sessions on {len(settings.arms)} arms and sends at most {calls} model calls"
+
+
 def _inspect_missing():
     from .engine import spike
     return None if spike.inspect_available() else "the run engine inspect_ai is not installed"
@@ -495,7 +531,9 @@ def main(argv=None, *, input_fn=input, gateway_factory=_default_gateway, executo
     ap.add_argument("--run-dir", help="with --settings and --start: where the run files go (default runs/<time>)")
     ap.add_argument("--positive-control", action="store_true",
                     help="with --settings and --start: run SRD-1 with the weakened system prompt, which the "
-                         "harness must find failing (TP-AGT-012: run the prompt-only gate, which a bypass must pass)")
+                         "harness must find failing (TP-AGT-012: run the prompt-only gate, which a bypass must pass; "
+                         "TP-DAT-009: run the display-layer filter and the service credential, which must give "
+                         "crossings)")
     ap.add_argument("--variant", choices=("standard", "positive_control", "prompt_free_gate"),
                     help="with --settings: the run variant; prompt_free_gate applies to TP-AGT-012 only")
     ap.add_argument("--selftest-log", help="with --settings: a containment self-test log, or a folder that holds one "
@@ -539,11 +577,13 @@ def main(argv=None, *, input_fn=input, gateway_factory=_default_gateway, executo
     if settings is not None:
         print()
         from . import selftest
-        from .engine import run_agt012, run_sec006, spike
+        from .engine import run_agt012, run_dat009, run_sec006, spike
         if settings.procedure == SEC006:
             est = run_sec006.estimate(settings)
         elif settings.procedure == AGT012:
             est = run_agt012.estimate(settings)
+        elif settings.procedure == DAT009:
+            est = run_dat009.estimate(settings)
         else:
             est = spike.estimate(settings)
         settings_report(settings, est)
@@ -576,6 +616,8 @@ def main(argv=None, *, input_fn=input, gateway_factory=_default_gateway, executo
             problems += sec006_start_problems(settings, variant)
         if settings.procedure == AGT012:
             problems += agt012_start_problems(settings)
+        if settings.procedure == DAT009:
+            problems += dat009_start_problems(settings, variant)
         from . import selftest
         problems += selftest.gate_problems(settings.procedure, isolation, settings.mode)   # TP-AGT-012, TP-DAT-009
     if a.probes and not a.start:
@@ -605,6 +647,9 @@ def main(argv=None, *, input_fn=input, gateway_factory=_default_gateway, executo
     elif settings.procedure == AGT012:
         from .engine import agt012_log
         sends, label = agt012_sends(settings), agt012_log.LABEL
+    elif settings.procedure == DAT009:
+        from .engine import dat009_log
+        sends, label = dat009_sends(settings), dat009_log.LABEL
     else:
         sends = f"sends {len(spike.run_items(settings)) * settings.runs_per_item} model calls"
         label = spike.sec001.LABELS[settings.item_set]
@@ -612,6 +657,9 @@ def main(argv=None, *, input_fn=input, gateway_factory=_default_gateway, executo
           f"Worst-case cost USD {est:.4f}; cap USD {settings.cap_usd}. The result is labelled '{label}'.")
     if variant == "positive_control" and settings.procedure == AGT012:
         print("Variant: positive control (the prompt-only gate; the orchestrator gate is off). A bypass must pass.")
+    elif variant == "positive_control" and settings.procedure == DAT009:
+        print("Variant: positive control (the display-layer filter on the pipeline arm and the service credential on "
+              "the tool arm). The harness must find crossings on both paths.")
     elif variant == "positive_control":
         print("Variant: positive control (the weakened system prompt, no rules). The harness must find successes.")
     elif variant == "prompt_free_gate":
@@ -627,6 +675,8 @@ def main(argv=None, *, input_fn=input, gateway_factory=_default_gateway, executo
     if settings.procedure == AGT012:
         exec_kwargs.update(selftest_log=a.selftest_log, selftest_pubkey=a.selftest_pubkey,
                            delays_ms=settings.containment_plan()[0])
+    if settings.procedure == DAT009:
+        exec_kwargs.update(selftest_log=a.selftest_log, selftest_pubkey=a.selftest_pubkey)
     result = executor(**exec_kwargs)
     s = result.summary
     print(f"Run {result.status}. Calls {s.get('model_calls')}, cost USD {s.get('cost_usd')}. Label: {s.get('label')}.")

@@ -1,0 +1,35 @@
+# Settings for a TP-DAT-009 run on SRD-1 minimal. See docs/ARCHITECTURE.md, section 19.
+# This file holds no key. The key is the environment variable named in api_key_env.
+# This copy is in explore mode with the model, host, precision, prices and cap not yet chosen.
+# The run builds SRD-1 twice, once for each arm. The pipeline arm retrieves in SRD-1. The tool arm retrieves
+# through the tool document_search only, so it needs `tools_enabled: true`. It reads no refund gate.
+# Each item runs k times on each arm. Both arms count against the one cap (cap_usd).
+# M1 to M6 come from the record (records/TP-DAT-009.yaml), not from this file, so there are no reviewer_values.
+# No run starts until the containment self-test passes on this checkout. Then each run needs the operator's `yes`.
+# An evidence-mode copy must set all five routing locks, the model, the prices and the cap. It must also set
+# temperature and seed, or the preflight refuses it.
+procedure: TP-DAT-009
+provider: openrouter
+model_id: null            # the pinned model ID, for example "vendor/model-name"
+mode: explore             # explore | evidence
+routing:
+  only: []                # the endpoint that may serve the call; evidence mode needs exactly one
+  allow_fallbacks: false
+  zdr: true
+  data_collection: deny
+  quantizations: []       # the precision level(s), for example [fp8]; must be set in evidence mode
+price_in_per_m: null      # USD per million input tokens
+price_out_per_m: null     # USD per million output tokens
+cap_usd: null             # the run stops before a call that could pass this cap
+api_key_env: OPENROUTER_API_KEY
+max_tokens: 400
+runs_per_item: 3          # k: at least 3 (the FAIAS minimum), at most 20
+item_set: TP-DAT-009      # items/TP-DAT-009.json, with 24 items (8 per tier, 2 per direction in each tier)
+temperature: null         # the model card's setting; must be set in evidence mode
+seed: null                # base seed; each call sends seed + call number; must be set in evidence mode
+tools_enabled: true       # the tool arm serves document_search through the MCP tool emulator
+tool_key_env: FAIAS_TOOL_KEY   # the environment variable that carries the tool server's key (not the model key)
+retrieval_filter: pre_retrieval    # pre_retrieval | pre_ranking (post_generation is for the positive control only)
+delegation_credential: user        # user (service is for the positive control only)
+arms: [pipeline, tool]    # the two builds of SRD-1 in the run
+halt_on_crossing: false   # With true, the run stops after the first `crossing` record. With false, it goes on.

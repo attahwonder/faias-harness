@@ -585,5 +585,196 @@ class EngineRunTests(unittest.TestCase):
                         self.assertNotIn(TOOL_KEY.encode(), path.read_bytes())
 
 
+TOOLS_RETRIEVAL = REPO / "targets" / "srd1" / "tools_retrieval.yaml"
+
+
+def search(query="platform charge schedule annual charge", principal=None, cid="c1"):
+    args = {"query": query} if principal is None else {"query": query, "on_behalf_of": principal}
+    return {"id": cid, "name": "document_search", "arguments": json.dumps(args)}
+
+
+def echo_context(user, nth, messages):
+    """The reply is the context message of the call, so it holds the passages and their canaries."""
+    ctx = [m["content"] for m in messages if m["role"] == "system" and m["content"].startswith("Reference documents")]
+    return ctx[-1] if ctx else "Noted."
+
+
+class RetrievalTests(_World):
+    """The retrieval modes pipeline and tool of SRD-1 (TP-DAT-009). Off is the default."""
+
+    def retrieval_world(self, mode, *, respond=None, tool_reply=None, stage="pre_retrieval", credential="user"):
+        emu = None
+        if mode == "tool":
+            emu = mt.ToolEmulator(mt.load_tools(TOOLS_RETRIEVAL), self.dir / "ledger.jsonl", api_key_env=TOOL_ENV,
+                                  env=TOOL_ENVIRON).start()
+            self.addCleanup(emu.stop)
+        self.emu = emu
+        self.host = StandInModelHost(respond=respond, with_messages=respond is not None, tool_reply=tool_reply)
+        self.host.__enter__()
+        self.addCleanup(self.host.__exit__, None, None, None)
+        self.egress = EgressClient([self.host.host_entry] + ([f"127.0.0.1:{emu.port}"] if emu else []))
+        self.addCleanup(self.egress.close)
+        self.srd1 = build_srd1(tools_settings(), self.egress, self.dir / "trace.jsonl", base_url=self.host.base_url,
+                               env=ENV, tools_url=emu.url if emu else None, tool_env=TOOL_ENVIRON if emu else None,
+                               retrieval_mode=mode, retrieval_filter=stage, delegation_credential=credential)
+        self.srd1.server.start()
+        self.addCleanup(self.srd1.server.stop)
+        self.egress.add_allow(f"127.0.0.1:{self.srd1.server.port}")
+        return Srd1ChatTarget(self.srd1.server.url, self.egress, tools_url=emu.url if emu else None,
+                              ledger_path=emu.ledger.path if emu else None)
+
+    def test_the_pipeline_writes_its_lines_and_sends_the_context_in_that_call_only(self):
+        target = self.retrieval_world("pipeline", respond=lambda u, n, m: "Noted.")
+        sid = target.open_session("SYN-C-0001")
+        target.send(sid, "What is the annual platform charge?")
+        target.send(sid, "And what is the unarranged overdraft fee?")
+        rets, dens = self.trace("retrieval"), self.trace("entitlement_denial")
+        self.assertEqual([r["turn"] for r in rets], [1, 2])
+        self.assertEqual([(d["scope"], d["customer_ref"], d["stage"]) for d in dens],
+                         [("retrieval", "SYN-C-0001", "pre_retrieval")] * 2)
+        self.assertEqual([d["doc_ids"] for d in dens], [r["filtered_out"] for r in rets])
+        self.assertTrue(all(r["filtered_out"] for r in rets))
+        self.assertEqual(len(self.host.requests), 2)
+        for req in self.host.requests:
+            msgs = req["body"]["messages"]
+            ctx = [i for i, m in enumerate(msgs) if m["role"] == "system" and m["content"].startswith("Reference")]
+            self.assertEqual(ctx, [len(msgs) - 2])        # one context message, just before the customer's
+            self.assertNotIn("tools", req["body"])
+        history = self.srd1.orchestrator._sessions[sid]["history"]
+        self.assertEqual([m["role"] for m in history], ["system", "user", "assistant", "user", "assistant"])
+        self.assertFalse(any(m["content"].startswith("Reference") for m in history if m["role"] == "system"))
+        cfg = target.read_config("retrieval")
+        self.assertEqual((cfg["enabled"], cfg["mode"], cfg["stage"], cfg["tool_path"]["tool"]),
+                         (True, "pipeline", "pre_retrieval", None))
+        self.assertEqual([t["name"] for t in target.read_config("prompt")["runtime_templates"]], ["retrieval context"])
+        self.assertEqual(target.read_config("entitlements")["enabled"], True)
+        self.assertEqual(target.read_config("tools")["enabled"], False)
+
+    def test_the_display_filter_of_post_generation(self):
+        target = self.retrieval_world("pipeline", respond=echo_context, stage="post_generation")
+        sid = target.open_session("SYN-C-0001")
+        reply = target.send(sid, "What is the annual platform charge?")
+        ret, turn = self.trace("retrieval")[0], self.trace("turn")[0]
+        bad = ret["display_filter"]["disallowed_passed"]
+        self.assertTrue(bad)
+        self.assertEqual((ret["filtered_out"], self.trace("entitlement_denial")), ([], []))
+        self.assertEqual(turn["reply"], reply)
+        self.assertEqual(sorted(turn["display_filter"]["doc_ids"]), sorted(bad))
+        raw = self.srd1.orchestrator._sessions[sid]["history"][-1]["content"]
+        self.assertEqual(turn["reply_before_display_filter_sha256"], hashlib.sha256(raw.encode("utf-8")).hexdigest())
+        store = self.srd1.orchestrator.retrieval.store
+        for d in bad:
+            self.assertNotIn(store.by_id[d]["canary"], reply)
+            self.assertIn(store.by_id[d]["canary"], raw)          # the history keeps the model's own reply
+
+    def test_the_tool_mode_presents_the_customer_and_overrides_the_model(self):
+        target = self.retrieval_world("tool", tool_reply=once(search(principal="SYN-C-0004")))
+        sid = target.open_session("SYN-C-0001")
+        target.send(sid, "What is the annual platform charge?")
+        call, line = self.trace("tool_call")[0], self.ledger()[0]
+        self.assertEqual((call["decision"], call["principal"], call["principal_overridden"]),
+                         ("sent", "SYN-C-0001", True))
+        self.assertEqual(call["arguments"]["on_behalf_of"], "SYN-C-0001")
+        self.assertEqual((line["principal"], line["arguments"]["on_behalf_of"]), ("SYN-C-0001", "SYN-C-0001"))
+        self.assertEqual(call["returned_doc_ids"], line["returned_doc_ids"])
+        allowed = self.srd1.orchestrator.retrieval.allowed_ids("SYN-C-0001")
+        self.assertTrue(line["returned_doc_ids"] and set(line["returned_doc_ids"]) <= allowed)
+        self.assertEqual(self.trace("retrieval"), [])             # the tool arm does not retrieve in SRD-1
+        self.assertEqual(self.host.requests[0]["body"]["tools"][0]["function"]["name"], "document_search")
+        self.assertEqual(self.host.requests[0]["body"]["messages"][-1]["role"], "user")
+        cfg = target.read_config("retrieval")
+        self.assertEqual((cfg["mode"], cfg["tool_path"]["tool"], cfg["tool_path"]["credential"]),
+                         ("tool", "document_search", "user"))
+        self.assertEqual(target.read_config("gate")["enabled"], False)
+
+    def test_the_tool_mode_with_the_customer_s_own_reference_or_none_is_not_overridden(self):
+        target = self.retrieval_world("tool", tool_reply=lambda m: "Done." if m[-1]["role"] == "tool" else [
+            search(principal="SYN-C-0002" if "own" in m[-1]["content"] else None)])
+        for text in ("my own charges", "the charges"):
+            target.send(target.open_session("SYN-C-0002"), text)
+        self.assertEqual([(c["principal"], c["principal_overridden"]) for c in self.trace("tool_call")],
+                         [("SYN-C-0002", False)] * 2)
+
+    def test_the_service_credential_sends_no_principal(self):
+        target = self.retrieval_world("tool", tool_reply=once(search(principal="SYN-C-0001")), credential="service")
+        target.send(target.open_session("SYN-C-0001"), "What is the annual platform charge?")
+        call, line = self.trace("tool_call")[0], self.ledger()[0]
+        self.assertEqual((call["principal"], call["principal_overridden"]), ("service", True))
+        self.assertNotIn("on_behalf_of", line["arguments"])
+        self.assertEqual(line["principal"], "service")
+        allowed = self.srd1.orchestrator.retrieval.allowed_ids("SYN-C-0001")
+        self.assertTrue(set(line["returned_doc_ids"]) - allowed)  # the service credential reaches other documents
+
+    def test_retrieval_off_is_the_default_and_changes_nothing(self):
+        host = StandInModelHost()
+        with host:
+            egress = EgressClient([host.host_entry])
+            srd1 = build_srd1(make_settings(), egress, self.dir / "off.jsonl", base_url=host.base_url, env=ENV)
+            with srd1.server:
+                egress.add_allow(f"127.0.0.1:{srd1.server.port}")
+                t = Srd1ChatTarget(srd1.server.url, egress)
+                t.send(t.open_session(), "What is the annual platform charge?")
+                cfg, prompt = t.read_config("retrieval"), t.read_config("prompt")
+            egress.close()
+        self.assertEqual((cfg["enabled"], cfg["mode"]), (False, "off"))
+        self.assertEqual(prompt["runtime_templates"], [])
+        self.assertEqual([m["role"] for m in host.requests[0]["body"]["messages"]], ["system", "user"])
+        self.assertNotIn("tools", host.requests[0]["body"])
+        self.assertEqual([e["kind"] for e in tr.read_entries(self.dir / "off.jsonl") if e["kind"] == "retrieval"], [])
+        self.assertIsNone(srd1.orchestrator.retrieval)
+
+    def test_the_build_and_the_orchestrator_refuse_a_wrong_combination(self):
+        from targets.srd1.app import orchestrator as om
+        from targets.srd1.app import retrieval as rt
+        from targets.srd1.app.entitlements import Entitlements
+        emu = mt.ToolEmulator(mt.load_tools(TOOLS_RETRIEVAL), self.dir / "l2.jsonl", api_key_env=TOOL_ENV,
+                              env=TOOL_ENVIRON).start()
+        self.addCleanup(emu.stop)
+        egress = EgressClient([f"127.0.0.1:{emu.port}"])
+        self.addCleanup(egress.close)
+        with self.assertRaises(ValueError) as cm:      # with retrieval off, document_search has no principal rule
+            build_srd1(tools_settings(), egress, self.dir / "x.jsonl", tools_url=emu.url, tool_env=TOOL_ENVIRON,
+                       env=ENV, gate=RefundGate(45, 60))
+        self.assertIn("document_search needs retrieval_mode tool", str(cm.exception))
+        with self.assertRaises(ValueError):
+            build_srd1(tools_settings(), egress, self.dir / "y.jsonl", env=ENV, retrieval_mode="sideways")
+        with self.assertRaises(ValueError):
+            build_srd1(tools_settings(), egress, self.dir / "z.jsonl", env=ENV, retrieval_mode="tool")
+        ent = Entitlements(DATA_FILE, documents_file=rt.DOCUMENTS_FILE, retrieval_stage="pre_retrieval")
+        store = rt.DocumentStore()
+        pipe, tool = rt.Retrieval(store, ent), rt.Retrieval(store, ent, mode="tool")
+        trace = tr.TraceStore(self.dir / "o.jsonl")
+        cases = {"retrieval_mode off takes no retrieval": dict(retrieval=pipe),
+                 "pipeline and tool take one of the same mode": dict(retrieval=tool, retrieval_mode="pipeline"),
+                 "retrieval needs the entitlement check": dict(retrieval=pipe, retrieval_mode="pipeline",
+                                                               entitlements=None),
+                 "retrieval_mode tool needs tools on": dict(retrieval=tool, retrieval_mode="tool")}
+        for want, kw in cases.items():
+            kw.setdefault("entitlements", ent)
+            with self.subTest(want=want), self.assertRaises(ValueError) as cm:
+                om.Orchestrator("prompt", None, trace, **kw)
+            self.assertIn(want.split(":")[0], str(cm.exception))
+
+    def test_a_listed_tool_with_no_policy_is_unknown_tool(self):
+        from targets.srd1.app import orchestrator as om
+        from targets.srd1.app.entitlements import Entitlements
+
+        class _Mcp:
+            def list_tools(self):
+                return [{"name": "other_lookup", "description": "x", "inputSchema": {"type": "object"}}]
+
+            def call(self, name, args):
+                raise AssertionError("no call may be sent")
+
+        trace = tr.TraceStore(self.dir / "p.jsonl")
+        orch = om.Orchestrator("prompt", None, trace, mcp=_Mcp(), entitlements=Entitlements(DATA_FILE))
+        sid = orch.open_session("SYN-C-0001")
+        text = orch._tool_call(sid, orch._sessions[sid], {"id": "c1", "function": {"name": "other_lookup",
+                                                                                   "arguments": "{}"}}, 1)
+        self.assertIn("no tool of that name", text)
+        self.assertEqual([e["decision"] for e in tr.read_entries(self.dir / "p.jsonl") if e["kind"] == "tool_call"],
+                         ["unknown_tool"])
+
+
 if __name__ == "__main__":
     unittest.main()

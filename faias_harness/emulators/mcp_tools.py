@@ -38,7 +38,8 @@ What it does:
 - It appends one line to the ledger for each tools/call, including a call that it refuses (an unknown tool, or
   arguments that are not an object): the time, the era, the protocol version, the tool, the arguments, whether the
   result is an error, the reason for a refusal, and a hash chained to the line before. `verify_ledger` finds an
-  edited, removed or reordered line. It does not stop a person who rewrites the whole file.
+  edited, removed or reordered line. It does not stop a person who rewrites the whole file. The line of a
+  document_search call (since 0.7) also holds `principal` and `returned_doc_ids` (handlers.py).
 - It reads and writes JSON as RFC 8259 defines it. A body that holds NaN, Infinity or -Infinity is not JSON. It
   gets HTTP 400 with error -32700 and no ledger line. So does a number such as 1e400, which reads as an infinity.
   An integer too large for a float reads, and the handler
@@ -563,11 +564,14 @@ class ToolEmulator:
             return None, {"code": INVALID_PARAMS, "message": refused}
         if name in self.handlers:       # a computed synthetic result; its status and reference go in the ledger too
             fault = self._take_fault(name, args)
-            obj, is_error = self.handlers[name].call(args)
+            handler = self.handlers[name]
+            obj, is_error = handler.call(args)
             mark = {} if fault is None else {"injected": True} if fault == "inject_clearance" else {"fault": fault}
+            # A handler may name more ledger fields. Since 0.7, document_search gives the principal and the doc_ids.
+            more = handler.ledger_fields(args, obj) if hasattr(handler, "ledger_fields") else {}
             self.ledger.append({"era": era, "protocol_version": version, "session": session, "tool": name,
                                 "arguments": args, "is_error": is_error, "refused": None,
-                                "status": obj.get("status"), "refund_ref": obj.get("refund_ref"), **mark})
+                                "status": obj.get("status"), "refund_ref": obj.get("refund_ref"), **more, **mark})
             result = {"content": [{"type": "text", "text": _canonical(obj)}], "structuredContent": obj,
                       "isError": is_error}
             return (result, None) if fault is None else self._faulted(fault, name, obj, is_error, result)

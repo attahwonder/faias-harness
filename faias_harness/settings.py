@@ -32,6 +32,12 @@ settings hash only when `tools_enabled` is true, so every file without them keep
 
 The setting `selftest_pubkey` (version 0.6) names the public key file that the containment self-test log's signature
 must verify against (selftest/__init__.py). It enters the settings hash only when it is set.
+
+The procedure TP-DAT-009 (version 0.7) takes four settings of its own. `retrieval_filter` is pre_retrieval (the
+default), pre_ranking or post_generation. `delegation_credential` is user (the default) or service. `arms` is a list
+of pipeline and tool (both by default). `halt_on_crossing` is false by default. It needs `tools_enabled: true`, for
+the tool arm. The four settings enter the settings hash only for a TP-DAT-009 run, so every other file keeps its
+settings hash. In evidence mode it needs no reviewer value, because M1 to M6 come from the record.
 """
 import hashlib
 import json
@@ -46,17 +52,25 @@ TOP_REQUIRED = ["provider", "model_id", "mode", "routing", "price_in_per_m", "pr
                 "api_key_env"]
 TOP_OPTIONAL = ["max_tokens", "reviewer_values", "temperature", "seed", "runs_per_item", "item_set", "kind",
                 "procedure", "store_replies", "m4_baseline_log", "m4_baseline_pubkey", "tools_enabled",
-                "tool_key_env", "containment", "halt_on_bypass", "selftest_pubkey"]
+                "tool_key_env", "containment", "halt_on_bypass", "selftest_pubkey", "retrieval_filter",
+                "delegation_credential", "arms", "halt_on_crossing"]
 RUNS_MIN, RUNS_MAX, RUNS_DEFAULT = 3, 20, 3     # three is the FAIAS minimum (PLAYBOOK_SEC_001.md line 27)
 # The item set of a run: the full set in items/TP-SEC-001.json (the default), or the 20 items of the engine spike.
 ITEM_SETS, ITEM_SET_DEFAULT = ("TP-SEC-001", "spike"), "TP-SEC-001"
 # The procedure of an SRD-1 run (version 0.6). TP-SEC-006 runs its own item set, and only it takes store_replies,
 # m4_baseline_log, m4_baseline_pubkey and a reviewer value for M3.
-PROCEDURES, PROCEDURE_DEFAULT, SEC006, AGT012 = ("TP-SEC-001", "TP-SEC-006", "TP-AGT-012"), "TP-SEC-001", \
-    "TP-SEC-006", "TP-AGT-012"
+PROCEDURES, PROCEDURE_DEFAULT, SEC006, AGT012 = ("TP-SEC-001", "TP-SEC-006", "TP-AGT-012", "TP-DAT-009"), \
+    "TP-SEC-001", "TP-SEC-006", "TP-AGT-012"
+DAT009 = "TP-DAT-009"
 # The item set of a TP-AGT-012 run is its own set; the containment exercise's default delays (ms) and run count.
 AGT012_ITEM_SET = "TP-AGT-012"
 AGT012_DELAYS_DEFAULT = (0, 50, 200, 800, 2000)
+# The item set of TP-DAT-009, the stages of its entitlement filter, the credentials of its tool path and its arms.
+DAT009_ITEM_SET = "TP-DAT-009"
+RETRIEVAL_FILTERS = ("pre_retrieval", "pre_ranking", "post_generation")
+DELEGATION_CREDENTIALS = ("user", "service")
+ARMS = ("pipeline", "tool")
+DAT009_KEYS = ("retrieval_filter", "delegation_credential", "arms", "halt_on_crossing")
 STORE_REPLIES = ("full", "hash_only")
 ROUTING_KEYS = ["only", "allow_fallbacks", "zdr", "data_collection", "quantizations"]
 FORBIDDEN = {"api_key", "key", "secret", "token", "password"}
@@ -104,6 +118,10 @@ class Settings:
     containment_runs: object = None        # TP-AGT-012 only; runs per delay bracket (default: runs_per_item)
     halt_on_bypass: bool = False           # TP-AGT-012 only; stop the run after the first bypass (default false)
     selftest_pubkey: object = None
+    retrieval_filter: str = "pre_retrieval"     # the stage of the entitlement filter (TP-DAT-009 only)
+    delegation_credential: str = "user"         # the principal of the tool path (TP-DAT-009 only)
+    arms: tuple = ARMS                          # the arms of the run (TP-DAT-009 only)
+    halt_on_crossing: bool = False              # with true, the run stops at the first `crossing` (TP-DAT-009 only)
     kind = "srd1"           # a class attribute: not in the canonical content, so the settings hash is unchanged
 
     def routing(self):
@@ -143,6 +161,10 @@ class Settings:
             out.update(procedure=self.procedure,
                        containment={"delays_ms": list(self.containment_delays_ms), "runs": self.containment_runs},
                        halt_on_bypass=self.halt_on_bypass)
+        if self.procedure == DAT009:
+            out.update(procedure=self.procedure, retrieval_filter=self.retrieval_filter,
+                       delegation_credential=self.delegation_credential, arms=list(self.arms),
+                       halt_on_crossing=self.halt_on_crossing)
         if self.selftest_pubkey is not None:
             out["selftest_pubkey"] = self.selftest_pubkey
         return out
@@ -181,6 +203,21 @@ def _validate_containment(raw):
     r = c.get("runs")
     if r is not None and not (isinstance(r, int) and not isinstance(r, bool) and RUNS_MIN <= r <= RUNS_MAX):
         out.append(f"containment.runs must be a whole number from {RUNS_MIN} to {RUNS_MAX}, or null")
+    return out
+
+
+def _validate_dat009(raw):
+    """Problems in the four settings of a TP-DAT-009 file (empty if each is absent or valid)."""
+    out = []
+    if "retrieval_filter" in raw and raw["retrieval_filter"] not in RETRIEVAL_FILTERS:
+        out.append(f"retrieval_filter must be one of {', '.join(RETRIEVAL_FILTERS)}")
+    if "delegation_credential" in raw and raw["delegation_credential"] not in DELEGATION_CREDENTIALS:
+        out.append(f"delegation_credential must be one of {', '.join(DELEGATION_CREDENTIALS)}")
+    a = raw.get("arms", list(ARMS))
+    if not (isinstance(a, list) and a and all(x in ARMS for x in a) and len(set(a)) == len(a)):
+        out.append(f"arms must be a non-empty list of {' and '.join(ARMS)}, each once")
+    if not isinstance(raw.get("halt_on_crossing", False), bool):
+        out.append("halt_on_crossing must be true or false")
     return out
 
 
@@ -226,7 +263,19 @@ def validate(raw):
         problems.append(f"procedure must be one of {', '.join(PROCEDURES)}")
     sec006 = proc == SEC006
     agt012 = proc == AGT012
-    if sec006:
+    dat009 = proc == DAT009
+    if not dat009:
+        problems += [f"{k} applies to the procedure TP-DAT-009 only" for k in DAT009_KEYS if k in raw]
+    if dat009:
+        if "item_set" in raw and raw["item_set"] != DAT009_ITEM_SET:
+            problems.append(f"item_set must be {DAT009_ITEM_SET} for the procedure TP-DAT-009")
+        if raw.get("tools_enabled") is not True:
+            problems.append("TP-DAT-009 needs tools_enabled: true (the tool arm serves document_search)")
+        for k in ("store_replies", "m4_baseline_log", "m4_baseline_pubkey"):
+            if k in raw:
+                problems.append(f"{k} applies to the procedure TP-SEC-006 only")
+        problems += _validate_dat009(raw)
+    elif sec006:
         if "item_set" in raw and raw["item_set"] != SEC006:
             problems.append("item_set must be TP-SEC-006 for the procedure TP-SEC-006")
         if "store_replies" in raw and raw["store_replies"] not in STORE_REPLIES:
@@ -360,8 +409,9 @@ def validate(raw):
         for k in ("temperature", "seed"):
             if raw.get(k) is None:
                 problems.append(f"evidence mode: {k} is not set")
-        if not agt012 and (not isinstance(m4, dict) or m4.get("value") is None or m4.get("reason") is None):
-            # TP-AGT-012 takes M1 and M4 from the record (both 0 with a reason), not from the settings.
+        if not (agt012 or dat009) and (not isinstance(m4, dict) or m4.get("value") is None or m4.get("reason") is None):
+            # TP-AGT-012 takes M1 and M4 from the record (both 0 with a reason), not from the settings. TP-DAT-009
+            # takes M1 to M6 from the record.
             problems.append("evidence mode: reviewer_values.M4 needs a value and a reason")
     return problems
 
@@ -389,11 +439,14 @@ def from_raw(raw):
         containment_delays_ms=tuple(cont.get("delays_ms") or ()), containment_runs=cont.get("runs"),
         halt_on_bypass=raw.get("halt_on_bypass", False),
         selftest_pubkey=raw.get("selftest_pubkey"),
+        retrieval_filter=raw.get("retrieval_filter", "pre_retrieval"),
+        delegation_credential=raw.get("delegation_credential", "user"),
+        arms=tuple(raw.get("arms") or ARMS), halt_on_crossing=raw.get("halt_on_crossing", False),
     )
 
 
 def _default_item_set(proc):
-    return {SEC006: SEC006, AGT012: AGT012_ITEM_SET}.get(proc, ITEM_SET_DEFAULT)
+    return {SEC006: SEC006, AGT012: AGT012_ITEM_SET, DAT009: DAT009_ITEM_SET}.get(proc, ITEM_SET_DEFAULT)
 
 
 def load_settings(path):

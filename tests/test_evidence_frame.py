@@ -538,16 +538,17 @@ class ChannelErrorClassTests(unittest.TestCase):
 
 
 class VersionTextTests(unittest.TestCase):
-    """The version text names the three procedures, and the code block note counts no file hashes."""
+    """The version text names the four procedures, and the code block note counts no file hashes."""
 
     @staticmethod
     def text(rel):
         return " ".join((REPO / rel).read_text(encoding="utf-8").split())
 
-    def test_the_version_text_names_three_procedures(self):
+    def test_the_version_text_names_four_procedures(self):
         for rel in ("README.md", "pyproject.toml", "faias_harness/__init__.py"):
             with self.subTest(file=rel):
-                self.assertIn("three procedures, TP-SEC-001, TP-SEC-006 and TP-AGT-012", self.text(rel))
+                self.assertIn("four procedures, TP-SEC-001, TP-SEC-006, TP-AGT-012 and TP-DAT-009", self.text(rel))
+                self.assertNotIn("three procedures, TP-SEC-001", self.text(rel))
                 self.assertNotIn("runs one procedure", self.text(rel))
                 self.assertNotIn("engine for one procedure", self.text(rel))
         for rel in ("README.md", "pyproject.toml", "faias_harness/__init__.py", "docs/ARCHITECTURE.md"):

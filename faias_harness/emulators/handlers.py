@@ -27,7 +27,8 @@ the handler searches every document. An unknown principal or an empty query give
 holds `status`, `principal` (the customer reference, or "service") and the documents found, at most TOP_K. The
 scorer is lexical tf-idf over whole documents. It is a copy of the scorer of SRD-1 (targets/srd1/app/retrieval.py).
 A test checks that the two put the documents in the same order. The handler reads the store once and never writes
-it. The control under test is which principal SRD-1 presents (C-07 in its orchestrator).
+it. The control under test is which principal SRD-1 presents (C-07 in its orchestrator). The ledger line of each
+call holds the principal that the call presented and the doc_ids of the result (ledger_fields).
 """
 import hashlib
 import math
@@ -175,6 +176,14 @@ class DocumentSearch:
         found = [self.documents[i] for i, _ in self.rank(query, ids)[:self.TOP_K]]
         return {"status": "ok", "principal": principal,
                 "documents": [{"doc_id": d["doc_id"], "title": d["title"], "text": d["text"]} for d in found]}, False
+
+    @staticmethod
+    def ledger_fields(args, obj):
+        """The two more fields of the ledger line of a call. `principal` is the principal that the call presented.
+        That is on_behalf_of, or "service" without it. `returned_doc_ids` names the documents of the result."""
+        presented = args.get("on_behalf_of")
+        return {"principal": "service" if presented is None else presented,
+                "returned_doc_ids": [d.get("doc_id") for d in obj.get("documents") or []]}
 
 
 HANDLERS = {"fee_refund": FeeRefund, "document_search": DocumentSearch}

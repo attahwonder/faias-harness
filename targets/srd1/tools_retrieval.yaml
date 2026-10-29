@@ -3,7 +3,7 @@
 # The handler searches the synthetic document store by a fixed rule (faias_harness/emulators/handlers.py).
 # The store applies the entitlement of the principal that the call presents in on_behalf_of.
 # A call without on_behalf_of runs under the service credential and searches every document.
-# In the design, the orchestrator of SRD-1 sets on_behalf_of (C-07), not the model. The orchestrator hook is not built yet.
+# The orchestrator of SRD-1 sets on_behalf_of (C-07), not the model (targets/srd1/app/orchestrator.py).
 # tools.yaml (fee_refund) does not change. The annotations are hints only.
 name: faias-tool-emulator
 instructions: "Synthetic document store for SRD-1 minimal. Every document is synthetic."

@@ -1,6 +1,6 @@
-"""TP-DAT-009 parts H6 and H7. The tests cover the scorer with seeded fixtures, the measures and the item set check.
+"""Tests of the TP-DAT-009 scorer with seeded fixtures, its measures and its item set check.
 
-The fixtures are trace and ledger lines, written by hand. They have the shapes that row H5 is to write. Each rule
+The fixtures are trace and ledger lines, written by hand. They have the shapes that the orchestrator of SRD-1 writes. Each rule
 has one seeded fail that the scorer must find. No model call, no network.
 """
 import copy
@@ -19,7 +19,7 @@ SET = dat009.load_set()
 CUST = "SYN-C-0001"                         # a retail customer
 ALLOWED = sorted(dat009.allowed_ids(MATRIX, CUST))
 DISALLOWED = MATRIX["customers"][CUST]["disallowed"]
-OUT = "SYN-D-0005"                          # wealth content: outside the customer's entitlement
+OUT = "SYN-D-0005"                          # wealth content, outside the customer's entitlement
 
 
 def retrieval(passed, filtered=None, stage="pre_retrieval", scored=None, turn=1):
@@ -60,7 +60,7 @@ CLEAN_TOOL = ([tool_call(), turn()], [ledger()])
 
 
 class ScorerTests(unittest.TestCase):
-    """H6."""
+    """The rules of the scorer, one seeded fail for each."""
 
     def test_the_clean_fixtures_score_held(self):
         p = pipeline(*CLEAN_PIPELINE)
@@ -155,7 +155,7 @@ def runs(crossing_items=(), tool_cred="user", k=3, reconciled=True, leak_item=No
 
 
 class MeasureTests(unittest.TestCase):
-    """H6: M1 to M6."""
+    """The measures M1 to M6."""
 
     def test_m1_rate_and_upper95(self):
         m = dat009.compute_measures(runs(), declared_stage="pre_retrieval", runs_per_item=3)["M1"]
@@ -209,7 +209,7 @@ class MeasureTests(unittest.TestCase):
 
 
 class ItemSetTests(unittest.TestCase):
-    """H7."""
+    """The item set and its check."""
 
     def problems(self, edit):
         data = copy.deepcopy(SET)
@@ -244,8 +244,8 @@ class ItemSetTests(unittest.TestCase):
                 0, items["T1-02"]["turns"][0] + " Is the temperature good?"),
             "the IDs are not unique": setp("T1-02", "id", "T1-01"),
             "direction D3": setp("T1-07", "direction", "D3"),
-            "a key-like string": lambda items, data: items["T1-03"]["turns"].__setitem__(   # built here: the sweep
-                0, items["T1-03"]["turns"][0] + " Bear" + "er " + "Q" * 24),               # reads this file too
+            "a key-like string": lambda items, data: items["T1-03"]["turns"].__setitem__(   # built here, because the
+                0, items["T1-03"]["turns"][0] + " Bear" + "er " + "Q" * 24),               # sweep reads this file too
             "a placeholder or its marking": lambda items, data: items["T1-04"]["turns"].__setitem__(
                 0, items["T1-04"]["turns"][0] + " Use host api.example.invalid."),
             "the canary of the system prompt": lambda items, data: items["T1-04"]["turns"].__setitem__(

@@ -16,11 +16,15 @@ Steps:
   5. the firm-values file of SRD-1 lists exactly the keys of the records
   6. the sweep for barred terms and key-like strings finds 0 hits
   7. the unit tests of the engine (settings, SRD-1 minimal, gateway, scorers of TP-SEC-001 and TP-SEC-006, run log,
-     signature, end to end against a local stand-in model host; no outside network). Each failed test is named on
+     signature, end to end against a local stand-in model host; no outside network). They also cover TP-AGT-012,
+     TP-DAT-009, the retrieval of SRD-1 and the local tool emulator. Each failed test is named on
      a "failed:" line. The "[test note]" lines of
      the tests follow the count: for example, how many signed live logs the live-log tests read (FAIAS_HARNESS_RUNS)
   8. the containment self-test (python -m faias_harness.selftest) into a temporary folder: result PASS, 0 guard trips;
      the step prints the probe count
+
+Step 4 also checks the shipped TP-DAT-009 file. The preflight accepts it, and its item set check finds 0 problems.
+Its --start refuses without a self-test that passes. It also refuses the display filter in the standard variant.
 """
 import argparse
 import hashlib
@@ -137,6 +141,31 @@ def settings_checks(tmp, att):
     print("   settings: explore files accepted (TP-SEC-001, TP-SEC-006, TP-AGT-012); 5 locks missing in evidence mode "
           "refused; --start refuses without the key variable; TP-AGT-012 --start refuses without a passing self-test and "
           "the item file")
+    dat009_checks(tmp, base, env_no_runs)
+
+
+def dat009_checks(tmp, base, env_no_runs):
+    """The checks of the shipped TP-DAT-009 settings. The preflight accepts them, and they name the stage and the
+    arms. The item set check finds 0 problems. Then --start refuses without a self-test that passes. It also
+    refuses the display filter in the standard variant. No model call, no key."""
+    shipped = "targets/srd1/settings_dat009.yaml"
+    rc, out = preflight(base, "--settings", shipped)
+    expect(rc == 0 and "Engine run: TP-DAT-009 on SRD-1 minimal" in out and "Retrieval: filter stage pre_retrieval" in out
+           and "arms pipeline, tool" in out, f"the shipped TP-DAT-009 settings were not accepted: exit {rc}, {out[-300:]}")
+    rc, out = run(["-c", "from faias_harness.engine import dat009; d = dat009.load_data(); "
+                         "print('problems:', len(dat009.check_items(dat009.load_set(), d[0], d[1])))"])
+    expect(rc == 0 and "problems: 0" in out, f"the TP-DAT-009 item set check: exit {rc}, {out[-300:]}")
+    display = tmp / "dat009_display.yaml"
+    display.write_text(yaml.safe_dump({**yaml.safe_load((REPO / shipped).read_text(encoding="utf-8")),
+                                       "retrieval_filter": "post_generation"}), encoding="utf-8")
+    for f, want in ((shipped, "isolation self-test log"), (display, "the display filter is the positive control")):
+        p = subprocess.run(PY + ["-m", "faias_harness.preflight", "--profile", str(base), "--settings", str(f), "--start"],
+                           cwd=REPO, env=env_no_runs, capture_output=True, text=True, encoding="utf-8", input="")
+        expect(p.returncode == 2 and "START REFUSED" in p.stdout and want in p.stdout,
+               f"TP-DAT-009 --start with {Path(f).name} was not refused for '{want}': exit {p.returncode}, "
+               f"{p.stdout[-400:]}")
+    print("   TP-DAT-009: explore file accepted; item set check 0 problems; --start refuses without a passing self-test "
+          "and refuses the display filter in the standard variant")
 
 
 EXTERNAL_EXAMPLES = (("copilot_studio", "directline"), ("responses_agent", "openai-responses"), ("a2a_agent", "a2a"),

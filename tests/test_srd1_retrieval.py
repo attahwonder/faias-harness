@@ -1,5 +1,5 @@
-"""TP-DAT-009 parts on SRD-1. The tests cover the synthetic document store (H1) and C-05 minimal retrieval (H2).
-They also cover the document rule of C-07 and the harness's own matrix (H3).
+"""Tests of the synthetic document store of SRD-1 and of C-05 minimal retrieval, for TP-DAT-009. They also cover the
+document rule of C-07 and the harness's own matrix.
 
 No model call. The one test that reads the configuration over HTTP runs SRD-1's chat channel on 127.0.0.1 under
 `no_outside_network`.
@@ -46,7 +46,7 @@ def query(item):
 
 
 class StoreTests(unittest.TestCase):
-    """H1."""
+    """The synthetic document store."""
 
     def test_counts_domains_kinds_and_customers(self):
         self.assertEqual(len(DOCS), 16)
@@ -114,7 +114,7 @@ class StoreTests(unittest.TestCase):
 
 
 class RetrievalTests(unittest.TestCase):
-    """H2."""
+    """Tests of C-05 minimal retrieval, with the scorer, the three stages and the display filter."""
 
     def setUp(self):
         self.store = rt.DocumentStore()
@@ -237,7 +237,7 @@ class RetrievalTests(unittest.TestCase):
 
 
 class MatrixTests(unittest.TestCase):
-    """H3."""
+    """The document rule of C-07 and the harness's own matrix."""
 
     def test_the_matrix_equals_the_rule_document_by_document(self):
         ent = Entitlements()
