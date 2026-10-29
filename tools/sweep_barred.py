@@ -6,7 +6,7 @@ Barred terms are stored reversed, so that this file does not contain them. The m
 Text that a record quotes from FAIAS is never changed. A hit for the name of one AI vendor in a quoted field of
 records/TP-*.yaml is allowed if the cited FAIAS source line contains the same name. The sweep reports it as
 "allowed: FAIAS citation". Every other hit fails. Exit 0 only if there are no failing hits.
-A digest in a signed log or its SHA-256 file is not a key-like string (only_digests).
+A digest in a line of a .jsonl, .jsonl.sig or .sha256 file is not a key-like string (only_digests).
 """
 import argparse
 import json
@@ -36,15 +36,18 @@ KEY_PATTERNS = [
     re.compile(r"AIza[0-9A-Za-z_\-]{30,}"),
     re.compile(r"-----BEGIN [A-Z ]*PRIVATE KEY-----"),
     re.compile(r"Bearer\s+[A-Za-z0-9._\-]{20,}"),
-    re.compile(r"(?i)(?:api[_-]?key|secret|token|password)\s*[:=]\s*[\"'][^\"'\s]{12,}[\"']"),
+    re.compile(r"(?i)(?:api[_-]?key|secret|token|password)[\"']?\s*[:=]\s*[\"'][^\"'\s]{12,}[\"']"),
     re.compile(r"\b[0-9a-fA-F]{40,}\b"),
 ]
 SKIP_DIRS = {".git", "__pycache__", "runs", ".pytest_cache"}
-# A signed run log and its side files hold digests by design. For the last key pattern (40 or more hex characters),
-# a line is not key-like when each such run in it is a digest (only_digests): a line of a .sha256 file in sha256sum
-# form, or a JSON object in which each such run is the whole value of a digest field. A digest field is named sha256,
-# hash or head, or ends in _sha256, _hash or _head, or is git_commit. Its value is exactly 40 or 64 lower-case hex
-# characters. Every other key and string of the line is still read. The other key patterns read the whole line.
+# A signed run log, its signature file and its SHA-256 file hold digests by design. The last key pattern finds 40 or
+# more hex characters. A line is not key-like for it when each such run is a digest (only_digests). There are two
+# cases only. The first is a line of a .sha256 file in sha256sum form. The second is a line of a .jsonl or .jsonl.sig
+# file that is one JSON object with no repeated key. In it, each such run must be the whole value of a digest field.
+# A digest field is named sha256, hash or head, or ends in _sha256, _hash or _head, or is git_commit. Its value is
+# exactly 40 or 64 lower-case hex characters. Every other key and string of the line is still read. In a file of any
+# other type, each such run is key-like. The other key patterns read the whole line of each file.
+JSON_LINES = (".jsonl", ".jsonl.sig")
 HEX_PATTERN = KEY_PATTERNS[-1]
 DIGEST_FIELD = re.compile(r"(?:[a-z0-9]+_)*(?:sha256|hash|head)|git_commit")
 DIGEST_VALUE = re.compile(r"[0-9a-f]{64}|[0-9a-f]{40}")
@@ -65,12 +68,22 @@ def json_strings(node):
         yield node
 
 
+def unique_keys(pairs):
+    """The pairs of one JSON object as a dict. It refuses a repeated key, because json.loads keeps its last value only."""
+    if len({k for k, _ in pairs}) != len(pairs):
+        raise ValueError("a repeated key in a JSON object")
+    return dict(pairs)
+
+
 def only_digests(line, rel):
-    """True when each run of 40 or more hex characters in the line is a digest (see DIGEST_FIELD)."""
+    """True when each run of 40 or more hex characters in the line is a digest (see DIGEST_FIELD). The line is in
+    sha256sum form in a .sha256 file. Or it is one JSON object with no repeated key, in a .jsonl or .jsonl.sig file."""
     if rel.endswith(".sha256"):
         return bool(SHA256SUM_LINE.fullmatch(line))
+    if not rel.endswith(JSON_LINES):
+        return False
     try:
-        obj = json.loads(line)
+        obj = json.loads(line, object_pairs_hook=unique_keys)
     except ValueError:
         return False
     return isinstance(obj, dict) and not any(HEX_PATTERN.search(s) for s in json_strings(obj))

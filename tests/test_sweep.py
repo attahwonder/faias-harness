@@ -1,5 +1,6 @@
-"""Tests of the sweep for barred terms and key-like strings (tools/sweep_barred.py). A digest in a signed log or its
-SHA-256 file is not a key-like string. Every other run of 40 or more hex characters still is. No network."""
+"""Tests of the sweep for barred terms and key-like strings (tools/sweep_barred.py). A digest in a line of a .jsonl,
+.jsonl.sig or .sha256 file is not a key-like string. Every other run of 40 or more hex characters still is. No
+network."""
 import contextlib
 import importlib.util
 import io
@@ -57,6 +58,29 @@ class DigestTests(unittest.TestCase):
         for text in (f"{DIGEST} run_log.jsonl\n", f"{DIGEST}  run_log.jsonl {DIGEST}\n", f"{DIGEST}\n"):
             with self.subTest(text=text):
                 self.assertEqual(len(hits({"run_log.jsonl.sha256": text})), 1)
+
+    def test_the_json_rule_reads_a_jsonl_file_and_its_sig_file_only(self):
+        rec = line({"reply_sha256": DIGEST, "code": {"git_commit": COMMIT}})
+        for name in ("settings.yaml", "notes.md", "config.json", "x.py", "anything.txt", "run_log.json"):
+            with self.subTest(name=name):
+                self.assertEqual(len(hits({name: rec})), 1)
+        self.assertEqual(hits({"run_log.jsonl.sig": line({"file": "run_log.jsonl", "sha256": DIGEST})}), [])
+
+    def test_a_repeated_key_in_a_json_line_is_key_like(self):
+        for text in ('{"reply":"%s","reply":"ok"}\n' % DIGEST, '{"sha256":"%s","sha256":"%s"}\n' % (DIGEST, DIGEST),
+                     '{"lock":{"hash":"%s","hash":"%s"}}\n' % (DIGEST, COMMIT)):
+            with self.subTest(text=text):
+                self.assertEqual(len(hits({"run_log.jsonl": text})), 1)
+
+    def test_a_key_name_in_quotes_with_a_value_is_key_like(self):
+        value = "QUJDREVGR0hJSktMTU5PUA=="      # base64 of a made-up text, not a key
+        for name, text in (("run_log.jsonl", '{"secret":"%s"}\n' % value),
+                           ("config.json", '{"note": "x", "api_key": "%s"}\n' % value),
+                           ("x.py", "SETTINGS = {'token': '%s'}\n" % value),
+                           ("notes.md", '"password" = "%s"\n' % value),
+                           ("settings.yaml", 'secret: "%s"\n' % value)):
+            with self.subTest(text=text):
+                self.assertEqual(len(hits({name: text})), 1)
 
     def test_the_other_key_patterns_still_read_a_digest_field(self):
         fake = "sk-" + "a1" * 12            # the shape of a vendor key, not a key

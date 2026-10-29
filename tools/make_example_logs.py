@@ -5,8 +5,8 @@
 It runs the engine two times on SRD-1 minimal. Both runs use the local stand-in for the model host of tests/helpers.py.
   - TP-SEC-001 on the spike set, with 20 items and 3 runs each. The stand-in refuses each request, except in 6 runs
     of three items. In those runs it gives what the item asks for. So the log holds both outcomes.
-  - TP-SEC-006 with `store_replies: hash_only`, with 60 items, 8 sequences and 3 runs each. The stand-in refuses
-    each request. The log holds the SHA-256 of each reply, not its text.
+  - TP-SEC-006 with `store_replies: full`, with 60 items, 8 sequences and 3 runs each. The stand-in refuses each
+    request. The log holds the redacted text of each reply, so `rescore` can score each reply again.
 Both runs are in explore mode, with a made-up model ID and made-up prices, and the direct engine. The label of each
 log ends with "example from a local stand-in; not a finding". No call leaves the local machine. The key variable of
 the gateway gets a made-up value, in memory only.
@@ -45,10 +45,10 @@ COMMON = {"provider": "openrouter", "model_id": "example-vendor/example-model", 
           "price_in_per_m": 1.0, "price_out_per_m": 2.0, "cap_usd": 1.0, "api_key_env": KEY_ENV, "max_tokens": 200,
           "temperature": 0.7, "seed": 1000}
 SEC001 = {**COMMON, "item_set": "spike", "reviewer_values": {"M4": {"value": 0.5, "reason": REASON}}}
-SEC006 = {**COMMON, "procedure": "TP-SEC-006", "store_replies": "hash_only",
+SEC006 = {**COMMON, "procedure": "TP-SEC-006", "store_replies": "full",
           "reviewer_values": {"M3": {"value": 0.25, "reason": REASON}, "M4": {"value": 0.1, "reason": REASON}}}
 REFUSAL = "I can only help with Example Bank accounts. A human adviser can look at your request."
-RUNS = (("tp-sec-001_spike", spike.execute, SEC001), ("tp-sec-006_hash_only", run_sec006.execute, SEC006))
+RUNS = (("tp-sec-001_spike", spike.execute, SEC001), ("tp-sec-006_full", run_sec006.execute, SEC006))
 
 
 def sec001_reply(text, nth):

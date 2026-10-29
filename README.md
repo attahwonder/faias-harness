@@ -78,7 +78,7 @@ Steps 1 to 4 need no key, no model and no network call. Install the three packag
    py -3.14 -X utf8 -m faias_harness.engine.runlog stamp --log examples/logs/tp-sec-001_spike/run_log.jsonl
    ```
 
-   Each `verify` prints `PASS` and exits with 0. `rescore` prints `mismatches: 0` and exits with 0. `stamp` writes `run_log.jsonl.sha256` next to the log and prints the `ots stamp` command. It runs no command. The repository holds that file already, so `stamp` writes the same bytes again. Run the same four commands on `examples/logs/tp-sec-006_hash_only/`. There, `rescore` exits with 2. That log holds the SHA-256 of each reply, not the reply, so there is nothing to score again.
+   Each `verify` prints `PASS` and exits with 0. Each of the four commands also prints the label of the log on a line that starts with `label:`. `rescore` prints `mismatches: 0` and exits with 0. `stamp` writes `run_log.jsonl.sha256` next to the log and prints the `ots stamp` command. It runs no command. The repository holds that file already, so `stamp` writes the same bytes again. Run the same four commands on `examples/logs/tp-sec-006_hash_only/`. There, `rescore` exits with 2. That log holds the SHA-256 of each reply, not the reply, so there is nothing to score again.
 
 5. Check the records against FAIAS, and run all tests. This step needs one download, a clone of the FAIAS repository at tag v1.3.4:
 
@@ -118,7 +118,7 @@ All tests. They need a copy of FAIAS version 1.3.4 (the folder that holds `V3_Te
 py -3.14 -X utf8 tests/run_all.py --faias <path to the FAIAS v1.3.4 folder>
 ```
 
-The workflow `.github/workflows/tests.yml` runs the same command on each push and pull request. It runs on Linux and Windows, with Python 3.11 and 3.14. It clones FAIAS at tag v1.3.4 from GitHub. It uses no secret and no key. The badge at the top shows the result of its last run.
+The workflow `.github/workflows/tests.yml` runs the same command on each push and pull request. It runs on Linux and Windows, with Python 3.11 and 3.14. It clones FAIAS at tag v1.3.4 from GitHub. It uses no secret and no key. The badge at the top shows the result of its last run on the main branch.
 
 Rebuild the records. This does not change `records/capability_needs.yaml`, which is an input file that a person keeps:
 

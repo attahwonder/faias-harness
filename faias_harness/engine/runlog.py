@@ -47,6 +47,10 @@ Three more commands, none of which makes a network call:
                                      checks the signature and the form without the item set and the record of this
                                      checkout; the items hash is checked against the log itself
   stamp    --log <log>               writes <log>.sha256 and prints the OpenTimestamps command to run
+
+When the header of the log holds a label, `verify`, `rescore` and `stamp` print it on a line `label: <label>`. For
+`verify`, that line comes after the PASS or FAIL line. For `rescore` and `stamp`, it is the first line. So the output
+of each command shows an example log for what it is.
 """
 import argparse
 import base64
@@ -743,6 +747,17 @@ def stamp_log(log_path):
     return out, f'ots stamp "{log_path}"'
 
 
+def label_line(log_path):
+    """The line "label: <label>" when the header (line 1) of the log holds a label, or None. It checks nothing."""
+    try:
+        with open(log_path, encoding="utf-8") as f:
+            h = json.loads(f.readline())
+    except (OSError, ValueError):
+        return None
+    label = h.get("label") if isinstance(h, dict) else None
+    return f"label: {label}" if isinstance(label, str) and label else None
+
+
 def main(argv=None):
     ap = argparse.ArgumentParser(prog="faias_harness.engine.runlog",
                                  description="Run-signing key, sign, verify, rescore and stamp.")
@@ -765,6 +780,9 @@ def main(argv=None):
     e = sub.add_parser("stamp", help="write <log>.sha256 and print the OpenTimestamps command (no network call)")
     e.add_argument("--log", required=True)
     args = ap.parse_args(argv)
+    label = label_line(args.log) if args.cmd in ("verify", "rescore", "stamp") else None
+    if label and args.cmd in ("rescore", "stamp"):
+        print(label)
     if args.cmd == "rescore":
         try:
             lines, mismatches = rescore_log(args.log)
@@ -800,7 +818,8 @@ def main(argv=None):
         print(f"signature file: {sign_log(args.log, args.key)}")
         return 0
     ok, msg = verify_log(args.log, args.sig, args.pubkey, use_repo=not args.no_repo)
-    print(msg)
+    first, _, rest = msg.partition("\n")
+    print("\n".join(x for x in (first, label, rest) if x))
     return 0 if ok else 1
 
 

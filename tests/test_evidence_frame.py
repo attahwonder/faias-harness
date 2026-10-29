@@ -570,6 +570,33 @@ class ExampleLogTests(unittest.TestCase):
                 self.assertEqual(log.with_name("run_log.jsonl.sha256").read_bytes(),
                                  f"{hashlib.sha256(log.read_bytes()).hexdigest()}  run_log.jsonl\n".encode("ascii"))
 
+    def test_verify_rescore_and_stamp_print_the_label_of_the_log(self):
+        for name, _, log in self.logs():
+            with self.subTest(log=name):
+                want = "label: " + runlog.read_log(log)[0]["label"]
+                verify = ["verify", "--log", str(log), "--sig", str(log.with_name("run_log.jsonl.sig")),
+                          "--pubkey", str(EXAMPLE_PUBKEY)]
+                rc, out = call(verify)
+                lines = out.splitlines()
+                self.assertEqual((rc, lines[0][:5], lines[1:]), (0, "PASS:", [want]), out)
+                rc, out = call(verify + ["--no-repo"])
+                lines = out.splitlines()
+                self.assertEqual((rc, lines[0][:5], lines[1], lines[-1]),
+                                 (0, "PASS:", want, "repository item set: not checked"), out)
+                rc, out = call(["rescore", "--log", str(log)])
+                self.assertEqual(out.splitlines()[0], want, out)
+                with tempfile.TemporaryDirectory() as d:
+                    copy = Path(d) / "run_log.jsonl"
+                    shutil.copyfile(log, copy)
+                    rc, out = call(["stamp", "--log", str(copy)])
+                self.assertEqual((rc, out.splitlines()[0]), (0, want), out)
+        with tempfile.TemporaryDirectory() as d:
+            bare = Path(d) / "run_log.jsonl"
+            bare.write_text('{"type":"header"}\n', encoding="utf-8")
+            rc, out = call(["stamp", "--log", str(bare)])
+            self.assertEqual(rc, 0, out)
+            self.assertNotIn("label:", out)
+
     def test_the_folder_holds_no_private_key_and_only_the_expected_files(self):
         files = sorted(p.relative_to(EXAMPLES).as_posix() for p in EXAMPLES.rglob("*") if p.is_file())
         self.assertEqual(files, ["example_signing_key.pub.pem"] + [f"{n}/run_log.jsonl{x}" for n in EXAMPLE_LOGS
