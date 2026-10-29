@@ -14,7 +14,7 @@
 - `runlog results --log <log or folder> ...` runs `verify` on N run logs and prints one table, with a row for each log. A row holds the procedure, the label, the model, the variant, the item count, k and the status. It also holds the outcome counts and a cell for each measure of the summary. A log that fails `verify` is refused and named under the table, and the command exits with 1.
 - The two example logs in `examples/logs/` were made again with a new throw-away key. The sweep change moved the hash of `tools/sweep_barred.py` that the TP-SEC-006 log records (`static_inspection.patterns_sha256`).
 
-## 0.7.0 (29 October 2026 — date of the push)
+## 0.7.0 (29 October 2026)
 
 This release has no live run of TP-AGT-012 or TP-DAT-009. A TP-AGT-012 run uses the cap, the session limit and the time-to-halt of SRD-1. The owner (maintainer) declared them on 29 October 2026. These values are synthetic. They are not a firm's figures. The workflow for continuous integration has not run before this release. Its first run starts with the push of this release. That run is also the first test run on Linux.
 
