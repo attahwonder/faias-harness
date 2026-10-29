@@ -1,6 +1,6 @@
 # Changelog
 
-## 0.7.0 (29 October 2026 — date of the push)
+## 0.7.0 (29 October 2026)
 
 This release has no live run of TP-AGT-012 or TP-DAT-009. A TP-AGT-012 run uses the cap, the session limit and the time-to-halt of SRD-1. The owner (maintainer) declared them on 29 October 2026. These values are synthetic. They are not a firm's figures. The workflow for continuous integration has not run before this release. Its first run starts with the push of this release. That run is also the first test run on Linux.
 
