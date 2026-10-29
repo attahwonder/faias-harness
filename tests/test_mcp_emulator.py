@@ -280,12 +280,14 @@ class ReviewFixTests(_Base):
     def test_a_refused_client_that_closes_at_once_gives_no_error(self):
         """A refused client sends its header and then closes the connection with a reset, while the emulator drops
         the body. The reply then goes to a closed socket. The emulator ends that request with no error. Before the
-        fix, the server printed a traceback. The emulator then answers the next request."""
+        fix, the server printed a traceback. The emulator then answers the next request. The test takes out the
+        handle_one_request catch, so that the catch in _send alone must stop the error."""
         import os
         import socket
         import struct
         import sys
         import threading
+        from http.server import BaseHTTPRequestHandler
         from unittest import mock
         e = self.emu(name="closed.jsonl")
         errors, dropping, done = [], threading.Event(), threading.Event()
@@ -305,7 +307,8 @@ class ReviewFixTests(_Base):
         head = (f"POST {e.path} HTTP/1.1\r\nHost: {e.host}:{e.port}\r\nOrigin: https://other.test\r\n"
                 f"Content-Type: application/json\r\nContent-Length: 100\r\n\r\n").encode("ascii")
         linger = struct.pack("HH" if os.name == "nt" else "ii", 1, 0)        # linger 0 s, so the close sends a reset
-        with mock.patch.object(handler, "_drop_body", drop_body):
+        base = BaseHTTPRequestHandler.handle_one_request
+        with mock.patch.object(handler, "_drop_body", drop_body), mock.patch.object(handler, "handle_one_request", base):
             s = socket.create_connection((e.host, e.port), timeout=10)
             s.setsockopt(socket.SOL_SOCKET, socket.SO_LINGER, linger)
             s.sendall(head)
