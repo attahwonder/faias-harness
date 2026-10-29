@@ -15,6 +15,12 @@ from pathlib import Path
 
 import yaml
 
+try:
+    from faias_harness import yamlio
+except ImportError:      # run as a script: tools/ is on the path, the repository root is not
+    sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+    from faias_harness import yamlio
+
 REPO = Path(__file__).resolve().parents[1]
 RECORDS = REPO / "records"
 
@@ -190,7 +196,7 @@ def main():
     with open(RECORDS / "classification.tsv", encoding="utf-8", newline="") as fh:
         cls = {r["tp"]: r for r in csv.DictReader(fh, delimiter="\t") if r["class"] == "H" and r["human_step"] == "N"}
     ov_path = RECORDS / "OVERRIDES.yaml"
-    overrides = (yaml.safe_load(ov_path.read_text(encoding="utf-8")) or {}) if ov_path.exists() else {}
+    overrides = (yamlio.load(ov_path.read_text(encoding="utf-8")) or {}) if ov_path.exists() else {}
     residue_all, keys = [], []
     for tp in sorted(cls):
         rel = "V3_Testing_Playbook/PLAYBOOK_" + tp[3:].replace("-", "_") + ".md"

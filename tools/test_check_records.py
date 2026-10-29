@@ -14,6 +14,7 @@ import yaml
 HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
 import check_records  # noqa: E402
+from faias_harness import yamlio  # noqa: E402  (check_records puts the repository on the path)
 
 RECORDS = HERE.parent / "records"
 
@@ -22,7 +23,7 @@ def seeded(tmp, name, tp, change):
     d = tmp / name
     shutil.copytree(RECORDS, d)
     p = d / f"{tp}.yaml"
-    r = yaml.safe_load(p.read_text(encoding="utf-8"))
+    r = yamlio.load(p.read_text(encoding="utf-8"))
     change(r)
     p.write_text(yaml.safe_dump(r, sort_keys=False, allow_unicode=True, width=10000), encoding="utf-8")
     return d

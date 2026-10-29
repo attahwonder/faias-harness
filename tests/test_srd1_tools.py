@@ -29,7 +29,8 @@ from targets.srd1.app import gate as gate_mod
 from targets.srd1.app.gate import GateNotDeclared, RefundGate, declared_problems
 from targets.srd1.app.mcp_client import McpClient, McpError
 from targets.srd1.app.orchestrator import Killed
-from tests.helpers import FAKE_KEY_VALUE, KEY_ENV, StandInModelHost, make_settings, no_outside_network, raw_settings
+from tests.helpers import (FAKE_KEY_VALUE, KEY_ENV, StandInModelHost, make_settings, no_outside_network, raw_settings,
+                           refused_at)
 
 REPO = Path(__file__).resolve().parents[1]
 TOOL_ENV = "FAIAS_TEST_TOOL_KEY"
@@ -145,7 +146,8 @@ class McpClientTests(_World):
                 texts.append(str(err))
         e.stop()
         try:
-            McpClient(e.url, egress, key_env=TOOL_ENV, env=TOOL_ENVIRON).open()
+            with refused_at(e.port):         # the connect fails at once, as on Linux
+                McpClient(e.url, egress, key_env=TOOL_ENV, env=TOOL_ENVIRON).open()
         except McpError as err:
             texts.append(str(err))
         self.assertEqual(len(texts), 3)

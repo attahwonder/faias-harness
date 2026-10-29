@@ -18,9 +18,8 @@ import unittest
 from pathlib import Path
 from unittest import mock
 
-from faias_harness import selftest
 from faias_harness.engine import dat009, dat009_log, run_dat009, runlog, sec006, spike, toolrun
-from tests.helpers import FAKE_KEY_VALUE, KEY_ENV, StandInModelHost, make_settings, no_outside_network
+from tests.helpers import FAKE_KEY_VALUE, KEY_ENV, StandInModelHost, make_settings, no_outside_network, shared_selftest
 
 REPO = Path(__file__).resolve().parents[1]
 TOOL_ENV = "FAIAS_TEST_TOOL_KEY"
@@ -62,17 +61,10 @@ _FIXTURE = {}
 
 
 def setUpModule():
-    """One self-test log that passes on this checkout, for the self-test gate of every test here. It runs once and
-    must pass on the first try. A retry can hide a flake."""
+    """One self-test log that passes on this checkout, for the self-test gate of every test here. It runs once for
+    each test process and must pass on the first try. A retry can hide a flake (tests/helpers.shared_selftest)."""
     _FIXTURE["tmp"] = tempfile.TemporaryDirectory()
-    d = Path(_FIXTURE["tmp"].name)
-    _FIXTURE["priv"], _FIXTURE["pub"] = runlog.make_key(d / "keys", repo=REPO)
-    out = d / "st"
-    with no_outside_network():
-        selftest.run(out, sign_key=_FIXTURE["priv"], repo=REPO)
-    status = selftest.current(repo=REPO, selftest_log=str(out / selftest.LOG_NAME), pubkey=_FIXTURE["pub"])
-    assert status and status["result"] == "PASS", "the self-test fixture did not pass"
-    _FIXTURE["log"] = out / selftest.LOG_NAME
+    _FIXTURE["log"], _FIXTURE["priv"], _FIXTURE["pub"] = shared_selftest(REPO)
     _FIXTURE["runs"] = {}
 
 

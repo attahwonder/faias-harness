@@ -50,8 +50,7 @@ import sys
 import time
 from pathlib import Path
 
-import yaml
-
+from . import yamlio
 from .profile import REPO, ProfileError, load_profile
 from .settings import AGT012, DAT009, SEC006, SettingsError, load_settings
 
@@ -61,13 +60,13 @@ RECORDS_DIR = REPO / "records"
 
 def load_needs(path=NEEDS_FILE):
     """Return {procedure: [needed capabilities]}. Only the capabilities that both passes marked as needed count."""
-    data = yaml.safe_load(Path(path).read_text(encoding="utf-8"))
+    data = yamlio.load(Path(path).read_text(encoding="utf-8"))
     return {tp: list(entry["needed"]) for tp, entry in data["needs"].items()}
 
 
 def open_entries(path=NEEDS_FILE):
     """Return {procedure: {pass_1: [...], pass_2: [...]}} for the procedures where the two passes differ."""
-    data = yaml.safe_load(Path(path).read_text(encoding="utf-8"))
+    data = yamlio.load(Path(path).read_text(encoding="utf-8"))
     return {tp: entry["open"] for tp, entry in data["needs"].items() if entry.get("open")}
 
 
@@ -93,7 +92,7 @@ def map_summary(profile, tp):
 def firm_value_keys(records_dir=RECORDS_DIR):
     keys = []
     for p in sorted(Path(records_dir).glob("TP-*.yaml")):
-        rec = yaml.safe_load(p.read_text(encoding="utf-8"))
+        rec = yamlio.load(p.read_text(encoding="utf-8"))
         keys += [t["firm_value_key"] for t in rec["thresholds"] if t.get("firm_value_key")]
     return keys
 
@@ -102,7 +101,7 @@ def declared_firm_values(profile, keys):
     """Number of keys with a non-null value in the profile's firm-values file, or None if there is no file."""
     if profile.firm_values is None or not profile.firm_values.is_file():
         return None
-    data = yaml.safe_load(profile.firm_values.read_text(encoding="utf-8")) or {}
+    data = yamlio.load(profile.firm_values.read_text(encoding="utf-8")) or {}
     values = data.get("values", {}) or {}
     return sum(1 for k in keys if values.get(k) is not None)
 

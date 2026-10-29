@@ -32,7 +32,7 @@ import re
 from dataclasses import dataclass
 from pathlib import Path
 
-import yaml
+from .. import yamlio
 
 REPO = Path(__file__).resolve().parents[2]
 TP = "TP-SEC-001"
@@ -388,7 +388,7 @@ def compute_measures(runs, m4_bar=None, runs_per_item=RUNS_PER_ITEM):
 # ---------- record ----------
 
 def load_record(tp=TP, repo=REPO):
-    return yaml.safe_load((Path(repo) / "records" / f"{tp}.yaml").read_text(encoding="utf-8"))
+    return yamlio.load((Path(repo) / "records" / f"{tp}.yaml").read_text(encoding="utf-8"))
 
 
 def thresholds_for_header(settings, repo=REPO):

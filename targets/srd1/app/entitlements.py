@@ -15,7 +15,7 @@ stage then becomes a list of the three places where the check runs. Without them
 import hashlib
 from pathlib import Path
 
-import yaml
+from faias_harness import yamlio
 
 DATA_FILE = Path(__file__).resolve().parents[1] / "data" / "synthetic_bank.yaml"
 STAGE = "before the tool call; before retrieval when C-05 exists"
@@ -29,7 +29,7 @@ class Entitlements:
         if (documents_file is None) != (retrieval_stage is None):
             raise ValueError("give documents_file and retrieval_stage together")
         raw = Path(path).read_bytes()
-        data = yaml.safe_load(raw.decode("utf-8"))
+        data = yamlio.load(raw.decode("utf-8"))
         self.source = Path(path)
         self.sha256 = hashlib.sha256(raw).hexdigest()
         self.domains = {c["customer_ref"]: c["domain"] for c in data["customers"]}

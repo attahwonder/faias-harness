@@ -48,6 +48,8 @@ from pathlib import Path
 
 import yaml
 
+from . import yamlio
+
 TOP_REQUIRED = ["provider", "model_id", "mode", "routing", "price_in_per_m", "price_out_per_m", "cap_usd",
                 "api_key_env"]
 TOP_OPTIONAL = ["max_tokens", "reviewer_values", "temperature", "seed", "runs_per_item", "item_set", "kind",
@@ -453,7 +455,7 @@ def load_settings(path):
     """Load a settings file: SRD-1 minimal (no `kind`, or `kind: srd1`) or an external run (`kind: external`)."""
     path = Path(path)
     try:
-        raw = yaml.safe_load(path.read_text(encoding="utf-8"))
+        raw = yamlio.load(path.read_text(encoding="utf-8"))
     except (OSError, yaml.YAMLError) as e:
         raise SettingsError([f"cannot read {path.name}: {type(e).__name__}"])
     if isinstance(raw, dict) and raw.get("kind") == "external":

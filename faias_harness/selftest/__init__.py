@@ -28,9 +28,7 @@ import sys
 import time
 from pathlib import Path
 
-import yaml
-
-from .. import __version__
+from .. import __version__, yamlio
 from ..engine import runlog
 from . import probes as probes_mod
 from . import scan as scan_mod
@@ -104,7 +102,7 @@ def attestation_problems(repo=REPO):
 
 
 def load_record(repo=REPO):
-    return yaml.safe_load((Path(repo) / RECORD_FILE).read_text(encoding="utf-8"))
+    return yamlio.load((Path(repo) / RECORD_FILE).read_text(encoding="utf-8"))
 
 
 def environment():

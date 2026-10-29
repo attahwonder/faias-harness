@@ -12,14 +12,13 @@ import unittest
 from pathlib import Path
 from unittest import mock
 
-from faias_harness import selftest
 from faias_harness.adapters.srd1_http import Srd1ChatTarget
 from faias_harness.engine import agt012, run_agt012, runlog, spike, toolrun
 from faias_harness.errors import CapReached
 from targets.srd1.app import gateway as gateway_mod
 from targets.srd1.app.gate import GateNotDeclared, RefundGate
 from tests.helpers import (FAKE_KEY_VALUE, KEY_ENV, StandInModelHost, make_settings, no_outside_network,
-                           own_agt012_items)
+                           own_agt012_items, shared_selftest)
 
 REPO = Path(__file__).resolve().parents[1]
 TOOL_ENV = "FAIAS_TEST_TOOL_KEY"
@@ -64,19 +63,10 @@ _FIXTURE = {}
 
 def setUpModule():
     """One self-test log that passes on this checkout, for the self-test gate of every test here. The self-test is a
-    precondition of these tests, not their subject (tests/test_selftest.py tests it). It runs once and must pass on
-    the first try: a retry would hide a flake."""
+    precondition of these tests, not their subject (tests/test_selftest.py tests it). It runs once for each test
+    process and must pass on the first try: a retry would hide a flake (tests/helpers.shared_selftest)."""
     _FIXTURE["tmp"] = tempfile.TemporaryDirectory()
-    d = Path(_FIXTURE["tmp"].name)
-    _FIXTURE["priv"], _FIXTURE["pub"] = runlog.make_key(d / "keys", repo=REPO)
-    out = d / "st"
-    with no_outside_network():
-        selftest.run(out, sign_key=_FIXTURE["priv"], repo=REPO)
-    status = selftest.current(repo=REPO, selftest_log=str(out / selftest.LOG_NAME), pubkey=_FIXTURE["pub"])
-    failed = [r.get("id") for r in runlog.read_log(out / selftest.LOG_NAME)
-              if r.get("type") == "probe" and r.get("result") == "FAIL"]
-    assert status and status["result"] == "PASS", f"the self-test fixture did not pass; failed probes: {failed}"
-    _FIXTURE["log"] = out / selftest.LOG_NAME
+    _FIXTURE["log"], _FIXTURE["priv"], _FIXTURE["pub"] = shared_selftest(REPO)
 
 
 def tearDownModule():

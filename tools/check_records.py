@@ -18,10 +18,9 @@ import re
 import sys
 from pathlib import Path
 
-import yaml
-
 REPO = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO))
+from faias_harness import yamlio  # noqa: E402
 from faias_harness.capabilities import CAPABILITIES  # noqa: E402
 
 TOP = ["tp", "title", "irq", "star", "method_class", "source", "class", "human_step", "lever",
@@ -73,7 +72,7 @@ def check_needs(records_dir, want, faias, errors):
     if not path.exists():
         errors.append("capability_needs.yaml: missing")
         return
-    data = yaml.safe_load(path.read_text(encoding="utf-8"))
+    data = yamlio.load(path.read_text(encoding="utf-8"))
     if not isinstance(data, dict) or not str(data.get("status", "")).startswith("draft:"):
         errors.append("capability_needs.yaml: status does not start with 'draft:'")
         return
@@ -141,7 +140,7 @@ def check(records_dir, faias):
         errors.append(f"{tp}: record for a procedure outside the set")
     counts = {"records": 0, "thresholds": 0, "firm": 0}
     for tp in sorted(set(want) & set(have)):
-        r = yaml.safe_load(have[tp].read_text(encoding="utf-8"))
+        r = yamlio.load(have[tp].read_text(encoding="utf-8"))
         counts["records"] += 1
         missing = [k for k in TOP if k not in r]
         if missing:

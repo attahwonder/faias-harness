@@ -138,7 +138,8 @@ class StandIn:
         self.httpd = ThreadingHTTPServer(("127.0.0.1", 0), H)
         self.httpd.daemon_threads = True
         self.port = self.httpd.server_address[1]
-        self._thread = threading.Thread(target=self.httpd.serve_forever, daemon=True)
+        # A stop waits for the end of the current poll. The default poll is 0.5 s, so a short poll makes a stop fast.
+        self._thread = threading.Thread(target=self.httpd.serve_forever, kwargs={"poll_interval": 0.05}, daemon=True)
 
     def chat(self, body):
         """A reply in the form of the model host. With tools in the request and `tool_reply` set, the message is

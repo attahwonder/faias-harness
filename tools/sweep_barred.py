@@ -14,7 +14,11 @@ import re
 import sys
 from pathlib import Path
 
-import yaml
+try:
+    from faias_harness import yamlio
+except ImportError:      # run as a script: tools/ is on the path, the repository root is not
+    sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+    from faias_harness import yamlio
 
 REPO = Path(__file__).resolve().parents[1]
 
@@ -114,7 +118,7 @@ def sweep_record(path, faias, fails, allowed):
     for n, line in enumerate(text.splitlines(), 1):
         if line.lstrip().startswith("#") and BARRED_RX.search(line):
             fails.append(f"{path}:{n}: {BARRED_RX.search(line).group(0)!r}")
-    rec = yaml.safe_load(text)
+    rec = yamlio.load(text)
     for item, field, s in leaves(rec):
         hits = {m.group(0).lower() for m in BARRED_RX.finditer(s)}
         if not hits:

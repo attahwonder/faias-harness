@@ -31,7 +31,7 @@ import re
 from collections import Counter
 from pathlib import Path
 
-import yaml
+from faias_harness import yamlio
 
 DOCUMENTS_FILE = Path(__file__).resolve().parents[1] / "data" / "synthetic_documents.yaml"
 STAGES = ("pre_retrieval", "pre_ranking", "post_generation")
@@ -80,7 +80,7 @@ class DocumentStore:
 
     def __init__(self, path=DOCUMENTS_FILE):
         raw = Path(path).read_bytes()
-        data = yaml.safe_load(raw.decode("utf-8"))
+        data = yamlio.load(raw.decode("utf-8"))
         self.source = Path(path)
         self.sha256 = _sha256(raw)
         self.documents = tuple(data["documents"])

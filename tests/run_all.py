@@ -27,14 +27,20 @@ Steps:
 
 Step 4 also checks the shipped TP-DAT-009 file. The preflight accepts it, and its item set check finds 0 problems.
 Its --start refuses without a self-test that passes. It also refuses the display filter in the standard variant.
+
+Steps 1 and 2 run first, one after the other. Step 1 rewrites records/, and the later steps read it. Steps 3
+to 8 then run at the same time, one thread each. Each step keeps its output in its own buffer, and run_all prints the
+steps in order. The pass and fail rules and the exit code are those of a run of one step after the other.
 """
 import argparse
 import hashlib
+import io
 import os
 import re
 import subprocess
 import sys
 import tempfile
+import threading
 from pathlib import Path
 
 import yaml
@@ -228,6 +234,52 @@ def external_checks(tmp):
           "version refused; --start refuses without the attestation and the key variable")
 
 
+class _StepOutput:
+    """sys.stdout while steps run at the same time. A write from the thread of a step goes to the buffer of that step.
+    Any other write goes to the real output."""
+
+    def __init__(self, real):
+        self.real, self.local = real, threading.local()
+
+    def write(self, text):
+        buf = getattr(self.local, "buf", None)
+        return (self.real if buf is None else buf).write(text)
+
+    def flush(self):
+        self.real.flush()
+
+
+def run_at_once(steps):
+    """Run the steps at the same time, one thread each, and print the output of each step in step order. If a step
+    raises an error, run_at_once raises it again after the output of that step. A run of one step after the other does
+    the same."""
+    out = _StepOutput(sys.stdout)
+    results = [None] * len(steps)
+
+    def one(i, step):
+        out.local.buf, error = io.StringIO(), None
+        try:
+            step()
+        except BaseException as e:      # raised again below, in the main thread
+            error = e
+        results[i] = (out.local.buf.getvalue(), error)
+        out.local.buf = None
+
+    threads = [threading.Thread(target=one, args=(i, step)) for i, step in enumerate(steps)]
+    sys.stdout = out
+    try:
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join()
+    finally:
+        sys.stdout = out.real
+    for text, error in results:
+        sys.stdout.write(text)
+        if error is not None:
+            raise error
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--faias", required=True, help="path to the FAIAS v1.3.4 tree")
@@ -249,84 +301,92 @@ def main():
     expect(rc == 0 and "check_records: PASS" in out, f"check_records failed: {out[-400:]}")
     print("  ", out.strip().splitlines()[-1])
 
-    print("3. seeded faults")
-    rc, out = run(["tools/test_check_records.py", "--faias", faias])
-    expect(rc == 0 and "8 seeded faults caught" in out, f"test_check_records failed: {out[-400:]}")
-    print("  ", out.strip().splitlines()[-1])
+    def step3():
+        print("3. seeded faults")
+        rc, out = run(["tools/test_check_records.py", "--faias", faias])
+        expect(rc == 0 and "8 seeded faults caught" in out, f"test_check_records failed: {out[-400:]}")
+        print("  ", out.strip().splitlines()[-1])
 
-    print("4. preflight")
-    rc, out = preflight("targets/srd1/profile.yaml")
-    m = RESULT.search(out)
-    expect(rc == 0 and m and tuple(map(int, m.groups())) == (45, 45, 0, 0), f"SRD-1 profile: expected 45 full; got {m and m.group(0)}")
-    print("   SRD-1:", m.group(0) if m else out[-200:])
-    for name, caps in (("chat_only", ["conversation"]), ("chat_and_traces", ["conversation", "traces"])):
-        profile = f"targets/examples/{name}.yaml"
-        rc, out = preflight(profile)
-        rc_b, out_b = preflight(profile)
+    def step4():
+        print("4. preflight")
+        rc, out = preflight("targets/srd1/profile.yaml")
         m = RESULT.search(out)
-        expect(rc == 0 and out == out_b, f"{name}: the output is not stable")
-        expect(m and tuple(map(int, m.groups())) == expected_counts(set(caps)), f"{name}: counts {m and m.group(0)} differ from {expected_counts(set(caps))}")
-        print(f"   {name}:", m.group(0) if m else out[-200:])
-    rc, out = preflight("targets/examples/chat_only.yaml", "--start")
-    expect(rc == 2 and "START REFUSED" in out and "attestation" in out, "--start did not refuse without an attestation file")
-    with tempfile.TemporaryDirectory() as t:
-        tmp = Path(t)
-        att = tmp / "attestation.txt"
-        att.write_text("This target is a test system with synthetic data only.\n", encoding="utf-8")
-        empty = tmp / "empty.txt"
-        empty.write_text("  \n", encoding="utf-8")
-        good = dict(provider="example-provider", model_id="example-model", cap_usd=5.0)
-        rc, out = preflight(write_profile(tmp / "ok.yaml", att, **good), "--start")
-        expect(rc == 3 and "a profile alone names no run" in out, f"start with every condition met: exit {rc}, {out[-200:]}")
-        rc, out = preflight(write_profile(tmp / "empty.yaml", empty, **good), "--start")
-        expect(rc == 2 and "empty" in out, "--start did not refuse an empty attestation file")
-        rc, out = preflight(write_profile(tmp / "nocap.yaml", att, provider="example-provider", model_id="example-model"), "--start")
-        expect(rc == 2 and "cap_usd" in out, "--start did not refuse without cap_usd")
-        rc, out = preflight(write_profile(tmp / "nomodel.yaml", att, provider="example-provider", cap_usd=5.0), "--start")
-        expect(rc == 2 and "model_id" in out, "--start did not refuse without model_id")
-        bad = tmp / "bad.yaml"
-        bad.write_text(yaml.safe_dump({"name": "x", "adapter": "y", "endpoint": None, "trace_source": None,
-                                       "capabilities": ["telepathy"], "precondition_map": None, "firm_values": None,
-                                       "attestation_file": None,
-                                       "settings": {"provider": None, "model_id": None, "price_in_per_m": None,
-                                                    "price_out_per_m": None, "cap_usd": None, "api_key": "x"}}),
-                       encoding="utf-8")
-        rc, out = preflight(bad)
-        expect(rc == 2 and "unknown capability" in out and "never goes in a profile" in out, "an invalid profile was not refused")
-        print("   --start: refuses without an attestation, with an empty one, without cap_usd, without model_id; exit 3 when all met")
-        settings_checks(tmp, att)
-        external_checks(tmp)
+        expect(rc == 0 and m and tuple(map(int, m.groups())) == (45, 45, 0, 0), f"SRD-1 profile: expected 45 full; got {m and m.group(0)}")
+        print("   SRD-1:", m.group(0) if m else out[-200:])
+        for name, caps in (("chat_only", ["conversation"]), ("chat_and_traces", ["conversation", "traces"])):
+            profile = f"targets/examples/{name}.yaml"
+            rc, out = preflight(profile)
+            rc_b, out_b = preflight(profile)
+            m = RESULT.search(out)
+            expect(rc == 0 and out == out_b, f"{name}: the output is not stable")
+            expect(m and tuple(map(int, m.groups())) == expected_counts(set(caps)), f"{name}: counts {m and m.group(0)} differ from {expected_counts(set(caps))}")
+            print(f"   {name}:", m.group(0) if m else out[-200:])
+        rc, out = preflight("targets/examples/chat_only.yaml", "--start")
+        expect(rc == 2 and "START REFUSED" in out and "attestation" in out, "--start did not refuse without an attestation file")
+        with tempfile.TemporaryDirectory() as t:
+            tmp = Path(t)
+            att = tmp / "attestation.txt"
+            att.write_text("This target is a test system with synthetic data only.\n", encoding="utf-8")
+            empty = tmp / "empty.txt"
+            empty.write_text("  \n", encoding="utf-8")
+            good = dict(provider="example-provider", model_id="example-model", cap_usd=5.0)
+            rc, out = preflight(write_profile(tmp / "ok.yaml", att, **good), "--start")
+            expect(rc == 3 and "a profile alone names no run" in out, f"start with every condition met: exit {rc}, {out[-200:]}")
+            rc, out = preflight(write_profile(tmp / "empty.yaml", empty, **good), "--start")
+            expect(rc == 2 and "empty" in out, "--start did not refuse an empty attestation file")
+            rc, out = preflight(write_profile(tmp / "nocap.yaml", att, provider="example-provider", model_id="example-model"), "--start")
+            expect(rc == 2 and "cap_usd" in out, "--start did not refuse without cap_usd")
+            rc, out = preflight(write_profile(tmp / "nomodel.yaml", att, provider="example-provider", cap_usd=5.0), "--start")
+            expect(rc == 2 and "model_id" in out, "--start did not refuse without model_id")
+            bad = tmp / "bad.yaml"
+            bad.write_text(yaml.safe_dump({"name": "x", "adapter": "y", "endpoint": None, "trace_source": None,
+                                           "capabilities": ["telepathy"], "precondition_map": None, "firm_values": None,
+                                           "attestation_file": None,
+                                           "settings": {"provider": None, "model_id": None, "price_in_per_m": None,
+                                                        "price_out_per_m": None, "cap_usd": None, "api_key": "x"}}),
+                           encoding="utf-8")
+            rc, out = preflight(bad)
+            expect(rc == 2 and "unknown capability" in out and "never goes in a profile" in out, "an invalid profile was not refused")
+            print("   --start: refuses without an attestation, with an empty one, without cap_usd, without model_id; exit 3 when all met")
+            settings_checks(tmp, att)
+            external_checks(tmp)
 
-    print("5. firm values")
-    problems, keys, declared = firm_value_problems()
-    for p in problems:
-        expect(False, p)
-    print(f"   {len(keys)} keys, {len(declared)} declared with a basis ({', '.join(sorted(declared)) or 'none'}), "
-          f"{len(keys) - len(declared)} null")
+    def step5():
+        print("5. firm values")
+        problems, keys, declared = firm_value_problems()
+        for p in problems:
+            expect(False, p)
+        print(f"   {len(keys)} keys, {len(declared)} declared with a basis ({', '.join(sorted(declared)) or 'none'}), "
+              f"{len(keys) - len(declared)} null")
 
-    print("6. sweep")
-    rc, out = run(["tools/sweep_barred.py", "--faias", faias])
-    expect(rc == 0, f"sweep found hits: {out[-600:]}")
-    print("  ", out.strip().splitlines()[-1])
+    def step6():
+        print("6. sweep")
+        rc, out = run(["tools/sweep_barred.py", "--faias", faias])
+        expect(rc == 0, f"sweep found hits: {out[-600:]}")
+        print("  ", out.strip().splitlines()[-1])
 
-    print("7. unit tests")
-    rc, out = run(["-m", "unittest", "discover", "-s", "tests", "-t", ".", "-p", "test_*.py"])
-    m = re.search(r"Ran (\d+) tests? in", out)
-    expect(rc == 0 and m and re.search(r"^OK\s*$", out, re.M), f"unit tests failed: {out[-1500:]}")
-    print("  ", f"{m.group(1)} tests, OK" if m and rc == 0 else out.strip().splitlines()[-1])
-    for line in re.findall(r"^(?:FAIL|ERROR): [^\n]*", out, re.M):    # name each failed test
-        print("   failed:", line)
-    for line in re.findall(r"\[test note\] [^\n]*", out):     # a test that read no live log says so here
-        print("  ", line)
+    def step7():
+        print("7. unit tests")
+        rc, out = run(["-m", "unittest", "discover", "-s", "tests", "-t", ".", "-p", "test_*.py"])
+        m = re.search(r"Ran (\d+) tests? in", out)
+        expect(rc == 0 and m and re.search(r"^OK\s*$", out, re.M), f"unit tests failed: {out[-1500:]}")
+        print("  ", f"{m.group(1)} tests, OK" if m and rc == 0 else out.strip().splitlines()[-1])
+        for line in re.findall(r"^(?:FAIL|ERROR): [^\n]*", out, re.M):    # name each failed test
+            print("   failed:", line)
+        for line in re.findall(r"\[test note\] [^\n]*", out):     # a test that read no live log says so here
+            print("  ", line)
 
-    print("8. containment self-test")
-    with tempfile.TemporaryDirectory() as t:
-        rc, out = run(["-m", "faias_harness.selftest", "--out", str(Path(t) / "selftest")])
-    m = re.search(r"paths probed: (\d+), refused: (\d+), guard trips: (\d+), static scan: (\d+) unexpected, "
-                  r"result: (\w+)", out)
-    expect(rc == 0 and m and m.group(5) == "PASS" and m.group(3) == "0" and m.group(4) == "0",
-           f"the containment self-test did not pass: {out[-800:]}")
-    print("  ", f"{m.group(1)} probes: " + m.group(0) if m else out.strip().splitlines()[-1:])
+    def step8():
+        print("8. containment self-test")
+        with tempfile.TemporaryDirectory() as t:
+            rc, out = run(["-m", "faias_harness.selftest", "--out", str(Path(t) / "selftest")])
+        m = re.search(r"paths probed: (\d+), refused: (\d+), guard trips: (\d+), static scan: (\d+) unexpected, "
+                      r"result: (\w+)", out)
+        expect(rc == 0 and m and m.group(5) == "PASS" and m.group(3) == "0" and m.group(4) == "0",
+               f"the containment self-test did not pass: {out[-800:]}")
+        print("  ", f"{m.group(1)} probes: " + m.group(0) if m else out.strip().splitlines()[-1:])
+
+    run_at_once([step3, step4, step5, step6, step7, step8])
 
     if failures:
         print(f"run_all: FAIL ({len(failures)} failure(s))")

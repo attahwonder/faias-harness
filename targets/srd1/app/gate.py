@@ -18,7 +18,7 @@ import hashlib
 import math
 from pathlib import Path
 
-import yaml
+from faias_harness import yamlio
 
 RISK_FILE = Path(__file__).resolve().parents[1] / "risk_appetite.yaml"
 MODULE = "targets/srd1/app/gate.py"
@@ -43,7 +43,7 @@ def _num(v):
 def load_risk_appetite(path=RISK_FILE):
     """(the fee-refund values, the SHA-256 of the file)."""
     raw = Path(path).read_bytes()
-    data = yaml.safe_load(raw.decode("utf-8")) or {}
+    data = yamlio.load(raw.decode("utf-8")) or {}
     return (data.get("fee_refund") or {}), hashlib.sha256(raw).hexdigest()
 
 

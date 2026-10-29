@@ -3,15 +3,19 @@
 No test in this folder contacts a host outside the local machine. The stand-in is an HTTP server on 127.0.0.1
 that behaves like the model host in the few ways that the tests need.
 """
+import atexit
 import contextlib
 import copy
+import errno
 import ipaddress
 import itertools
 import json
 import socket
+import tempfile
 import threading
 import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from pathlib import Path
 from unittest import mock
 
 from faias_harness import settings as settings_mod
@@ -98,6 +102,57 @@ def no_outside_network():
         yield
 
 
+@contextlib.contextmanager
+def refused_at(port, host="127.0.0.1"):
+    """A connect to (host, port) fails at once with ConnectionRefusedError. Any other connect is as before.
+
+    On Windows a connect to a closed local port takes about 2 s, because the system tries again before it gives up.
+    On Linux it fails at once. A test of a refused connection proves the retries and the error class, not that delay.
+    """
+    real_connect = socket.socket.connect
+
+    def connect(self, address):
+        if isinstance(address, tuple) and tuple(address[:2]) == (host, port):
+            raise ConnectionRefusedError(errno.ECONNREFUSED, f"connection to {host}:{port} refused")
+        return real_connect(self, address)
+
+    with mock.patch.object(socket.socket, "connect", connect):
+        yield
+
+
+_SELFTEST = {}
+
+
+def shared_selftest(repo):
+    """One containment self-test log for this test process, with its test key. It returns (log, private key, public key).
+
+    The first call runs the self-test into a temporary folder, which is removed when the process ends. Each later call
+    gives the same log, or the same failure. The self-test must pass on the first try, because a retry could hide a
+    flake. The engine tests use the log as a precondition of their runs. tests/test_selftest.py makes its own runs,
+    because the run is its subject.
+    """
+    if "error" in _SELFTEST:
+        raise AssertionError(_SELFTEST["error"])
+    if "log" not in _SELFTEST:
+        from faias_harness import selftest
+        from faias_harness.engine import runlog
+        tmp = tempfile.TemporaryDirectory()
+        atexit.register(tmp.cleanup)
+        d = Path(tmp.name)
+        priv, pub = runlog.make_key(d / "keys", repo=repo)
+        out = d / "st"
+        with no_outside_network():
+            selftest.run(out, sign_key=priv, repo=repo)
+        log = out / selftest.LOG_NAME
+        status = selftest.current(repo=repo, selftest_log=str(log), pubkey=pub)
+        if not (status and status["result"] == "PASS"):
+            failed = [r.get("id") for r in runlog.read_log(log) if r.get("type") == "probe" and r.get("result") == "FAIL"]
+            _SELFTEST["error"] = f"the self-test fixture did not pass; failed probes: {failed}"
+            raise AssertionError(_SELFTEST["error"])
+        _SELFTEST.update(tmp=tmp, log=log, priv=priv, pub=pub)
+    return _SELFTEST["log"], _SELFTEST["priv"], _SELFTEST["pub"]
+
+
 class StandInModelHost:
     """A local HTTP server that answers POST /api/v1/chat/completions like the model host in the fields we use.
 
@@ -170,7 +225,8 @@ class StandInModelHost:
         self.httpd = ThreadingHTTPServer(("127.0.0.1", 0), H)
         self.httpd.daemon_threads = True
         self.port = self.httpd.server_address[1]
-        self._thread = threading.Thread(target=self.httpd.serve_forever, daemon=True)
+        # A stop waits for the end of the current poll. The default poll is 0.5 s, so a short poll makes a stop fast.
+        self._thread = threading.Thread(target=self.httpd.serve_forever, kwargs={"poll_interval": 0.05}, daemon=True)
 
     @property
     def base_url(self):

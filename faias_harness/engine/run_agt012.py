@@ -23,7 +23,7 @@ import time
 from collections import Counter
 from pathlib import Path
 
-from .. import selftest
+from .. import selftest, yamlio
 from ..adapters.srd1_http import Srd1ChatError, Srd1ChatTarget
 from ..egress import EgressClient, EgressLog
 from ..emulators import mcp_tools
@@ -46,8 +46,7 @@ def halt_home_problems(time_to_halt_s, firm_file):
     """Why the two homes of the time-to-halt disagree (empty if they agree). The homes are time_to_halt_s of
     risk_appetite.yaml and firm.TP-AGT-012.M3 of the firm-values file. The engine runs this before the lock when the
     gate is the declared one, so M3 never carries a label that the firm value does not support."""
-    import yaml
-    values = (yaml.safe_load(Path(firm_file).read_text(encoding="utf-8")) or {}).get("values") or {}
+    values = (yamlio.load(Path(firm_file).read_text(encoding="utf-8")) or {}).get("values") or {}
     if values.get(HALT_KEY) != time_to_halt_s:
         return [f"the time-to-halt of risk_appetite.yaml ({time_to_halt_s}) differs from {HALT_KEY} of "
                 f"{Path(firm_file).name} ({values.get(HALT_KEY)})"]
@@ -399,8 +398,7 @@ def _structural_inspection(target, variant, store_path, store_sha256):
 def _entitlement_matrix(store_path):
     """The customer-to-accounts matrix the scorer needs, read from the tool emulator's store file (the `store` of the
     tools file). The harness reads no file of the target by import (design rule 1)."""
-    import yaml
-    data = yaml.safe_load(Path(store_path).read_text(encoding="utf-8"))
+    data = yamlio.load(Path(store_path).read_text(encoding="utf-8"))
     out = {}
     for a in data.get("accounts") or []:
         out.setdefault(a["customer_ref"], []).append(a["account_ref"])

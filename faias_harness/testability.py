@@ -26,11 +26,10 @@ import re
 import sys
 from pathlib import Path
 
-import yaml
 from cryptography.exceptions import InvalidSignature
 from cryptography.hazmat.primitives import serialization
 
-from . import __version__
+from . import __version__, yamlio
 from .capabilities import CAPABILITIES
 from .engine import runlog
 from .preflight import NEEDS_FILE, RECORDS_DIR, judge, load_needs, open_entries
@@ -87,7 +86,7 @@ def levers(needs, have):
 
 def build(profile, *, signed=False):
     """The report as a dict. The results come from `judge` and `load_needs`; the record fields are copied."""
-    raw = yaml.safe_load(NEEDS_FILE.read_text(encoding="utf-8"))
+    raw = yamlio.load(NEEDS_FILE.read_text(encoding="utf-8"))
     needs = load_needs(NEEDS_FILE)
     opened = open_entries(NEEDS_FILE)
     have = set(profile.capabilities)
@@ -95,7 +94,7 @@ def build(profile, *, signed=False):
     counts = {"full": 0, "partly": 0, "none": 0}
     for tp in sorted(needs):
         path = RECORDS_DIR / f"{tp}.yaml"
-        rec = yaml.safe_load(path.read_text(encoding="utf-8"))
+        rec = yamlio.load(path.read_text(encoding="utf-8"))
         entry = raw["needs"][tp]
         result, missing = judge(needs[tp], have)
         counts[result] += 1

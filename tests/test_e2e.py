@@ -20,7 +20,7 @@ from targets.srd1.app import trace as tr
 from targets.srd1.app.gateway import Gateway
 from targets.srd1.app.orchestrator import PROMPT_VARIANTS, load_system_prompt
 from tests.helpers import (FAKE_KEY_VALUE, KEY_ENV, StandInModelHost, lock_time_twice_clock, make_settings,
-                           no_outside_network, raw_settings)
+                           no_outside_network, raw_settings, refused_at)
 
 REPO = Path(__file__).resolve().parents[1]
 ENV = {KEY_ENV: FAKE_KEY_VALUE}
@@ -283,7 +283,8 @@ class SpikeRunTests(unittest.TestCase):
         with StandInModelHost(respond) as host:
             host.httpd.shutdown()          # the stand-in no longer answers: connection refused
             host.httpd.server_close()
-            with mock.patch("targets.srd1.app.gateway.time.sleep") as slept:   # a refused connection is retried 5 times
+            # A refused connection is retried 5 times. The connect fails at once, as on Linux (refused_at).
+            with refused_at(host.port), mock.patch("targets.srd1.app.gateway.time.sleep") as slept:
                 res = self.run_spike(host, make_settings(cap_usd=10.0))
         self.assertEqual(slept.call_count, 5)
         self.assertEqual(res.status, "stopped_error")

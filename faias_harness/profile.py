@@ -12,6 +12,7 @@ from typing import Optional
 
 import yaml
 
+from . import yamlio
 from .capabilities import CAPABILITIES
 
 REPO = Path(__file__).resolve().parents[1]
@@ -158,7 +159,7 @@ def validate(raw):
 def load_profile(path):
     path = Path(path)
     try:
-        raw = yaml.safe_load(path.read_text(encoding="utf-8"))
+        raw = yamlio.load(path.read_text(encoding="utf-8"))
     except (OSError, yaml.YAMLError) as e:
         raise ProfileError([f"cannot read {path}: {e}"])
     problems = validate(raw)

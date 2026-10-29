@@ -53,8 +53,7 @@ from collections import Counter
 from dataclasses import dataclass
 from pathlib import Path
 
-import yaml
-
+from .. import yamlio
 from ..emulators import handlers
 from . import sec001, sec006
 
@@ -128,8 +127,8 @@ def _sha256(data):
 def load_data(bank_file=BANK_FILE, documents_file=DOCUMENTS_FILE):
     """(bank, documents, bank_sha256, documents_sha256). `documents` is the list `documents` of the store file."""
     bank_raw, docs_raw = Path(bank_file).read_bytes(), Path(documents_file).read_bytes()
-    bank = yaml.safe_load(bank_raw.decode("utf-8"))
-    documents = yaml.safe_load(docs_raw.decode("utf-8"))["documents"]
+    bank = yamlio.load(bank_raw.decode("utf-8"))
+    documents = yamlio.load(docs_raw.decode("utf-8"))["documents"]
     return bank, documents, _sha256(bank_raw), _sha256(docs_raw)
 
 

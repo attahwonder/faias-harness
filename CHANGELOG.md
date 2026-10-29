@@ -62,6 +62,15 @@ Fixes to TP-DAT-009, TP-AGT-012 and the kit, from a check of the merged line. Th
 - `tools/make_example_logs.py` makes both logs again with a new key when the sweep finds a hit in a new log. It tries at most 5 times and says so on each try. It writes zeros over each private key.
 - `targets/srd1/firm_values.yaml` says that SRD-1 minimal is built and that one value is declared.
 
+Faster tests. They change no scorer, gate rule, item, prompt, run-log format or signature.
+
+- `faias_harness/yamlio.py` parses YAML with the libyaml loader of PyYAML. Where libyaml is not present, it uses the pure-Python safe loader. The two loaders give the same objects. `tests/test_yamlio.py` parses each YAML file of the repository with both. The harness, SRD-1 and the tools use it in place of `yaml.safe_load`. The library libyaml is part of PyYAML, so this adds no dependency.
+- Each server thread polls every 0.05 s, not every 0.5 s, so a stop is fast. The five servers are SRD-1, the tool emulator, the stand-in of the self-test and the two stand-ins of the tests. `tests/test_server_stop.py` times the stops.
+- The trace store of SRD-1 can give the entries of a trace request from memory. It does so only while the size and the modification time of its file are as the store left them. In any other case it reads the file. The chain check always reads the file. `tests/test_trace_store.py` tests both cases.
+- Two tests of a refused connection make the connect fail at once (`tests/helpers.refused_at`). On Windows the real connect takes about 2 s. The tests assert the same retries and error classes as before.
+- `tests/run_all.py` runs steps 3 to 8 at the same time, after steps 1 and 2. It prints the output of each step in step order. The pass and fail rules and the exit code are as before.
+- The engine tests of TP-AGT-012 and TP-DAT-009 share one self-test log in each test process (`tests/helpers.shared_selftest`).
+
 ## 0.6.0 (28 October 2026)
 
 The evidence frame, the testability report and a second procedure. A run log now states more about the code that made it. A third party can check more of it without a matching checkout. The TP-SEC-001 scorer patterns, item set and thresholds do not change.

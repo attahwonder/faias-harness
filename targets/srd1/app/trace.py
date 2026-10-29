@@ -8,9 +8,16 @@ final hash that was recorded elsewhere.
 Each line is JSON as RFC 8259 defines it. `append` refuses a NaN or an infinity (ValueError). `read_entries` refuses
 a line that holds the token NaN, Infinity or -Infinity, or a number such as 1e400 that reads as an infinity, so
 `verify_chain` fails such a file.
+
+`entries` gives the lines that this store wrote from memory while the file's size and modification time are those
+after the store's last write, so a trace request does not read the whole file again. In any other case (the file
+was edited, replaced or removed), it reads the file. After a write that finds such a change, it always reads the
+file. A change that keeps both the size and the modification time is not seen. `verify_chain` always reads the
+file.
 """
 import hashlib
 import json
+import os
 import threading
 import time
 from pathlib import Path
@@ -35,6 +42,19 @@ class TraceStore:
         self._lock = threading.Lock()
         self._seq = 0
         self._prev = GENESIS
+        self._lines = []        # (session, line) for each line this store wrote; None once the file changed
+        self._stamp = self._file_stamp()
+
+    def _file_stamp(self):
+        st = os.stat(self.path)
+        return st.st_size, st.st_mtime_ns
+
+    def _unchanged(self):
+        """True while the file's size and modification time are those after this store's last write."""
+        try:
+            return self._file_stamp() == self._stamp
+        except OSError:
+            return False
 
     @property
     def head(self):
@@ -46,14 +66,25 @@ class TraceStore:
             entry.update(data)
             entry["hash"] = _line_hash(self._prev, {k: v for k, v in entry.items() if k != "hash"})
             line = json.dumps(entry, sort_keys=True, ensure_ascii=False, allow_nan=False).encode("utf-8") + b"\n"
+            if self._lines is not None and not self._unchanged():
+                self._lines = None      # the file changed outside this store: entries() reads it from now on
             with open(self.path, "ab") as f:      # a refused line (ValueError above) leaves the chain as it was
                 f.write(line)
             self._seq += 1
             self._prev = entry["hash"]
+            if self._lines is not None:
+                self._lines.append((session, line))
+                self._stamp = self._file_stamp()
             return entry
 
     def entries(self, session=None):
-        return [e for e in read_entries(self.path) if session is None or e["session"] == session]
+        """The entries of `session`, or of every session. They are the entries that read_entries gives. The module
+        docstring says when they come from memory."""
+        with self._lock:
+            mine = list(self._lines) if self._lines is not None and self._unchanged() else None
+        if mine is None:
+            return [e for e in read_entries(self.path) if session is None or e["session"] == session]
+        return [json.loads(line) for s, line in mine if session is None or s == session]
 
 
 def read_entries(path):

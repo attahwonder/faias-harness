@@ -82,7 +82,7 @@ from pathlib import Path
 
 import yaml
 
-from .. import __version__
+from .. import __version__, yamlio
 from . import handlers as handlers_mod
 
 MODERN = ("2026-07-28",)
@@ -166,7 +166,7 @@ def validate_tools(raw):
 def load_tools(path):
     """The tools file, checked. A relative `store` path is read from the folder of the tools file."""
     try:
-        raw = yaml.safe_load(Path(path).read_text(encoding="utf-8"))
+        raw = yamlio.load(Path(path).read_text(encoding="utf-8"))
     except (OSError, yaml.YAMLError) as e:
         raise ToolsError([f"cannot read the tools file ({type(e).__name__})"])
     problems = validate_tools(raw)
@@ -442,7 +442,8 @@ class ToolEmulator:
         self.httpd = ThreadingHTTPServer((host, port), Handler)
         self.httpd.daemon_threads = True
         self.host, self.port = host, self.httpd.server_address[1]
-        self._thread = threading.Thread(target=self.httpd.serve_forever, daemon=True)
+        # A stop waits for the end of the current poll. The default poll is 0.5 s, so a short poll makes a stop fast.
+        self._thread = threading.Thread(target=self.httpd.serve_forever, kwargs={"poll_interval": 0.05}, daemon=True)
 
     @property
     def url(self):

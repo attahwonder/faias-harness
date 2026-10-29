@@ -39,6 +39,8 @@ from pathlib import Path
 
 import yaml
 
+from .. import yamlio
+
 
 class StoreError(ValueError):
     pass
@@ -51,7 +53,7 @@ def load_store(path):
     except OSError as e:
         raise StoreError(f"cannot read the store ({type(e).__name__})") from None
     try:
-        data = yaml.safe_load(raw.decode("utf-8"))
+        data = yamlio.load(raw.decode("utf-8"))
     except (UnicodeDecodeError, yaml.YAMLError) as e:
         raise StoreError(f"cannot read the store ({type(e).__name__})") from None
     if not isinstance(data, dict) or not (isinstance(data.get("accounts"), list)
