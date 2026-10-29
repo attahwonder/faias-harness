@@ -1,12 +1,12 @@
 # Architecture
 
-Harness version 0.7 (in development). This document describes the design of the harness and what exists today. Each section says what is built and what is not.
+Harness version 0.7. This document describes the design of the harness and what exists today. Each section says what is built and what is not.
 
 ## 1. Scope and status
 
 The harness is planned to run the FAIAS test procedures against an AI system in a test environment. FAIAS is the Financial AI Independent Assurance Standard. Version 1.3.4 of FAIAS has 109 test procedures, one for each Independent Review Question (FAIAS `README.md`, line 31).
 
-Version 0.7 (in development) shows the design and the direction. It has eight parts that work:
+Version 0.7 shows the design and the direction. It has eight parts that work:
 
 - the **records**: one generic record for each of 45 procedures;
 - the **record checker**: it compares each record with the FAIAS source lines;
@@ -466,7 +466,7 @@ A run can trip more than one rule. Each `bypass_detail` names the rule, the rout
 
 The run record holds `turn_error`, `blocked` and `finish_reason`. `blocked` is true when any model call of the session was blocked. `finish_reason` is that of the last call. So `rescore` derives the outcome from the record alone. A cap reached during a turn stops the run with the status `stopped_at_cap`, as in the other two engines.
 
-**Vectors and routes.** There are three vector classes, `VA`, `VB` and `VC`. They are the vectors (a), (b), (c) of the playbook. Each class has ten items. A `VA` item has one turn and no fault. A `VB` item and a `VC` item have two turns and an emulator fault on the turn-1 fee. A `VC` item has a fault on turn 1. Turn 2 is a plain request for a refund that the gate must hold. Its own measure `duplicate_execution` records a second ledger line for the one fee. That line shows SRD-1 retried a non-idempotent call. The maintainer ruled that vector (c) is built as back-office fault modes, labelled a reading. Three routes run across the classes, with the shares six, two and two per class. `above_cap` and `split_session` hold at C-09. `other_customer` holds at C-07. The routes are the harness's own. The playbook names the vectors and the classes only.
+**Vectors and routes.** There are three vector classes, `VA`, `VB` and `VC`. They are the vectors (a), (b), (c) of the playbook. Each class has ten items. A `VA` item has one turn and no fault. A `VB` item and a `VC` item have two turns and an emulator fault on the turn-1 fee. A `VC` item has a fault on turn 1. Turn 2 is a plain request for a refund that the gate must hold. Its own measure `duplicate_execution` records a second ledger line for the one fee. That line shows SRD-1 retried a non-idempotent call. Vector (c) is built as back-office fault modes. The run log calls this form "a reading". The maintainer has not ruled on it. Three routes run across the classes, with the shares six, two and two per class. `above_cap` and `split_session` hold at C-09. `other_customer` holds at C-07. The routes are the harness's own. The playbook names the vectors and the classes only.
 
 **Gate layers and variants.** `gate_layer` is `orchestrator` or `prompt`. The default is `orchestrator`, and the gate runs in code before the call. With `prompt`, the rule is in the system prompt only. That prompt is `targets/srd1/app/system_prompt_prompt_gate.txt`. It is the standard prompt with one more rule, which states the cap and the limit. It does not hold the two staged placeholder lines of TP-SEC-006. The build fills in the two figures from the gate (`render_prompt_gate`). The variant sets the layer.
 
