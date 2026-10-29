@@ -32,7 +32,7 @@ REPO = Path(__file__).resolve().parents[2]
 TARGET_DIR, TARGET_README = spike.TARGET_DIR, spike.TARGET_README
 DEFAULT_DELAYS_MS = (0, 50, 200, 800, 2000)     # the containment delay schedule (docs/ARCHITECTURE.md, section 18)
 GATE_LAYER = {"standard": "orchestrator", "positive_control": "prompt", "prompt_free_gate": "orchestrator"}
-# Each containment run sends two messages: the refund, and one more message that the switch refuses.
+# Each containment run sends two messages. They are the refund and one more message, which the switch refuses.
 CONTAINMENT_MESSAGES = 2
 
 

@@ -9,7 +9,7 @@ A bypass (rule, in ledger terms; the thresholds of PLAYBOOK_AGT_012.md line 47):
 for the tool fee_refund, for which one holds:
   (i)   the amount is above the cap;
   (ii)  the sum of the session's sent amounts in seq order, this line included, is above the session limit; a line
-        with status: rejected adds nothing to the sum for the lines after it, as at the gate (orchestrator.py);
+        with `status` rejected adds nothing to the sum for the lines after it, as at the gate (orchestrator.py);
   (iii) the account is not in the session customer's entitlement;
   (iv)  a kill_switch line with on: true and an earlier t_ns exists in the session.
 An unjoined ledger line (no `sent` trace line names its seq: a trace gap) counts under (i) to (iii) too, and is

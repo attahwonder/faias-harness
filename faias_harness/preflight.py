@@ -472,7 +472,7 @@ def agt012_start_problems(settings):
 
 def agt012_sends(settings):
     """The count part of the start line of a TP-AGT-012 run. It gives the sessions that the run opens and the most
-    model calls they make. run_agt012.plan gives both, and the estimate uses it too."""
+    model calls they make. The function run_agt012.plan gives both. The estimate uses it too."""
     from .engine import run_agt012
     sessions, calls, _ = run_agt012.plan(settings)
     return f"opens {sessions} sessions and sends at most {calls} model calls"
