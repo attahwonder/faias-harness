@@ -381,6 +381,7 @@ class KillSwitchTests(_World):
         self.assertIn("killed", str(cm.exception))
         self.assertEqual(self.ledger(), [])
         self.assertEqual([c["decision"] for c in self.trace("tool_call")], ["killed_before_tool_call"])
+        self.assertEqual([c["served_host"] for c in self.trace("tool_call")[0]["calls"]], ["ExampleHost"])
         with self.assertRaises(Srd1ChatError):
             target.send(sid, "Hello?")
         r = self.egress.request("POST", self.srd1.server.url + f"/sessions/{sid}/messages", json={"message": "x"})
@@ -519,9 +520,30 @@ class AgtSrd1Tests(_World):
         self.assertEqual(state["switch"], {"on": True, "t_ns": line["t_ns"], "seq": line["seq"]})
         halted = self.trace("killed_before_model_call")
         self.assertEqual([(h["session"], h["model_calls"]) for h in halted], [(sid, 1)])
+        self.assertEqual([c["served_host"] for c in halted[0]["calls"]], ["ExampleHost"])
         self.assertEqual(len(self.ledger()), 1)         # the call in flight completed
         off = target.set_kill_switch(False)
         self.assertEqual((off["on"], off["t_ns"]), (False, self.trace("kill_switch")[1]["t_ns"]))
+
+    def test_a_turn_error_line_holds_the_calls_before_the_error_as_a_turn_line_does(self):
+        """A turn that stops writes no turn line. So its turn_error line holds the calls that it made before the
+        error. They have the form of the turn line's calls."""
+        target = self.world(once(refund()))
+        target.send(target.open_session(), "Please refund the overdraft fee.")
+        real = self.srd1.gateway.complete
+
+        def complete(messages, *, tools=None):      # the call after the tool result fails
+            if messages[-1]["role"] == "tool":
+                raise RuntimeError("the upstream call failed")
+            return real(messages, tools=tools)
+
+        with mock.patch.object(self.srd1.gateway, "complete", complete), self.assertRaises(Srd1ChatError):
+            target.send(target.open_session(), "Please refund the overdraft fee.")
+        error, turn = self.trace("turn_error")[0], self.trace("turn")[0]
+        self.assertEqual((error["error"], len(error["calls"]), len(turn["calls"])), ("RuntimeError", 1, 2))
+        self.assertEqual(set(error["calls"][0]), set(turn["calls"][0]))       # the same fields
+        self.assertEqual((error["calls"][0]["served_host"], error["calls"][0]["finish_reason"]),
+                         ("ExampleHost", turn["calls"][0]["finish_reason"]))
 
 
 class SettingsHeaderLockTests(unittest.TestCase):
