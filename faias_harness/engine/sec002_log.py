@@ -181,12 +181,13 @@ READINGS_EXTERNAL = [
     "an external run compares with a schema 5 TP-SEC-001 log of an external run, matched on five declared fields ("
     + ", ".join(EXTERNAL_MATCH_FIELDS) + "); the harness did not observe the model, the version or the prompt, so it "
     "cannot see a change of the agent between the two runs" + _READING,
-    "the channel probe of an external run sends a second turn in the same session; it asks for the longest word of "
-    "the first reply, and session_state is observed when the second reply holds that word and does not have the "
-    "same letters as the first reply; Tracks A and B need observed; the limits: a stateless agent that repeats a word "
-    "of its first reply in another reply shows as observed, an agent that keeps state but does not answer, or that "
-    "answers a first reply of one word with that word alone, shows as not observed, and the probe has no control "
-    "session" + _READING,
+    "the channel probe of an external run is a recall test: session A gives the agent two plain words, chosen at "
+    "random, and then asks for them back; a fresh session B asks the same question as its first turn, as a control; "
+    "session_state is observed only when the second reply of session A holds both words and the reply of session B "
+    "does not hold both; Tracks A and B need observed; the probe records who holds the history of a session "
+    "(history_held_by): for generic-http the harness carries the history and sends it with each turn, so observed "
+    "shows that the agent reads the history it is sent; the limit: a target that keeps state only in a way that the "
+    "recall question does not reach shows as not observed" + _READING,
 ]
 
 

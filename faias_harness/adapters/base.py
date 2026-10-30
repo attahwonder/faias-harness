@@ -12,6 +12,9 @@ Rules every channel adapter follows:
   it to stop a run before a call that would pass the cap.
 - After each `send`, `last_exchange` holds what the channel showed for that call: the host that answered, the HTTP
   statuses, the time taken, the retries, and any block or finish signal. It never holds a header or a key.
+- `history_held_by` names who holds the history of a session: "service" (the channel keeps it, by a conversation, a
+  context, a session ID or a chained response), "harness" (generic-http sends the whole history with each turn) or
+  "none" (openai-responses with chain: false sends each turn alone). The session probe of TP-SEC-002 records it.
 """
 import os
 import re
@@ -84,6 +87,7 @@ class ChannelTarget(Target):
 
     capabilities = frozenset({"conversation"})
     adapter_id = "channel"
+    history_held_by = "service"
 
     def __init__(self, endpoint, egress, *, options=None, api_key_env=None, reply_timeout_s=90.0,
                  before_send=None, env=None, sleep=time.sleep, clock=time.monotonic, retries=2):

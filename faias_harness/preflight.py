@@ -53,8 +53,10 @@ An external settings file with `procedure: TP-SEC-002` (version 0.8) runs TP-SEC
 preflight then prints the M1 bar, the baseline log and its key, and the declaration of the channel inputs that the
 setting `channel_inputs` names. The baseline must be a schema 5 log of an external TP-SEC-001 run. In evidence mode
 it must match the run on five declared fields (sec002_log.EXTERNAL_MATCH_FIELDS), and each field that differs is
-named with both values. The probe has a second turn in the same session that asks for a word of the first reply.
---start refuses Tracks A and B when the probe does not observe session state, before the operator types `yes`.
+named with both values. The probe is a recall test: one session gives the agent two words and asks for them back, and
+a fresh control session asks the same question. --start refuses Tracks A and B when the probe does not observe
+session state, before the operator types `yes`. The probe's requests go to an egress log of their own, and its summary
+goes into the probe block of the header.
 
 Exit codes: 0 table printed, or a run finished; 2 start refused or profile or settings invalid; 3 start
 conditions met, but a profile alone starts no run; 4 the operator did not type `yes`; 5 the run stopped at the cap
@@ -143,13 +145,19 @@ def external_start_problems(profile, settings):
         if env and not os.environ.get(env):
             problems.append(f"the environment variable {env} is not set")
     # The probe and the first session of the run (one item, or the first turn of a sequence). With the Direct Line
-    # start event, each of the two sessions is one call more.
+    # start event, each session is one call more.
     probe, item = external.probe_calls(settings, profile), external.calls_per_session(profile)
     if settings.call_budget < probe + item:
-        what = ("the two turns of the channel probe and one turn" if settings.procedure == SEC002
+        what = ("the three turns of the channel probe in two sessions and one turn" if settings.procedure == SEC002
                 else "the channel probe and one item")
         start = "; the Direct Line start event is one more call in each session" if item > 1 else ""
         problems.append(f"the call budget allows fewer than {probe + item} calls ({what}{start})")
+    o = profile.adapter_options or {}
+    if settings.procedure == SEC002 and profile.adapter == "openai-responses" and o.get("chain", True) \
+            and o.get("store") is not True:
+        problems.append("openai-responses with chain: true needs store: true for a TP-SEC-002 run: with store not "
+                        "true the service keeps no earlier turn, so a later turn of a session cannot chain to it "
+                        "(the default store: false stays for TP-SEC-001)")
     return problems
 
 
@@ -326,8 +334,8 @@ def external_settings_report(profile, settings, est):
     if est is None:         # only a TP-SEC-002 run without its item file has no estimate
         print("Calls in the run: not available (the item file is not found)")
     elif sec002:
-        print(f"Calls in the run: at most {est['calls']} (plus the channel probe: {est['probe_calls']} calls, two turns "
-              "in one session; retries are extra)")
+        print(f"Calls in the run: at most {est['calls']} (plus the channel probe: {est['probe_calls']} calls, three "
+              "turns in two sessions; retries are extra)")
     else:
         n = est["probe_calls"]
         print(f"Calls in the run: {est['calls']} (plus the channel probe: {n} call{'' if n == 1 else 's'}; retries are "
@@ -341,6 +349,12 @@ def external_settings_report(profile, settings, est):
         print(f"Estimated cost for the whole run: USD {est['cost_usd']:.4f}{note}")
     print(f"Pacing: at least {settings.min_interval_ms} ms between calls; reply timeout {settings.reply_timeout_s} s; "
           f"stop after {settings.max_consecutive_errors} channel errors in a row")
+    if sec002 and profile.adapter == "json-http":
+        from .adapters import json_http
+        if not json_http._has_placeholder((profile.adapter_options or {}).get("request"), "session_id"):
+            print("WARNING: the json-http request holds no {session_id}, so no turn sends a session ID. The endpoint "
+                  "must keep the session in another way (for example a cookie), or the channel probe shows not "
+                  "observed")
     env = registry.key_env(profile) if registry.is_external(profile.adapter) else None
     if env:
         print(f"Key variable: {env} is {'present' if os.environ.get(env) else 'NOT present'}")
@@ -353,7 +367,7 @@ def external_settings_report(profile, settings, est):
 
 def print_external_probe(probe):
     check = probe.get("session_check")
-    print("Channel probe (two turns in one session):" if check else "Channel probe (one call):")
+    print("Channel probe (a recall test: three turns in two sessions):" if check else "Channel probe (one call):")
     if probe.get("ok"):
         print(f"  reply received from {probe.get('channel_host')} in {probe.get('latency_ms')} ms"
               + (f"; model named: {probe['served_model']}" if probe.get("served_model") else ""))
@@ -363,9 +377,13 @@ def print_external_probe(probe):
               + (f", HTTP {probe['status']}" if probe.get("status") else "") + ")"
               + (f": {probe['detail']}" if probe.get("detail") else ""))
     if check:
-        why = check.get("reason") or (f"error: {check['error']}" if check.get("error") else None)
-        print(f"  session state: {probe.get('session_state')} (the second turn asked for the longest word of the "
-              f"first reply: {', '.join(check.get('words') or []) or 'none'})" + (f"; {why}" if why else ""))
+        held = {c.get("session"): ", ".join(c.get("holds") or []) or "none" for c in check.get("calls") or []
+                if c.get("turn") == (2 if c.get("session") == "A" else 1)}
+        print(f"  session state: {probe.get('session_state')} (the words: {', '.join(check.get('words') or [])}; "
+              f"turn 2 of session A holds: {held.get('A', 'not sent')}; the control session holds: "
+              f"{held.get('B', 'not sent')}; history held by: {check.get('history_held_by')})")
+        if check.get("reason"):
+            print(f"  reason: {check['reason']}")
 
 
 def _default_external_executor(**kw):
@@ -429,11 +447,14 @@ def run_external(a, profile, settings, *, input_fn, executor, inspect_check):
             print(f"  - {p}")
         return 2
     budget = CallBudget(settings.cap_usd, settings.cost_per_call_usd, settings.max_calls)
-    egress = external.make_egress(profile)
+    from .egress import EgressLog
+    elog = EgressLog()          # the probe's requests, as the run's egress.jsonl holds the run's; its summary is kept
+    egress = external.make_egress(profile, log=elog)
     try:
         probe = external.channel_probe(external.make_target(profile, settings, egress, budget), session_check=sec002)
     finally:
         egress.close()
+    probe["egress"] = {"summary": elog.summary()}       # in the probe block of the header
     print_external_probe(probe)
     if not a.start:
         return 0

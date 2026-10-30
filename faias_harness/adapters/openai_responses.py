@@ -101,6 +101,8 @@ class ResponsesTarget(ChannelTarget):
         self.max_output_tokens = o.get("max_output_tokens", 400)
         self.store = bool(o.get("store", False))
         self.chain = bool(o.get("chain", True))
+        # with chain: false each turn goes alone, so no one holds the history of a session
+        self.history_held_by = "service" if self.chain else "none"
         self._sessions = {}
         self._n = 0
 

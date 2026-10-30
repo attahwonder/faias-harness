@@ -56,6 +56,7 @@ def hosts(endpoint, options):
 
 class OpenAIChatTarget(ChannelTarget):
     adapter_id = "generic-http"
+    history_held_by = "harness"         # the session's history goes with each turn; the service need keep none
 
     def __init__(self, endpoint, egress, *, model_id=None, **kw):
         super().__init__(endpoint, egress, **kw)

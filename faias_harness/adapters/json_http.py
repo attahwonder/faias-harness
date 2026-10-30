@@ -20,6 +20,8 @@ Profile:
              data.reply.text or messages.0.content. A list of strings at the path is joined with new lines.
     session_path: optional: where the response names the server's session ID; later turns of the session send it
              as {session_id}. Without it, the harness makes one session ID for each session and sends that.
+             With it, `last_exchange` says whether the response held it (session_path_found). The session probe of
+             TP-SEC-002 records that the first response did not hold it.
     blocked_path: optional: where the response says that the reply was blocked (a true value means blocked)
     block_type_path, model_path, finish_path: optional: where the response names the block type, the model and
              the finish reason
@@ -186,7 +188,8 @@ class JsonHttpTarget(ChannelTarget):
             reply = str(reply)
         if self.session_path:
             sid = get_path(data, self.session_path)
-            if sid is not _MISSING and sid is not None:
+            ex["session_path_found"] = sid is not _MISSING and sid is not None
+            if ex["session_path_found"]:
                 s["server_id"] = sid
         blocked = self._opt(data, "blocked_path")
         if blocked:

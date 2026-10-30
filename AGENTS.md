@@ -51,7 +51,7 @@ You need Python 3.11 or later and the packages `pyyaml`, `httpx` and `cryptograp
 | Sweep for barred terms and keys | `py -3.14 -X utf8 tools/sweep_barred.py --faias <FAIAS>` |
 | Make the example logs again | `py -3.14 -X utf8 tools/make_example_logs.py` (a local stand-in and a throw-away key; no network call; run it from a checkout with every change committed) |
 | Preflight of an external run | `... --profile <profile.yaml> --settings <external settings.yaml>` (no network call) |
-| Make the channel probe | `... --settings <external settings.yaml> --probes` (one call through the channel, or two with the Direct Line start event; for TP-SEC-002, two turns in one session) |
+| Make the channel probe | `... --settings <external settings.yaml> --probes` (one call through the channel, or two with the Direct Line start event; for TP-SEC-002, three turns in two sessions, or five calls with the start event) |
 | Start an external run | `... --settings <external settings.yaml> --start --sign-key <private key file>` (channel calls; asks for `yes`) |
 | Serve the tool emulator | `py -3.14 -X utf8 -m faias_harness.emulators.mcp_tools serve --tools <tools.yaml> --ledger <new file> [--api-key-env NAME] [--store <store.yaml>]` |
 | Verify a tool ledger | `py -3.14 -X utf8 -m faias_harness.emulators.mcp_tools verify --ledger <ledger.jsonl>` |

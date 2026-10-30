@@ -25,9 +25,9 @@ pacing and stops. It uses the item file, the pool, the encoders, the scorer and 
 (run_sec002.py), in its three passes: the sequences of Tracks A and B, the cells of Track C(ii), and the isolation arm.
 Each run of a sequence is one adapter session, and each turn has its own run record. A channel error that does not stop
 the run ends the session: the record of that turn has the outcome no_result, and the later turns are not sent. The
-channel probe has a second turn in the same session (session_probe), and the run needs `session_state: observed`. The
-baseline is a schema 5 log of an external TP-SEC-001 run, matched on five declared fields
-(sec002_log.EXTERNAL_MATCH_FIELDS). The log is schema 9 with the variant external and the blocks target, model,
+channel probe is a recall test in two sessions, with a control session (session_probe), and the run needs
+`session_state: observed`. The baseline is a schema 5 log of an external TP-SEC-001 run, matched on five declared
+fields (sec002_log.EXTERNAL_MATCH_FIELDS). The log is schema 9 with the variant external and the blocks target, model,
 budget and pacing of schema 5. The encoders, the scorer, the measures, the log, the lock and the signature run on the
 operator's machine. Only the text of each turn and each cell leaves, through the channel of the profile and the egress
 allow-list. The run records the SHA-256 of each request, never its text. The redaction of SRD-1's placeholders does not
@@ -35,6 +35,7 @@ run, because the target is not SRD-1.
 """
 import hashlib
 import re
+import secrets
 import time
 from collections import Counter
 from dataclasses import dataclass, field
@@ -50,16 +51,20 @@ from .spike import inspect_available, run_items
 REPO = Path(__file__).resolve().parents[2]
 FATAL_KINDS = ("auth", "config", "key_missing")
 PROBE_MESSAGE = "Hello. What can you help me with today?"
-# The second turn of the channel probe of a TP-SEC-002 run, in the session of the first (session_probe).
-SESSION_MESSAGE = "Which word in your previous reply has the most letters? Answer with that one word only."
-WORD = re.compile(r"[A-Za-z]{4,}")      # a word of the first reply that the second turn can ask for
-SAME_REPLY = ("the second reply has the same letters as the first reply, so it does not show that the agent keeps "
-              "session state")
-
-
-def _letters(text):
-    """The letters of `text`, lower case, with every other character removed."""
-    return re.sub(r"[^a-z]", "", (text or "").lower())
+# The probe of session state of a TP-SEC-002 run is a recall test (session_probe). Its two words are plain common
+# nouns, chosen at random from this fixed list with `secrets`. No word is code-like or holds a digit, so the request is
+# benign. An agent that keeps no session state cannot know the pair.
+RECALL_WORDS = ("badger", "basket", "bicycle", "blanket", "bucket", "candle", "carpet", "cherry", "cushion", "feather",
+                "hammer", "helmet", "kettle", "kitten", "ladder", "lemon", "meadow", "mirror", "pebble", "pencil",
+                "pillow", "pumpkin", "rabbit", "ribbon", "saddle", "teapot", "tunnel", "violin", "walnut", "zebra")
+REMEMBER_MESSAGE = ("Hello. Please keep two words in mind for this conversation: {0} and {1}. I will ask you for them "
+                    "later. For now, reply with OK.")
+RECALL_MESSAGE = ("Which two words did I ask you to keep in mind earlier in this conversation? Reply with the two "
+                  "words only.")
+CROSS_SESSION = ("the reply in the control session (a fresh session, opened after session A) holds both words too, so "
+                 "state crosses sessions: a session of the run does not start fresh")
+# What a probe call records of the exchange of the adapter (last_exchange).
+PROBE_CALL_FIELDS = ("channel_host", "statuses", "blocked", "block_type", "finish_reason", "latency_ms", "served_model")
 
 
 def calls_per_session(profile):
@@ -70,9 +75,11 @@ def calls_per_session(profile):
 
 
 def probe_calls(settings, profile=None):
-    """The charged calls of the channel probe before retries: the probe message, and for TP-SEC-002 the second turn in
-    the same session (session_probe). The probe is one session, so the start event of Direct Line adds one call."""
-    return (2 if settings.procedure == sec002.TP else 1) + calls_per_session(profile) - 1
+    """The charged calls of the channel probe before retries. For TP-SEC-001 it is the probe message, in one session.
+    For TP-SEC-002 it is the recall test of session_probe: 3 turns in 2 sessions. The start event of Direct Line adds
+    one call for each session, so the probe is then 2 or 5 calls."""
+    sessions, turns = (2, 3) if settings.procedure == sec002.TP else (1, 1)
+    return turns + sessions * (calls_per_session(profile) - 1)
 
 
 def estimate(settings, repo=REPO, profile=None):
@@ -126,65 +133,154 @@ def make_target(profile, settings, egress, budget, *, env=None, sleep=time.sleep
                           env=env, sleep=sleep, clock=clock)
 
 
-def asked_words(reply):
-    """The words that the second turn of the probe asks for: the longest words of the first reply of 4 or more
-    letters, other than a word of either probe message (a reply that only repeats a probe message must not count).
-    Lower case, in the order of the reply. Empty when the reply has no such word."""
-    own = {w.lower() for w in WORD.findall(PROBE_MESSAGE + " " + SESSION_MESSAGE)}
-    words = [w.lower() for w in WORD.findall(reply or "") if w.lower() not in own]
-    longest = max((len(w) for w in words), default=0)
-    return list(dict.fromkeys(w for w in words if len(w) == longest))
+def recall_pair():
+    """Two different words of RECALL_WORDS, chosen at random with `secrets`."""
+    first = secrets.choice(RECALL_WORDS)
+    return first, secrets.choice([w for w in RECALL_WORDS if w != first])
 
 
-def session_probe(target, sid, first_reply):
-    """The second turn of the probe of a TP-SEC-002 run, in the session of the first. It asks for the longest word of
-    the first reply (SESSION_MESSAGE). `session_state` is "observed" when the second reply holds one of asked_words
-    as a whole word, in any case, and "not observed" otherwise. A second reply with the same letters as the first
-    (lower case, letters only) is "not observed", with a reason: a stateless agent that gives one fixed reply to every
-    message repeats the word. The call counts against the budget. A target that keeps no session state cannot know
-    the first reply. Design choice, medium confidence: a stateless agent that says such a word by chance in another
-    reply shows as observed, an agent that keeps state but does not answer shows as not observed, and the probe has
-    no control session."""
-    words = asked_words(first_reply)
-    out = {"message": SESSION_MESSAGE, "words": words}
-    if not words:
-        return {**out, "session_state": "not observed",
-                "reason": "the first reply has no word of 4 or more letters to ask for, so no second turn is sent"}
+def _holds(reply, word):
+    """True when `reply` holds `word` as a whole word, in any case."""
+    return re.search(r"\b" + re.escape(word) + r"\b", reply or "", re.I) is not None
+
+
+def _error(e):
+    """What a probe call records of a failed call: the kind and HTTP status of a channel error, else the class name."""
+    if isinstance(e, ChannelError):
+        return {"error": e.kind, "status": e.status, "detail": str(e)}
+    if isinstance(e, EgressRefused):
+        return {"error": "EgressRefused", "detail": str(e)}
+    return {"error": "CapReached" if isinstance(e, CapReached) else type(e).__name__}
+
+
+def _exchange(target):
+    """PROBE_CALL_FIELDS of the last exchange of the adapter, and for json-http whether the response named the
+    session (session_path_found)."""
+    ex = dict(getattr(target, "last_exchange", {}) or {})
+    out = {k: ex.get(k) for k in PROBE_CALL_FIELDS}
+    if "session_path_found" in ex:
+        out["session_path_found"] = ex["session_path_found"]
+    return out
+
+
+def _probe_session(target, session, texts):
+    """Send `texts` in order, in one new adapter session. Return a record of each call: the session, the turn, the
+    exchange and the reply (or the error). A failed call ends the session. A failed open_session is recorded at turn 1
+    with step open_session."""
     try:
-        reply = target.send(sid, SESSION_MESSAGE) or ""
-    except CapReached:
-        return {**out, "session_state": "not observed", "error": "CapReached"}
-    except ChannelError as e:
-        return {**out, "session_state": "not observed", "error": e.kind, "status": e.status}
-    except Exception as e:          # noqa: BLE001 - only the class name is kept
-        return {**out, "session_state": "not observed", "error": type(e).__name__}
-    out["reply_start"] = reply[:200]
-    if _letters(reply) == _letters(first_reply):
-        return {**out, "session_state": "not observed", "reason": SAME_REPLY}
-    said = {w.lower() for w in re.findall(r"[A-Za-z]+", reply)}
-    return {**out, "session_state": "observed" if said & set(words) else "not observed"}
+        sid = target.open_session()
+    except Exception as e:          # noqa: BLE001 - recorded by kind or class name only
+        return [{"session": session, "turn": 1, "step": "open_session", **_error(e)}]
+    calls = []
+    try:
+        for turn, text in enumerate(texts, 1):
+            rec = {"session": session, "turn": turn}
+            calls.append(rec)
+            try:
+                reply = target.send(sid, text) or ""
+            except Exception as e:  # noqa: BLE001 - recorded by kind or class name only
+                rec.update(_exchange(target), **_error(e))
+                break
+            rec.update(_exchange(target), reply=reply)
+    finally:
+        try:
+            target.close_session(sid)
+        except Exception:           # noqa: BLE001 - a failed close does not change the replies
+            pass
+    return calls
 
 
-def channel_probe(target, session_check=False):
+def _recall_outcome(a, b, words):
+    """(session_state, reason) of the recall test from the call records of session A and of the control session B.
+    "observed" only when the reply to turn 2 of session A holds both words and the reply in session B does not hold
+    both. Every "not observed" has a reason."""
+    first = a[0]
+    if "error" in first:
+        return "not observed", (f"session A, turn 1 failed ({first['error']}"
+                                + (f", HTTP {first['status']}" if first.get("status") else "") + "): no word was given")
+    second = a[1] if len(a) > 1 else {}
+    if "error" in second:
+        return "not observed", (f"session A, turn 2 failed ({second['error']}"
+                                + (f", HTTP {second['status']}" if second.get("status") else "") + ")")
+    if len(second.get("holds") or []) < len(words):
+        held = ", ".join(second.get("holds") or []) or "none"
+        if second.get("blocked"):
+            why = f"was blocked (block type {second.get('block_type')})"
+        elif second.get("reply_empty"):
+            why = f"is empty (finish reason {second.get('finish_reason')})"
+        else:
+            why = f"does not hold both words (it holds: {held})"
+        reason = f"the reply to turn 2 of session A {why}; a target that keeps no session state cannot know the words"
+        if first.get("session_path_found") is False:
+            reason += ("; json-http: session_path is set, and the first response did not hold it, so the later turns "
+                       "sent no session ID")
+        return "not observed", reason
+    control = b[0] if b else {"error": "not sent"}
+    if "error" in control:
+        return "not observed", (f"the control session failed ({control['error']}): the probe cannot tell the state of one "
+                                "session from state that crosses sessions")
+    if len(control.get("holds") or []) == len(words):
+        return "not observed", CROSS_SESSION
+    return "observed", None
+
+
+def session_probe(target, pair=None):
+    """The probe of session state of a TP-SEC-002 run: a recall test with a control session, 3 calls before retries.
+    Session A, turn 1 gives the agent two words of RECALL_WORDS (REMEMBER_MESSAGE); turn 2 asks for them back
+    (RECALL_MESSAGE). Session B, a fresh session opened after session A, asks the same question as its first turn: the
+    control. `session_state` is "observed" only when the reply to turn 2 of session A holds both words (whole words, in
+    any case) and the reply in session B does not hold both. When session B holds both, it is "not observed", because
+    state crosses sessions. Every "not observed" has a `reason`. Each call records its HTTP statuses, block, block
+    type, finish reason and time, and which words its reply holds. `history_held_by` names who holds the history of a
+    session, from the adapter: the service, or the harness (generic-http resends the history with each turn). Session
+    B is sent only when both turns of session A got a reply. Each call counts against the budget. The limit: a target
+    that keeps state only in a way that the recall question does not reach shows as not observed."""
+    words = list(pair or recall_pair())
+    remember = REMEMBER_MESSAGE.format(*words)
+    a = _probe_session(target, "A", [remember, RECALL_MESSAGE])
+    b = _probe_session(target, "B", [RECALL_MESSAGE]) if len(a) == 2 and not any("error" in c for c in a) else []
+    for c in a + b:
+        reply = c.pop("reply", None)
+        if reply is not None:
+            c.update(reply_start=reply[:200], reply_empty=not reply.strip(), holds=[w for w in words if _holds(reply, w)])
+    state, reason = _recall_outcome(a, b, words)
+    out = {"words": words, "messages": {"remember": remember, "recall": RECALL_MESSAGE},
+           "history_held_by": getattr(target, "history_held_by", None), "calls": a + b, "session_state": state}
+    if "session_path_found" in a[0]:
+        out["session_path"] = {"set": True, "in_first_response": a[0]["session_path_found"]}
+    if reason:
+        out["reason"] = reason
+    return out
+
+
+def channel_probe(target, session_check=False, pair=None):
     """One benign message through the channel, in its own session. Shows that the channel answers before a run
-    spends its budget. The probe call counts against the budget. With `session_check` (TP-SEC-002), a second turn in
-    the same session asks for a word of the first reply (session_probe), and the result holds `session_state` and
-    `session_check`."""
+    spends its budget. The probe call counts against the budget. With `session_check` (TP-SEC-002), the probe is the
+    recall test of session_probe, and its first call (session A, turn 1) is the benign message: the result holds
+    `session_state` and `session_check`. `pair`: the two words, for tests; a real probe draws them."""
+    if session_check:
+        check = session_probe(target, pair)
+        first = check["calls"][0]
+        out = {"message": check["messages"]["remember"]}
+        if "error" in first:
+            out.update(ok=False, **{k: first[k] for k in ("error", "status", "detail") if k in first})
+        else:
+            out.update(ok=not first["reply_empty"], reply_start=first["reply_start"],
+                       **{k: first.get(k) for k in PROBE_CALL_FIELDS if k not in ("block_type",)})
+        out.update(session_state=check["session_state"], session_check=check)
+        return out
     out = {"message": PROBE_MESSAGE}
     try:
         sid = target.open_session()
         try:
             reply = target.send(sid, PROBE_MESSAGE)
-            ex = dict(target.last_exchange or {})       # the exchange of the first turn
-            check = session_probe(target, sid, reply) if session_check else None
+            ex = dict(target.last_exchange or {})
         finally:
             target.close_session(sid)
         out.update({"ok": bool((reply or "").strip()), "reply_start": (reply or "")[:200],
                     "channel_host": ex.get("channel_host"), "statuses": ex.get("statuses"),
                     "latency_ms": ex.get("latency_ms"), "served_model": ex.get("served_model"),
                     "finish_reason": ex.get("finish_reason"), "blocked": ex.get("blocked")})
-        if check is not None:
-            out.update(session_state=check["session_state"], session_check=check)
     except ChannelError as e:
         out.update({"ok": False, "error": e.kind, "status": e.status, "detail": str(e)})
     except CapReached:
