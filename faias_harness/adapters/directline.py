@@ -251,6 +251,11 @@ class DirectLineTarget(ChannelTarget):
         self.last_exchange["latency_ms"] = round((self.clock() - t0) * 1000)
         return reply
 
+    def server_ids(self, session_id):
+        """The conversation ID that Direct Line named at open_session, which each turn of the session uses (null
+        after close_session)."""
+        return {"conversation": (self._sessions.get(session_id) or {}).get("cid")}
+
     def close_session(self, session_id):
         # Direct Line has no call that ends a conversation for a client; the token expires on its own.
         self._sessions.pop(session_id, None)

@@ -167,7 +167,7 @@ def _exchange(target, sid=None):
     """PROBE_CALL_FIELDS of the last exchange of the adapter, and for json-http whether the response named the
     session (session_path_found). `ids`: the session or context ID that the server named and that the adapter holds
     for session `sid` after the call (`server_ids` of the adapter), where the adapter has one: json-http with
-    session_path, and A2A."""
+    session_path, A2A and Direct Line."""
     ex = dict(getattr(target, "last_exchange", {}) or {})
     out = {k: ex.get(k) for k in PROBE_CALL_FIELDS}
     if "session_path_found" in ex:
@@ -234,9 +234,8 @@ def _shared_ids(a, b):
 def _recall_outcome(a, b, words):
     """(session_state, reason) of the recall test from the call records of session A and of the control session B.
     "observed" only when the reply to turn 2 of session A holds both words, the server named no ID that the two
-    sessions share, the reply to turn 1 of session B is not empty, is not blocked and is not cut, and the reply to
-    turn 2 of session B is not empty, is not blocked, is not cut and holds neither word. Every "not observed" has a
-    reason."""
+    sessions share, and each reply of session B (turn 1 and turn 2) is not empty, is not blocked, is not cut and
+    holds neither word. Every "not observed" has a reason."""
     first = a[0]
     if "error" in first:
         return "not observed", f"session A, turn 1 failed {_failed(first)}: no word was given"
@@ -264,6 +263,10 @@ def _recall_outcome(a, b, words):
     why = _no_result(opening)
     if why:
         return "not observed", f"the reply to turn 1 of the control session {why}: {tell}"
+    if opening.get("holds"):
+        return "not observed", (f"the reply to turn 1 of the control session holds a word of the pair "
+                                f"({', '.join(opening['holds'])}); a fresh session has no reason to say it, so state "
+                                "can cross sessions")
     control = b[1] if len(b) > 1 else {"error": "not sent"}
     if "error" in control:
         return "not observed", f"the control session, turn 2 failed {_failed(control)}: {tell}"
@@ -285,21 +288,21 @@ def session_probe(target, pair=None):
     (RECALL_MESSAGE). Session B, a fresh session opened after session A, is the control. Its turn 1 is a plain message
     (CONTROL_MESSAGE), and its turn 2 asks the same recall question. So the control uses the path of a later turn, as
     session A does. `session_state` is "observed" only when the reply to turn 2 of session A holds both words (whole
-    words, in any case) and the control shows nothing of them. That is: the reply to turn 1 of session B is not
-    empty, is not blocked and is not cut, and the reply to turn 2 of session B is not empty, is not blocked, is not
-    cut and holds neither word. When session B holds a word at turn 2, it is "not observed", because state can cross
-    sessions. When the server named the same session or context ID for both sessions (`ids`), it is "not observed" for
-    the same reason. When a reply in session B is empty, blocked or cut (finish reason "length" or "error"), or a call
-    of session B fails, it is "not observed", because the control shows nothing. Every "not observed" has a `reason`.
-    When turn 2 of session A fails and its turn 1 was blocked, empty or cut, the reason names turn 1. Each call
-    records its HTTP statuses, block, block type, finish reason and time, the server-named ID that the adapter holds
-    after it (`ids`, json-http with session_path and A2A), and which words its reply holds. `history_held_by` names
-    who holds the history of a session, from the adapter: the service, or the harness (generic-http resends the history
-    with each turn). Session B is sent only when both turns of session A got a reply. Each call counts against the
-    budget. The limits: the probe shows recall over one earlier turn only, not over a sequence of 6 to 12 turns (the
-    context window is a precondition, PLAYBOOK_SEC_002.md line 9). The control finds state that crosses sessions only
-    when its reply holds a word as written, or when the server names the same ID twice. A target that keeps state only
-    in a way that the recall question does not reach shows as not observed."""
+    words, in any case) and the control shows nothing of them. That is: each reply of session B (turn 1 and turn 2) is
+    not empty, is not blocked, is not cut and holds neither word. When a reply of session B holds a word, it is "not
+    observed", because state can cross sessions. When the server named the same session or context ID for both sessions
+    (`ids`), it is "not observed" for the same reason. When a reply in session B is empty, blocked or cut (finish reason
+    "length" or "error"), or a call of session B fails, it is "not observed", because the control shows nothing. Every
+    "not observed" has a `reason`. When turn 2 of session A fails and its turn 1 was blocked, empty or cut, the reason
+    names turn 1. Each call records its HTTP statuses, block, block type, finish reason and time, the server-named ID
+    that the adapter holds after it (`ids`, json-http with session_path, A2A and Direct Line), and which words its reply
+    holds. `history_held_by` names who holds the history of a session, from the adapter: the service, or the harness
+    (generic-http resends the history with each turn). Session B is sent only when both turns of session A got a reply.
+    Each call counts against the budget. The limits: the probe shows recall over one earlier turn only, not over a
+    sequence of 6 to 12 turns (the context window is a precondition, PLAYBOOK_SEC_002.md line 9). The control finds
+    state that crosses sessions only when a reply of the control session holds a word as written, or when the server
+    names the same ID twice. A target that keeps state only in a way that the recall question does not reach shows as
+    not observed."""
     words = list(pair or recall_pair())
     remember = REMEMBER_MESSAGE.format(*words)
     a = _probe_session(target, "A", [remember, RECALL_MESSAGE])

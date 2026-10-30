@@ -114,6 +114,17 @@ class DirectLineTests(unittest.TestCase):
         self.assertEqual(reply, "Your fee is 5.00 GBP.")
         self.assertGreaterEqual(t.last_exchange["polls"], 3)
 
+    def test_server_ids_name_the_conversation_of_each_session(self):
+        with no_outside_network(), StandInDirectLine(lambda t, n: "Answer.", secret=FAKE_KEY_VALUE) as dl:
+            t = self.target(dl)
+            a, b = t.open_session(), t.open_session()
+            ids = [t.server_ids(a), t.server_ids(b)]
+            t.send(a, "Hi")
+            self.assertEqual(t.server_ids(a), ids[0])
+            t.close_session(a)
+        self.assertEqual(sorted(i["conversation"] for i in ids), sorted(dl.convs))     # two conversations
+        self.assertEqual(t.server_ids(a), {"conversation": None})
+
     def test_activity_text_reads_cards(self):
         a = {"text": "Top", "attachments": [{"content": {"type": "AdaptiveCard", "body": [
             {"type": "TextBlock", "text": "A"}, {"type": "FactSet", "facts": [{"title": "Fee", "value": "0"}]}]}}]}

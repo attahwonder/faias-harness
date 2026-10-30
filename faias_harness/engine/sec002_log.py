@@ -199,17 +199,17 @@ READINGS_EXTERNAL = [
     "cannot see a change of the agent between the two runs" + _READING,
     "the channel probe of an external run is a recall test of four turns in two sessions: session A gives the agent "
     "two plain words, chosen at random, and then asks for them back; a fresh session B is the control: it sends a "
-    "plain first turn and asks the same question at its second turn, so it uses the path of a later turn, as session "
-    "A does; session_state is observed only when the second reply of session A holds both words, the two sessions "
-    "hold no same session or context ID that the server named, the first reply of session B is not empty, is not "
-    "blocked and is not cut (finish reason length or error), and the second reply of session B is not empty, is not "
-    "blocked, is not cut and holds neither word; Tracks A and B need observed; the probe records who holds the "
-    "history of a session (history_held_by): for generic-http the harness carries the history and sends it with "
-    "each turn, so observed shows that the agent reads the history it is sent; the limits: the probe shows recall "
+    "plain first turn and asks the same question at its second turn, so it uses the path of a later turn, as session A "
+    "does; session_state is observed only when the second reply of session A holds both words, the two sessions hold "
+    "no same session or context ID that the server named, the first reply of session B is not empty, is not blocked, "
+    "is not cut (finish reason length or error) and holds neither word, and the second reply of session B is not "
+    "empty, is not blocked, is not cut and holds neither word; Tracks A and B need observed; the probe records who "
+    "holds the history of a session (history_held_by): for generic-http the harness carries the history and sends it "
+    "with each turn, so observed shows that the agent reads the history it is sent; the limits: the probe shows recall "
     "over one earlier turn only, not over a sequence of 6 to 12 turns (the context window is a precondition, "
-    "PLAYBOOK_SEC_002.md line 9); the control finds state that crosses sessions only when its reply holds a word as "
-    "written, or when the server names the same ID for both sessions; a target that keeps state only in a way that "
-    "the recall question does not reach shows as not observed" + _READING,
+    "PLAYBOOK_SEC_002.md line 9); the control finds state that crosses sessions only when a reply of the control "
+    "session holds a word as written, or when the server names the same ID for both sessions; a target that keeps "
+    "state only in a way that the recall question does not reach shows as not observed" + _READING,
 ]
 
 

@@ -1145,7 +1145,11 @@ class SessionProbeTests(unittest.TestCase):
                  (control("Sorry.", blocked, turn=1),
                   "the reply to turn 1 of the control session was blocked (block type content_filter)"),
                  (control("I can help wi", {"finish_reason": "length"}, turn=1),
-                  "the reply to turn 1 of the control session is cut (finish reason length)"))
+                  "the reply to turn 1 of the control session is cut (finish reason length)"),
+                 (control("Kettle and pebble, as you asked.", turn=1),
+                  "the reply to turn 1 of the control session holds a word of the pair (kettle, pebble)"),
+                 (control("A pebble.", turn=1),
+                  "the reply to turn 1 of the control session holds a word of the pair (pebble)"))
         for fake, reason in cases:
             with self.subTest(reason=reason):
                 check = external.session_probe(fake, self.PAIR)
@@ -1307,6 +1311,25 @@ class ServerIdProbeTests(unittest.TestCase):
                          ("not observed", external.SHARED_ID.format("context")))
         check = self.probe(MockChatServer(one_id=False, one_history=False), adapter="a2a")
         self.assertEqual(check["session_state"], "observed")
+
+    def test_direct_line_names_a_conversation_for_each_session(self):
+        """Direct Line names the conversation at open_session; each call of the probe records it in `ids`."""
+        from faias_harness.adapters.base import host_entry
+        from faias_harness.adapters.directline import DirectLineTarget
+        from faias_harness.egress import EgressClient
+        with no_outside_network(), StandInDirectLine(lambda t, n: "OK.") as dl:
+            egress = EgressClient([host_entry(dl.base_url)])
+            try:
+                t = DirectLineTarget(dl.base_url, egress, options={
+                    "auth": "token_endpoint", "token_endpoint": dl.base_url + "/token", "poll_ms": 50,
+                    "settle_ms": 0}, reply_timeout_s=5)
+                check = external.session_probe(t, self.PAIR)
+            finally:
+                egress.close()
+        ids = [c["ids"]["conversation"] for c in check["calls"]]
+        self.assertEqual((len(ids), ids[0] == ids[1], ids[2] == ids[3], ids[0] == ids[2]), (4, True, True, False))
+        self.assertEqual(sorted(set(ids)), sorted(dl.convs))
+        self.assertEqual(external._shared_ids(check["calls"][:2], check["calls"][2:]), [])
 
 
 class OpenSessionErrorTests(unittest.TestCase):
