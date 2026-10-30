@@ -5,7 +5,9 @@ library that bypasses this client, is not stopped. A full sandbox (H-01 of the S
 step.
 
 A request to a host that is not on the list is refused: the client raises EgressRefused, sends nothing and logs
-the refusal. A redirect is not followed. The client ignores proxy settings in the environment.
+the refusal. A redirect is not followed. The client ignores proxy settings in the environment. The client keeps the
+cookies that responses set, as an HTTP client does; `clear_cookies` forgets them (each external adapter calls it at
+each new session).
 The log holds the method, scheme, host, port, path and status. It never holds a header, a body or a query.
 """
 import json
@@ -73,6 +75,12 @@ class EgressClient:
 
     def close(self):
         self._client.close()
+
+    def clear_cookies(self):
+        """Forget every cookie that a response has set. Each external adapter calls it at each `open_session`, so a
+        session starts with no cookie of an earlier session. Within one session, a cookie still goes with each later
+        request. The SRD-1 adapter and the gateway do not call it."""
+        self._client.cookies.clear()
 
     def _allowed(self, scheme, host, port):
         if scheme not in DEFAULT_PORTS:

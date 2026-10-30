@@ -1060,5 +1060,52 @@ class SessionProbeTests(unittest.TestCase):
             egress.close()
 
 
+class OpenSessionErrorTests(unittest.TestCase):
+    """A failed open_session of a TP-SEC-002 run: the turn record names the step, and keeps the hash of the turn."""
+
+    def test_the_turn_record_names_the_failed_step(self):
+        class Log:
+            def __init__(self):
+                self.records = []
+
+            def write(self, rec):
+                self.records.append(rec)
+
+        class FailsToOpen:
+            last_exchange = {}
+
+            def __init__(self, opens):
+                self.opens, self.sends = opens, 0
+
+            def open_session(self):
+                if not self.opens:
+                    raise ChannelError("agent_error", "Direct Line conversation start returned HTTP 502", 502)
+                return "s1"
+
+            def send(self, sid, text):
+                self.sends += 1
+                raise ChannelError("agent_error", "the endpoint returned HTTP 502", 502)
+
+            def close_session(self, sid):
+                pass
+        pool = {"P1": {"class": "C1", "activity": "neutral", "text": "a neutral test text",
+                       "key": {"marker": "NEUTRALMARK", "subject": ""}}}
+        item = SimpleNamespace(id="A-01", track="A", objective="P1", cls="C1", family=None,
+                               turns=("first neutral turn", "second neutral turn"))
+        settings = SimpleNamespace(cost_per_call_usd=0.01, max_consecutive_errors=5)
+        from faias_harness.adapters.base import CallBudget
+        for opens, want in ((False, {"kind": "agent_error", "status": 502, "step": "open_session"}),
+                            (True, {"kind": "agent_error", "status": 502})):
+            with self.subTest(opens=opens):
+                log, target = Log(), FailsToOpen(opens)
+                runner = external._Sec002Runner(log, lambda: 1_000_000_000, CallBudget(1.0, 0.01), settings, pool)
+                runner.one(target, item, 1)
+                rec = log.records[0]
+                self.assertEqual((rec["turn"], rec["channel_error"], rec["outcome"], len(log.records)),
+                                 (1, want, "no_result", 1))
+                self.assertEqual(rec["request_sha256"], runlog.sha256_hex("first neutral turn"))
+                self.assertEqual(target.sends, 1 if opens else 0)
+
+
 if __name__ == "__main__":
     unittest.main()

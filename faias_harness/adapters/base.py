@@ -6,6 +6,9 @@ client of that channel. It sees what the channel returns and nothing behind it.
 
 Rules every channel adapter follows:
 - Every request goes through the shared egress client, so the allow-list applies.
+- `open_session` first clears the cookies of the egress client (`clear_cookies`). One client serves the whole run,
+  and an endpoint that keys its session by a cookie must see each harness session as a new session. Within one
+  session the cookies still go with each request.
 - A key comes from the environment variable that the profile names. The key never goes in a file, a log, an error
   message or `last_exchange`.
 - Before each attempt that may reach the agent, the adapter calls `before_send`. The engine's call budget uses

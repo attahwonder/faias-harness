@@ -33,7 +33,7 @@ After each `send`, `last_exchange` holds what the channel showed. That is the ho
 
 | Adapter | Names the model | Names a block | Notes |
 |---|---|---|---|
-| `directline` | no | no | A reply that the platform replaced with a fallback message counts as a reply. Other activity types are recorded by name. |
+| `directline` | no | no | A reply that the platform replaced with a fallback message counts as a reply. A message activity with no `replyToId` is part of the reply, and its ID and the count are recorded apart (`replies_without_reply_to`). The token and conversation calls are not charged or paced. Other activity types are recorded by name. |
 | `openai-responses` | yes (as the response names it) | refusal part; incomplete reason or HTTP 400 code `content_filter` | Incomplete reason `max_output_tokens` is finish reason `length`. |
 | `a2a` | no | task state rejected (`a2a_rejected`) | A task that is not final is read again (not charged) until final, interrupted or timed out. |
 | `json-http` | where `model_path` names it | where `blocked_path` is true | A response without the reply path is a channel error. |
@@ -42,6 +42,7 @@ After each `send`, `last_exchange` holds what the channel showed. That is the ho
 ## Rules for every adapter
 
 - The adapter sends traffic only to the endpoints that the profile names, through the shared egress client.
+- `open_session` clears the cookies of the egress client first. One client serves a whole run, so a session must not carry the cookie of an earlier session. Within one session, the cookies still go with each request.
 - Keys come from environment variables. A key never goes in a file, a log, an error message or `last_exchange`.
 - The adapter calls `before_send` before every attempt that may reach the agent, so the call budget counts it.
 - It retries only HTTP 429 and 503, where the channel did not process the request, at most twice by default.

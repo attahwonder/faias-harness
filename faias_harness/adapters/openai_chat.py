@@ -69,6 +69,7 @@ class OpenAIChatTarget(ChannelTarget):
         self._n = 0
 
     def open_session(self):
+        self.egress.clear_cookies()         # a new session carries no cookie of an earlier one
         self._n += 1
         sid = f"s{self._n}"
         self._sessions[sid] = []

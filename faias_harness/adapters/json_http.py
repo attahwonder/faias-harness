@@ -149,6 +149,7 @@ class JsonHttpTarget(ChannelTarget):
         self._sessions = {}
 
     def open_session(self):
+        self.egress.clear_cookies()         # a new session carries no cookie of an earlier one
         sid = "j" + secrets.token_hex(6)
         # without a session path, the harness's own ID is the session ID; with one, the server names it later
         self._sessions[sid] = {"server_id": None if self.session_path else sid}

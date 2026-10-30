@@ -394,6 +394,31 @@ class ReviewFixAdapterTests(unittest.TestCase):
         self.assertEqual(budget.calls, 1)
         self.assertIn("read_http_503", t.last_exchange["retry_reasons"])
 
+    def test_a_reply_activity_with_no_reply_to_id_is_kept_and_recorded_apart(self):
+        """A bot may not set replyToId, so such an activity is kept in the reply. It may also be a banner, so the
+        exchange names it apart: its ID and the count."""
+        class Banner(StandInDirectLine):
+            def _post(self, cid, conv, body):
+                status, out, headers = super()._post(cid, conv, body)
+                if body.get("type") == "message":
+                    conv["pending"][-1]["acts"].append({"type": "message", "from": {"id": "examplebot"},
+                                                        "text": "Our branches close early on Friday."})
+                return status, out, headers
+        with no_outside_network(), Banner(lambda t, n: "Answer.", secret=FAKE_KEY_VALUE) as dl:
+            t = DirectLineTarget(dl.base_url, egress_for(dl.base_url), options={"auth": "secret", **FAST_DL},
+                                 api_key_env=KEY_ENV, env=ENV, reply_timeout_s=5)
+            reply = t.send(t.open_session(), "q")
+        ex = t.last_exchange
+        self.assertEqual(reply, "Answer.\nOur branches close early on Friday.")
+        self.assertEqual((len(ex["ids"]["replies"]), ex["replies_without_reply_to"]), (2, 1))
+        self.assertEqual(ex["ids"]["replies_without_reply_to"], ex["ids"]["replies"][1:])
+        with no_outside_network(), StandInDirectLine(lambda t, n: "Answer.", secret=FAKE_KEY_VALUE) as dl:
+            t = DirectLineTarget(dl.base_url, egress_for(dl.base_url), options={"auth": "secret", **FAST_DL},
+                                 api_key_env=KEY_ENV, env=ENV, reply_timeout_s=5)
+            t.send(t.open_session(), "q")
+        self.assertEqual((t.last_exchange["replies_without_reply_to"],
+                          t.last_exchange["ids"]["replies_without_reply_to"]), (0, []))
+
     def test_greeting_wait_is_bounded(self):
         from faias_harness.adapters import directline
         with no_outside_network(), StandInDirectLine(lambda t, n: "Answer.", greeting=None) as dl, \
@@ -406,3 +431,85 @@ class ReviewFixAdapterTests(unittest.TestCase):
             sid = t.open_session()
             self.assertLess(_t.monotonic() - t0, 5)
             self.assertEqual(t.send(sid, "q"), "Answer.")
+
+
+class CookieApp(StandInJsonApp):
+    """A json-http endpoint that keys its session by a cookie: it sets one when a request carries none, and keeps the
+    Cookie header of each request it gets."""
+
+    def __init__(self):
+        super().__init__(lambda t, n: "Fine.")
+        self.cookies, self._n = [], 0
+
+    def route(self, method, path, query, headers, body):
+        self.cookies.append(headers.get("Cookie"))
+        status, out, extra = super().route(method, path, query, headers, body)
+        if headers.get("Cookie") is None:
+            self._n += 1
+            extra = {**(extra or {}), "Set-Cookie": f"sess=s{self._n}; Path=/"}
+        return status, out, extra
+
+
+class CookieTests(unittest.TestCase):
+    """One egress client serves a whole run. Each external adapter clears its cookies at open_session."""
+
+    def test_a_cookie_set_in_session_1_goes_with_turn_2_and_not_with_session_2(self):
+        from faias_harness.adapters.json_http import JsonHttpTarget
+        with no_outside_network(), CookieApp() as app:
+            t = JsonHttpTarget(app.base_url + "/api/chat", egress_for(app.base_url),
+                               options={"request": {"message": "{message}"}, "reply_path": "data.reply.text"})
+            s1 = t.open_session()
+            t.send(s1, "one")
+            t.send(s1, "two")
+            t.close_session(s1)
+            s2 = t.open_session()
+            t.send(s2, "three")
+        self.assertEqual(app.cookies, [None, "sess=s1", None])
+
+    def test_every_external_adapter_clears_the_cookies_at_open_session(self):
+        """Each adapter of the registry clears before any request of the session. The SRD-1 adapter does not."""
+        from faias_harness.adapters import srd1_http
+        opts = {"directline": {"auth": "token_endpoint", "token_endpoint": "http://127.0.0.1:9/token"},
+                "openai-responses": {"body": {"model": "m"}}, "a2a": {}, "generic-http": {"model": "m"},
+                "json-http": {"request": {"message": "{message}"}, "reply_path": "r"}}
+        self.assertEqual(set(opts), set(registry.ADAPTERS))
+        for adapter, o in opts.items():
+            with self.subTest(adapter=adapter):
+                egress = EgressClient(["127.0.0.1:9"])
+                _CLIENTS.append(egress)
+                order = []
+
+                def stop(*a, **k):
+                    order.append("request")
+                    raise ChannelError("transport", "the test stops at the first request")
+                with mock.patch.object(egress, "clear_cookies", side_effect=lambda: order.append("clear")), \
+                        mock.patch.object(egress, "request", side_effect=stop):
+                    t = registry.ADAPTERS[adapter].cls("http://127.0.0.1:9", egress, options=o)
+                    try:
+                        t.open_session()
+                    except ChannelError:
+                        pass
+                self.assertEqual(order[:1], ["clear"], order)
+        egress = EgressClient(["127.0.0.1:9"])
+        _CLIENTS.append(egress)
+        with mock.patch.object(egress, "clear_cookies") as clear, \
+                mock.patch.object(egress, "request", return_value=mock.Mock(status_code=200,
+                                                                            json=lambda: {"session_id": "x"})):
+            self.assertEqual(srd1_http.Srd1ChatTarget("http://127.0.0.1:9", egress).open_session(), "x")
+        clear.assert_not_called()
+
+    def test_the_srd1_client_keeps_its_cookies(self):
+        """The SRD-1 engines are not changed: their client keeps a cookie across sessions, as before."""
+        import httpx
+        from faias_harness.adapters import srd1_http
+        seen = []
+
+        def handler(request):
+            seen.append(request.headers.get("Cookie"))
+            return httpx.Response(200, json={"session_id": f"s{len(seen)}"}, headers={"Set-Cookie": "srd=1; Path=/"})
+        egress = EgressClient(["127.0.0.1:9"], transport=httpx.MockTransport(handler))
+        _CLIENTS.append(egress)
+        t = srd1_http.Srd1ChatTarget("http://127.0.0.1:9", egress)
+        t.open_session()
+        t.open_session()
+        self.assertEqual(seen, [None, "srd=1"])

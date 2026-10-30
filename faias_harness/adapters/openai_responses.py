@@ -107,6 +107,7 @@ class ResponsesTarget(ChannelTarget):
         self._n = 0
 
     def open_session(self):
+        self.egress.clear_cookies()         # a new session carries no cookie of an earlier one
         self._n += 1
         sid = f"r{self._n}"
         self._sessions[sid] = {"previous": None}

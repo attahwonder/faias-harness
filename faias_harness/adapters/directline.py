@@ -22,9 +22,14 @@ What the channel shows, and what it does not:
 - It shows the reply activities, their IDs and types, the host that answered, the HTTP statuses and the time.
 - It does not show the model, the tokens, the cost or the platform's content filter. A reply that the platform
   replaced with a fallback message is a reply: the harness cannot tell it from a defence. `blocked` stays None.
-- A reply is the text of every message activity from the agent that answers the harness's message (replyToId),
-  with the text blocks of any attached card, joined by new lines. Other activity types are recorded by name
-  in `last_exchange` and not read.
+- A reply is the text of every message activity from the agent whose replyToId is the harness's message or is not
+  set, with the text blocks of any attached card, joined by new lines. A bot may not set replyToId, so an activity
+  without it is kept. Such an activity may also be a banner or a late reply to another turn, so `last_exchange`
+  records them apart: their IDs in `ids.replies_without_reply_to` and their count in `replies_without_reply_to`.
+  An activity with another replyToId is not read. Other activity types are recorded by name in `last_exchange` and
+  not read.
+- The token and conversation calls of `open_session` go to the Direct Line service, not to the agent. They are not
+  charged against the call budget and are not paced. The start event is charged, as a send.
 """
 import secrets
 
@@ -139,6 +144,7 @@ class DirectLineTarget(ChannelTarget):
 
     def open_session(self):
         self._new_exchange()
+        self.egress.clear_cookies()         # a new session carries no cookie of an earlier one
         user_id = "dl_faias_" + secrets.token_hex(6)
         token = self._token(user_id)
         data = self._check(self._request("POST", self.endpoint + API + "/conversations",
@@ -178,7 +184,7 @@ class DirectLineTarget(ChannelTarget):
         """Read the activity set until the reply is complete, the conversation ends or the timeout passes."""
         s = self._sessions[sid]
         ex = self.last_exchange
-        texts, reply_ids, types = [], [], {}
+        texts, reply_ids, no_reply_to, types = [], [], [], {}
         deadline = self.clock() + (self.reply_timeout_s if timeout_s is None else timeout_s)
         last_new, ended, polls = None, False, 0
         while True:
@@ -202,6 +208,8 @@ class DirectLineTarget(ChannelTarget):
                 if text:
                     texts.append(text)
                 reply_ids.append(a.get("id"))
+                if a.get("replyToId") is None:
+                    no_reply_to.append(a.get("id"))
                 last_new = self.clock()
             if data.get("watermark") is not None:
                 s["watermark"] = data["watermark"]
@@ -215,7 +223,9 @@ class DirectLineTarget(ChannelTarget):
             self.sleep(self.poll_s)
         if ended:
             ex["finish_reason"] = "end_of_conversation"
-        ex["ids"] = {"conversation": s["cid"], "sent": sent_id, "replies": reply_ids}
+        ex["ids"] = {"conversation": s["cid"], "sent": sent_id, "replies": reply_ids,
+                     "replies_without_reply_to": no_reply_to}
+        ex["replies_without_reply_to"] = len(no_reply_to)
         ex["activity_types"] = types
         ex["polls"] = polls
         return "\n".join(texts)

@@ -154,6 +154,7 @@ class A2ATarget(ChannelTarget):
         return m
 
     def open_session(self):
+        self.egress.clear_cookies()         # a new session carries no cookie of an earlier one
         sid = "a" + secrets.token_hex(6)
         self._sessions[sid] = {"context": None}
         return sid
