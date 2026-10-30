@@ -15,13 +15,15 @@ SRD-1 gateway. In evidence mode it refuses, before the lock, a baseline log of a
 evidence mode, one whose signature does not verify against baseline_pubkey, and one whose stored scores this scorer
 does not give again (sec002_log.evidence_problems).
 
-Each reply is redacted of SRD-1's staged placeholders (sec006.redact) and scored (sec002.score_turn). Then each copy
-of an encoded pool text in it is replaced by CELL_TEXT_REMOVED, before the record is written. So no file that the
-harness writes holds a transformed string (line 20). The score is that of the reply before this replacement. So where
-a score depends on a copy that was taken out, a rescore of the stored reply differs from the record; a rescore from
-the store (store_replies hash_only) reads the reply as received. The run gives the Inspect solver the reply as
-stored, and the Inspect sample of a cell shows the placeholder text sec002.CELL_TEXT. SRD-1's own trace store keeps
-each message as sent, the cell texts included. It goes in the folder target/ of the run folder, with a README.
+Each reply is redacted of SRD-1's staged placeholders (sec006.redact). Then each copy of an encoded pool text in it is
+replaced by sec002.CELL_TEXT_REMOVED (sec002.remove_cell_texts), and the text that remains is scored
+(sec002.score_turn), for every track. So no file that the harness writes holds a transformed string (line 20), and a
+reply that only echoes a cell text is not a success: it repeats the request. The record stores that text (store_replies
+full) or the SHA-256 of the reply as received (hash_only). A rescore of the stored reply, and a rescore from the store
+of the replies as received, make the same removal before the score, so both give the score of the record again. The
+run gives the Inspect solver the reply as stored, and the Inspect sample of a cell shows the placeholder text
+sec002.CELL_TEXT. SRD-1's own trace store keeps each message as sent, the cell texts included. It goes in the folder
+target/ of the run folder, with a README.
 
 This engine runs with tools off: SRD-1 sends no tool definition to the model.
 """
@@ -47,8 +49,6 @@ TRACE_STORE = ("SRD-1's own trace store (C-15) keeps each message as sent, the e
                "target/ of the run folder; keep it out of the working papers")
 E2_FILE = "targets/srd1/channel_inputs.yaml"
 E2_FIELDS = ("languages", "transformation_families", "declared_by", "declared_on", "status")
-# The mark that takes the place of each copy of an encoded pool text in a reply, in the form of the TP-DAT-009 mark.
-CELL_TEXT_REMOVED = "[cell text removed]"
 _pass = run_sec006._pass        # one pass of either engine, as for TP-SEC-006
 
 
@@ -174,34 +174,24 @@ def build_header(settings, *, allow_hosts, config, session, baseline, e2, confir
 
 class _Runner(run_sec006._Runner):
     """One run of one sequence, one cell or one isolation item: send each turn in one conversation, read its trace,
-    redact the reply (a sequence turn with the earlier replies of its conversation), score it, take out each copy of an
-    encoded pool text and write its record. Both engines call `one`. After a stop, `one` sends nothing and returns
-    None.
+    redact the reply (a sequence turn with the earlier replies of its conversation), take out each copy of an encoded
+    pool text, score the text that remains and write its record. Both engines call `one`. After a stop, `one` sends
+    nothing and returns None.
 
     `pool` is the objective pool (sec002.load_items). A cell text is made from the pool text when the cell is sent."""
 
     def __init__(self, log, clock_ns, pool, placeholders, store, halt_on_mismatch=False):
         super().__init__(log, clock_ns, None, placeholders, store, halt_on_mismatch=halt_on_mismatch)
         self.pool = pool
-        # Each encoded form of each pool text, under each family, longest first: no record may hold one (line 20).
-        self.encoded = sorted({sec002_families.encode(f, e["text"]) for e in pool.values()
-                               for f in sec002_families.FAMILIES}, key=len, reverse=True)
-        self.removed = 0            # the copies replaced by CELL_TEXT_REMOVED over the run
+        # Each encoded form of each pool text, under each family: no record may hold one (line 20).
+        self.encoded = sec002.encoded_forms(e["text"] for e in pool.values())
+        self.removed = 0            # the copies replaced by sec002.CELL_TEXT_REMOVED over the run
 
     def sent(self, item):
         """What one run of `item` sends: the turns of a sequence or an isolation item, or the cell text."""
         if item.track == "C":
             return (sec002_families.encode(item.family, self.pool[item.objective]["text"]),)
         return item.turns
-
-    def _remove(self, text):
-        """(the text with each copy of an encoded pool text replaced by CELL_TEXT_REMOVED, the number of copies)."""
-        n = 0
-        for e in self.encoded:
-            if e in text:
-                n += text.count(e)
-                text = text.replace(e, CELL_TEXT_REMOVED)
-        return text, n
 
     def one(self, target, item, n):
         self.last_no_result, self.last_score = False, None
@@ -242,10 +232,10 @@ class _Runner(run_sec006._Runner):
 
     def _record(self, item, n, t_ns, request, reply, tr, turn, n_turns, earlier=()):
         redacted, counts = sec006.redact(reply, self.placeholders, earlier)
-        score = sec002.score_turn(self.pool[item.objective], redacted, item.family if item.track == "C" else None)
-        outcome = sec002.outcome(score, redacted, tr.get("finish_reason"), tr.get("blocked"))
-        stored, removed = self._remove(redacted)        # after the score, so the score is of the reply as given
+        stored, removed = sec002.remove_cell_texts(redacted, self.encoded)     # remove first, then score
         self.removed += removed
+        score = sec002.score_turn(self.pool[item.objective], stored, item.family if item.track == "C" else None)
+        outcome = sec002.outcome(score, stored, tr.get("finish_reason"), tr.get("blocked"))
         self.hosts[str(tr["served_host"])] += 1
         self.models[str(tr["model_served"])] += 1
         halt = spike.host_tally(self, tr["host_ok"])
