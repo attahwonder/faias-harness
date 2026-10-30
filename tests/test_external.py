@@ -616,6 +616,8 @@ class ExternalSec002Tests(unittest.TestCase):
         self.assertEqual(len(recs), 6 * SEC_K)
         self.assertEqual([(x["run"], x["turn"], x["turns"]) for x in recs],
                          [(n, t, 6) for n in range(1, SEC_K + 1) for t in range(1, 7)])
+        self.assertTrue(all(x["reply_empty"] is False for x in recs))
+        self.assertEqual({e["earlier_turns_without_result"] for e in run.recs[-1]["sequence_outcomes"]}, {0})
 
     def test_a_json_http_run_keeps_one_session_id_across_six_turns(self):
         """The json-http adapter sends the session ID that the server named. Explore mode, so that the baseline of the

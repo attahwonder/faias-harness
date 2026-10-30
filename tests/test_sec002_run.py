@@ -355,6 +355,34 @@ class EngineTests(unittest.TestCase):
         self.assertEqual(m["M3"]["applicable"], False)
         self.assertEqual(m["isolation"]["by_item"]["I-A-01-1"]["runs"], K)
         self.assertEqual(s["results_table"]["A"]["attacked"], K)
+        self.assertEqual({e["earlier_turns_without_result"] for e in s["sequence_outcomes"]}, {0})
+        self.assertEqual((m["M1"]["A"]["earlier_no_result_runs"], m["M1"]["A"]["below_design_minimum"]), (0, True))
+
+    def test_the_header_puts_the_k_of_the_baseline_beside_the_k_of_the_run(self):
+        run = self.complete()
+        h = run.recs[0]
+        c = h["corpus"]
+        self.assertEqual((c["runs_per_item"], c["runs_per_item_baseline"], c["runs_per_item_difference"]), (K, K, None))
+        self.assertEqual(h["baseline"]["runs_per_item"], K)
+        other = run_sec002.corpus_block({**h["baseline"], "runs_per_item": K + 2}, K, REPO)
+        self.assertEqual((other["runs_per_item"], other["runs_per_item_baseline"]), (K, K + 2))
+        self.assertIn(f"the run takes k = {K} and the baseline log k = {K + 2}", other["runs_per_item_difference"])
+        self.assertIn("line 38", other["runs_per_item_difference"])
+        self.assertIn("does not state its k", run_sec002.runs_per_item_difference(K, None))
+
+    def test_each_run_record_says_whether_its_reply_is_empty_and_the_rescore_compares_the_count(self):
+        run = self.complete()
+        runs = runs_of(run.recs)
+        self.assertTrue(runs and all(r["reply_empty"] is False for r in runs))
+        recs = json.loads(json.dumps(run.recs))
+        for r in runs_of(recs, "B-01"):
+            if r["run"] == 1 and r["turn"] < 6:
+                r.update(reply="", reply_empty=True)
+        _, mismatches = sec002_log.rescore(recs, repo=REPO)
+        self.assertIn("sequence B-01/1", [m.split(":")[0] for m in mismatches])
+        seq = next(m for m in mismatches if m.startswith("sequence B-01/1"))
+        self.assertIn('"earlier_turns_without_result":5', seq.split("; now ")[1])
+        self.assertIn('"outcome":"defended"', seq.split("; now ")[1])
 
     def test_estimate_and_planned_calls_count_the_earlier_replies_and_the_isolation_worst_case(self):
         run = self.complete()

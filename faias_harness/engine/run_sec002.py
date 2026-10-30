@@ -17,8 +17,10 @@ does not give again (sec002_log.evidence_problems).
 
 Each reply is redacted of SRD-1's staged placeholders (sec006.redact). Then each copy of an encoded pool text in it is
 replaced by sec002.CELL_TEXT_REMOVED (sec002.remove_cell_texts), and the text that remains is scored
-(sec002.score_turn), for every track. So no file that the harness writes holds a transformed string (line 20), and a
-reply that only echoes a cell text is not a success: it repeats the request. The record stores that text (store_replies
+(sec002.score_turn), for every track. So no file that the harness writes holds a whole copy of a transformed string as
+the engine made it (line 20), and a reply that only echoes a cell text is not a success: it repeats the request. The
+removal finds exact copies only. A partial or re-wrapped echo of the request (a part of the text, or the text with
+other line breaks or spaces) is not removed, and it stays in the stored reply. The record stores that text (store_replies
 full) or the SHA-256 of the reply as received (hash_only). A rescore of the stored reply, and a rescore from the store
 of the replies as received, make the same removal before the score, so both give the score of the record again. The
 run gives the Inspect solver the reply as stored, and the Inspect sample of a cell shows the placeholder text
@@ -124,10 +126,22 @@ def procedure_block(repo=REPO):
             "faias_version": sec002.FAIAS_VERSION, "source": rec["source"]}
 
 
+def runs_per_item_difference(k, baseline_k):
+    """The words that name a difference between the k of the run and the k of the baseline log, or None when they are
+    equal. Line 38 compares the uplift with the run-to-run variance of TP-SEC-001, and that variance depends on k."""
+    if baseline_k == k:
+        return None
+    if baseline_k is None:
+        return f"the run takes k = {k}; the baseline log does not state its k"
+    return (f"the run takes k = {k} and the baseline log k = {baseline_k}: line 38 compares the uplift with the "
+            "run-to-run variance of TP-SEC-001, and a different k gives a different variance")
+
+
 def corpus_block(baseline, k, repo=REPO):
     """The corpus block of a schema 9 header, for a run on SRD-1 minimal and for an external run: the pool with the
     facts of each objective in `baseline`, the track counts, the families, the languages, the cells table, the
-    manifest, the items hash, k with its basis, the authorship and the scorer keys. No item text."""
+    manifest, the items hash, k with its basis, the k of the baseline log beside it with any difference, the
+    authorship and the scorer keys. No item text."""
     data = sec002.load_set(repo)
     seqs, _, pool = sec002.load_items(repo)
     classes = {o: e["class"] for o, e in pool.items()}
@@ -140,6 +154,8 @@ def corpus_block(baseline, k, repo=REPO):
             "runs_per_item_basis": ('"Two runs per sequence minimum" and "three is preferred where budget '
                                     'allows" (PLAYBOOK_SEC_002.md line 24); each sequence, cell and isolation '
                                     f"item runs k = {k} times, and the settings take 3 to 20"),
+            "runs_per_item_baseline": baseline.get("runs_per_item"),
+            "runs_per_item_difference": runs_per_item_difference(k, baseline.get("runs_per_item")),
             "authors": data.get("authors"), "generated_by": data.get("generated_by"), "scorer_keys": keys,
             "scoring": "deterministic; no model judge"}
 
@@ -260,7 +276,9 @@ class _Runner(run_sec006._Runner):
             run.update(turn=turn, turns=n_turns)
         if item.track == "C":
             run["family"] = item.family
-        self.runs.append({**run, "score": score, "outcome": outcome})
+        empty = not (stored or "").strip()
+        self.runs.append({**run, "score": score, "outcome": outcome, "finish_reason": tr.get("finish_reason"),
+                          "reply_empty": empty})
         rec = {"type": "run", **run, "t_ns": t_ns, "time": runlog.iso(t_ns),
                "request_sha256": runlog.sha256_hex(request)}
         full = self.store == "full"
@@ -268,7 +286,7 @@ class _Runner(run_sec006._Runner):
             rec["reply"] = stored
         else:
             rec["reply_sha256"] = runlog.sha256_hex(reply or "")
-        rec.update(score=score, outcome=outcome, placeholders=counts, cell_texts_removed=removed,
+        rec.update(score=score, outcome=outcome, placeholders=counts, cell_texts_removed=removed, reply_empty=empty,
                    finish_reason=tr.get("finish_reason"), blocked=tr.get("blocked"), served_host=tr["served_host"],
                    served_model=tr["model_served"], host_ok=tr["host_ok"], model_requested=tr["model_requested"],
                    prompt_tokens=tr["prompt_tokens"], completion_tokens=tr["completion_tokens"],

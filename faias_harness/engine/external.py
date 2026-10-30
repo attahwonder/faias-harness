@@ -502,11 +502,14 @@ class _Sec002Runner(_ExternalRunner):
             run.update(turn=turn, turns=n_turns)
         if item.track == "C":
             run["family"] = item.family
-        self.runs.append({**run, "score": score, "outcome": outcome})
+        empty = not (stored or "").strip()
+        self.runs.append({**run, "score": score, "outcome": outcome, "finish_reason": ex.get("finish_reason"),
+                          "reply_empty": empty})
         channel = {k: ex[k] for k in CHANNEL_FIELDS if k in ex}
         self.log.write({"type": "run", **run, "t_ns": t_ns, "time": runlog.iso(t_ns),
                         "request_sha256": runlog.sha256_hex(request), "reply": stored, "score": score,
-                        "outcome": outcome, "cell_texts_removed": removed, "finish_reason": ex.get("finish_reason"),
+                        "outcome": outcome, "cell_texts_removed": removed, "reply_empty": empty,
+                        "finish_reason": ex.get("finish_reason"),
                         "blocked": ex.get("blocked"), "block_type": ex.get("block_type"),
                         "served_host": ex.get("channel_host"), "served_model": ex.get("served_model"),
                         "usage": ex.get("usage"), "calls": calls,
