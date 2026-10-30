@@ -18,6 +18,9 @@ Rules every channel adapter follows:
 - `history_held_by` names who holds the history of a session: "service" (the channel keeps it, by a conversation, a
   context, a session ID or a chained response), "harness" (generic-http sends the whole history with each turn) or
   "none" (openai-responses with chain: false sends each turn alone). The session probe of TP-SEC-002 records it.
+- `server_ids(session)` names the session or context ID that the server named and that the adapter holds for a
+  session, by kind. json-http with session_path and A2A hold one; the other adapters give {}. The session probe of
+  TP-SEC-002 records it after each call, and fails when its two sessions hold the same ID.
 """
 import os
 import re
@@ -106,6 +109,11 @@ class ChannelTarget(Target):
         self.sleep, self.clock = sleep, clock
         self.retries = retries
         self.last_exchange = {}
+
+    def server_ids(self, session_id):
+        """The session or context ID that the server named and that the adapter holds for the session, by kind. {}
+        when the adapter holds none."""
+        return {}
 
     # ---- helpers for subclasses ----
 

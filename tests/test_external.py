@@ -233,6 +233,7 @@ class ExternalRunTests(unittest.TestCase):
             self.assertIn("Channel probe: not run", out)
             rc, out = self.pf(["--profile", str(prof), "--settings", str(s), "--probes"])
             self.assertEqual(rc, 0, out[-400:])
+            self.assertIn("Channel probe (1 call):", out)
             self.assertIn("reply received from 127.0.0.1", out)
             rc, out = self.pf(["--profile", str(prof), "--settings", str(s), "--start", "--sign-key", str(self.priv),
                                "--run-dir", str(self.dir / "pfrun")])
@@ -312,6 +313,8 @@ class ExternalRunTests(unittest.TestCase):
                                "--sign-key", str(self.priv)], answer="no")
             self.assertEqual(rc, 4, out[-600:])                    # the probe ran; the operator did not type yes
             self.assertIn("Calls in the run: 120 (plus the channel probe: 2 calls; retries are extra)", out)
+            self.assertIn("(the 2 calls of the channel probe are not in it)", out)
+            self.assertIn("Channel probe (2 calls):", out)          # the start event and the message
             self.assertNotIn("call budget allows", out)
 
     def test_shipped_example_settings_cannot_start_until_m4_is_set(self):
@@ -572,21 +575,24 @@ class ExternalSec002Tests(unittest.TestCase):
         self.assertEqual(run.recs[-1]["sequence_outcomes"], self.complete().recs[-1]["sequence_outcomes"])
 
     def test_the_probe_is_a_recall_test_with_a_control_session(self):
-        """Through generic-http: session A gives the two words and asks for them back; session B, fresh, asks the same
-        question first. The harness carries the history of generic-http, and the probe says so."""
+        """Through generic-http: session A gives the two words and asks for them back; session B, fresh, sends a plain
+        first turn and asks the same question at its second turn. The harness carries the history of generic-http, and
+        the probe says so."""
         settings = self.settings()
         first = len(self.host.requests)
         probe, calls = self.probe(settings, self.profile_path)
         sent = [r["body"]["messages"] for r in self.host.requests[first:]]
         check = probe["session_check"]
-        self.assertEqual((probe["ok"], probe["session_state"], calls), (True, "observed", 3))
+        self.assertEqual((probe["ok"], probe["session_state"], calls), (True, "observed", 4))
         words = check["words"]
         remember = external.REMEMBER_MESSAGE.format(*words)
         self.assertEqual([[m["content"] for m in s if m["role"] == "user"] for s in sent],
-                         [[remember], [remember, external.RECALL_MESSAGE], [external.RECALL_MESSAGE]])
+                         [[remember], [remember, external.RECALL_MESSAGE], [external.CONTROL_MESSAGE],
+                          [external.CONTROL_MESSAGE, external.RECALL_MESSAGE]])
         self.assertEqual((check["history_held_by"], "reason" in check), ("harness", False))
         self.assertEqual([(c["session"], c["turn"], c["holds"]) for c in check["calls"]],
-                         [("A", 1, []), ("A", 2, words), ("B", 1, [])])
+                         [("A", 1, []), ("A", 2, words), ("B", 1, []), ("B", 2, [])])
+        self.assertFalse(any("ids" in c for c in check["calls"]))     # generic-http holds no server-named ID
         for c in check["calls"]:
             self.assertEqual(c["statuses"], [200])
             for k in ("blocked", "block_type", "finish_reason", "latency_ms"):
@@ -598,14 +604,14 @@ class ExternalSec002Tests(unittest.TestCase):
                 probe, calls = self.probe(settings, self.profile_path)
             finally:
                 self.behaviour[0] = keeps_state
-            self.assertEqual((probe["ok"], probe["session_state"], calls), (True, "not observed", 3))
+            self.assertEqual((probe["ok"], probe["session_state"], calls), (True, "not observed", 4))
             self.assertIn(reason, probe["session_check"]["reason"])
 
     def test_each_turn_of_a_sequence_goes_in_one_adapter_session(self):
         """generic-http keeps the session as the message history: each turn of a run of A-01 carries the earlier turns
         and replies of that run only, and the next run starts a new session."""
         run = self.complete()
-        a01 = run.requests[3:3 + 6 * SEC_K]          # after the three turns of the probe
+        a01 = run.requests[4:4 + 6 * SEC_K]          # after the four turns of the probe
         for r in range(SEC_K):
             for j in range(6):
                 with self.subTest(run=r + 1, turn=j + 1):
@@ -693,8 +699,8 @@ class ExternalSec002Tests(unittest.TestCase):
         iso = next(x for x in run.recs if x["type"] == "isolation_set")
         self.assertEqual([i["id"] for i in iso["items"]], [f"I-A-01-{t}" for t in range(1, 6)])
         self.assertEqual(run.recs[-1]["measures"]["M1"]["A"]["successful_items"], 1)
-        self.assertEqual(run.recs[-1]["calls"], 3 + 6 * 2 * SEC_K + 2 * SEC_K + 5 * SEC_K)    # probe, sequences,
-        self.assertEqual(run.recs[-1]["probe_calls"], 3)                                   # cells, isolation
+        self.assertEqual(run.recs[-1]["calls"], 4 + 6 * 2 * SEC_K + 2 * SEC_K + 5 * SEC_K)    # probe, sequences,
+        self.assertEqual(run.recs[-1]["probe_calls"], 4)                                   # cells, isolation
 
     def baseline_copy(self, name, change):
         """A copy of the baseline log with its header changed and locked again, signed with the test key."""
@@ -767,10 +773,13 @@ class ExternalSec002Tests(unittest.TestCase):
         est = external.estimate(self.settings(), profile=load_profile(self.profile_path))
         for text in ("Engine run: TP-SEC-002 against an external target, item set TP-SEC-002",
                      "M1 bar (material uplift): 0.1; reason: test value for the unit tests",
-                     f"Calls in the run: at most {est['calls']} (plus the channel probe: 3 calls, three turns in two "
+                     f"Calls in the run: at most {est['calls']} (plus the channel probe: 4 calls, four turns in two "
                      "sessions; retries are extra)",
-                     "Channel probe (a recall test: three turns in two sessions):", "  session state: observed",
-                     "the control session holds: none; history held by: harness)",
+                     f"Estimated cost of the run: USD {est['cost_usd']:.4f} (the 4 calls of the channel probe are not "
+                     "in it)",
+                     "Channel probe (a recall test: four turns in two sessions; 4 calls):", "  session state: observed",
+                     "  turn 1 of session A: blocked None; block type None",
+                     "turn 2 of the control session holds: none; history held by: harness)",
                      "Baseline match: yes (the same profile hash, adapter, endpoint host, declared model and declared "
                      f"version as the run; {sec002_log.EXTERNAL_MATCH})",
                      "  The item file has the same transformation families.",
@@ -780,10 +789,10 @@ class ExternalSec002Tests(unittest.TestCase):
         rc, out, _ = self.pf("--start", "--sign-key", str(self.priv), "--run-dir", str(run_dir), answer="yes")
         self.assertEqual(rc, 0, out[-1500:])
         recs = runlog.read_log(run_dir / "run_log.jsonl")
-        self.assertEqual((recs[0]["probes"]["channel"]["session_state"], recs[-1]["probe_calls"]), ("observed", 3))
+        self.assertEqual((recs[0]["probes"]["channel"]["session_state"], recs[-1]["probe_calls"]), ("observed", 4))
         # The probe's requests are in an egress log of their own, and its summary is in the probe block.
         self.assertEqual(recs[0]["probes"]["channel"]["egress"]["summary"],
-                         {"allowed": {self.host.host_entry: 3}, "refused": {}, "total": 3})
+                         {"allowed": {self.host.host_entry: 4}, "refused": {}, "total": 4})
         self.assertTrue(runlog.verify_log(run_dir / "run_log.jsonl", run_dir / "run_log.jsonl.sig", self.pub,
                                           repo=REPO)[0])
 
@@ -823,12 +832,12 @@ class ExternalSec002Tests(unittest.TestCase):
         self.assertEqual(external.estimate(settings, profile=plain)["calls"], (12 + 2 + 10) * SEC_K)
         self.assertEqual(external.estimate(settings, profile=greet)["calls"], (12 + 2 + 10 + 14) * SEC_K)
         self.assertEqual((external.estimate(settings, profile=plain)["probe_calls"],
-                          external.estimate(settings, profile=greet)["probe_calls"]), (3, 5))
+                          external.estimate(settings, profile=greet)["probe_calls"]), (4, 6))
 
     def test_start_refuses_a_call_budget_below_the_probe_and_one_turn_with_the_start_event(self):
-        """Direct Line with the start event: the probe is five calls (the three turns and the start event of each of its
+        """Direct Line with the start event: the probe is six calls (the four turns and the start event of each of its
         two sessions), and the first turn of the run is two more (the start event of its session and the turn). So
-        --start needs a call budget of 7, and it names the reason. Without the start event it needs 4."""
+        --start needs a call budget of 8, and it names the reason. Without the start event it needs 5."""
         greet = self.write_profile("directline", self.host.base_url, {"auth": "secret", "start_event": True},
                                    "dl_budget_greet.yaml")
         plain = self.write_profile("directline", self.host.base_url, {"auth": "secret"}, "dl_budget_plain.yaml")
@@ -838,10 +847,10 @@ class ExternalSec002Tests(unittest.TestCase):
         self.assertEqual(asked, [])
         self.assertIn("START REFUSED. No run starts. Fix these points first:\n", out)
         self.assertEqual(out.split("START REFUSED. No run starts. Fix these points first:\n")[1].splitlines(),
-                         ["  - the call budget allows fewer than 7 calls (the three turns of the channel probe in two "
+                         ["  - the call budget allows fewer than 8 calls (the four turns of the channel probe in two "
                           "sessions and one turn; the Direct Line start event is one more call in each session)"])
         self.assertEqual(len(self.host.requests), first)          # refused before the probe: nothing was sent
-        for path, budget, refused in ((greet, 6, True), (greet, 7, False), (plain, 3, True), (plain, 4, False)):
+        for path, budget, refused in ((greet, 7, True), (greet, 8, False), (plain, 4, True), (plain, 5, False)):
             with self.subTest(start_event=path == greet, budget=budget):
                 problems = preflight.external_start_problems(load_profile(path), self.settings(max_calls=budget))
                 self.assertEqual(any("the call budget allows" in p for p in problems), refused, problems)
@@ -881,10 +890,11 @@ class ExternalSec002Tests(unittest.TestCase):
             probe, calls = self.probe(self.settings(mode="explore"), profile)
             bodies = [r["body"] for r in app.requests]
         check = probe["session_check"]
-        self.assertEqual((probe["session_state"], calls, check["history_held_by"]), ("not observed", 3, "service"))
+        self.assertEqual((probe["session_state"], calls, check["history_held_by"]), ("not observed", 4, "service"))
         self.assertEqual(check["session_path"], {"set": True, "in_first_response": False})
         self.assertIn("json-http: session_path is set, and the first response did not hold it", check["reason"])
-        self.assertEqual([b["conversationId"] for b in bodies], [None, None, None])
+        self.assertEqual([b["conversationId"] for b in bodies], [None, None, None, None])
+        self.assertEqual([c["ids"] for c in check["calls"]], [{"session": None}] * 4)
         opts["session_path"] = "data.conversationId"
         with StandInJsonApp(lambda t, n: REFUSAL, key_header="X-Api-Key", key=FAKE_KEY_VALUE) as app:
             profile = self.write_profile("json-http", app.base_url + "/api/chat", opts, "jh_probe2.yaml")
@@ -970,14 +980,17 @@ class SessionProbeTests(unittest.TestCase):
 
     PAIR = ("kettle", "pebble")
 
-    def test_a_stateful_agent_is_observed_in_three_calls_in_order(self):
+    def test_a_stateful_agent_is_observed_in_four_calls_in_order(self):
+        """The control session sends a plain first turn, then the recall question as its second turn."""
         fake = FakeChannel(recall_from_history)
         check = external.session_probe(fake, self.PAIR)
         self.assertEqual((check["session_state"], "reason" in check), ("observed", False))
         remember = external.REMEMBER_MESSAGE.format(*self.PAIR)
-        self.assertEqual(fake.sent, [("s1", remember), ("s1", external.RECALL_MESSAGE), ("s2", external.RECALL_MESSAGE)])
+        self.assertEqual(fake.sent, [("s1", remember), ("s1", external.RECALL_MESSAGE),
+                                     ("s2", external.CONTROL_MESSAGE), ("s2", external.RECALL_MESSAGE)])
         self.assertEqual([(c["session"], c["turn"], c["holds"]) for c in check["calls"]],
-                         [("A", 1, []), ("A", 2, list(self.PAIR)), ("B", 1, [])])
+                         [("A", 1, []), ("A", 2, list(self.PAIR)), ("B", 1, []), ("B", 2, [])])
+        self.assertEqual(check["messages"]["control_first"], external.CONTROL_MESSAGE)
         self.assertEqual(check["calls"][1]["reply_start"], "KETTLE and pebble")
         for c in check["calls"]:
             self.assertEqual({k: c[k] for k in ("statuses", "blocked", "block_type", "finish_reason", "latency_ms")},
@@ -1001,7 +1014,23 @@ class SessionProbeTests(unittest.TestCase):
             return " ".join(memory.get("words", ())) if text == external.RECALL_MESSAGE else "OK."
         check = external.session_probe(FakeChannel(one_memory), self.PAIR)
         self.assertEqual((check["session_state"], check["reason"]), ("not observed", external.CROSS_SESSION))
-        self.assertEqual(check["calls"][2]["holds"], list(self.PAIR))
+        self.assertEqual(check["calls"][3]["holds"], list(self.PAIR))
+
+    def test_state_that_crosses_sessions_only_on_a_later_turn_is_not_observed(self):
+        """An agent that reads one memory for all sessions, but only from the second turn of a session (as a server
+        that keys its history by a session ID that it names in the first response). A control that asked at its first
+        turn would see a fresh session."""
+        memory = {}
+
+        def later_turns_shared(sid, history, text):
+            if remembered(text):
+                memory["words"] = remembered(text)
+            if text == external.RECALL_MESSAGE:
+                return " and ".join(memory.get("words", ())) if history else "You gave me no words."
+            return "OK."
+        check = external.session_probe(FakeChannel(later_turns_shared), self.PAIR)
+        self.assertEqual((check["session_state"], check["reason"]), ("not observed", external.CROSS_SESSION))
+        self.assertEqual([c["holds"] for c in check["calls"]], [[], list(self.PAIR), [], list(self.PAIR)])
 
     def test_a_blocked_turn_2_gives_the_reason_and_the_block_fields(self):
         def block_turn_2(sid, turn):
@@ -1017,9 +1046,56 @@ class SessionProbeTests(unittest.TestCase):
         out = io.StringIO()
         with contextlib.redirect_stdout(out):
             preflight.print_external_probe(external.channel_probe(FakeChannel(fake.respond, block_turn_2),
-                                                                  session_check=True, pair=self.PAIR))
+                                                                  session_check=True, pair=self.PAIR), 4)
         self.assertIn("  reason: the reply to turn 2 of session A was blocked (block type content_filter)",
                       out.getvalue())
+
+    def test_a_cut_turn_2_of_session_a_names_the_cut(self):
+        """The outcome rule does not change: a cut reply with both words is a reply that shows state."""
+        def cut(reply):
+            def respond(sid, history, text):
+                if (sid, text) == ("s1", external.RECALL_MESSAGE):
+                    return reply
+                return recall_from_history(sid, history, text)
+            return FakeChannel(respond, lambda sid, n: {"finish_reason": "length"} if (sid, n) == ("s1", 2) else {})
+        check = external.session_probe(cut("The two words are kettle and"), self.PAIR)
+        self.assertEqual(check["session_state"], "not observed")
+        self.assertIn("the reply to turn 2 of session A is cut (finish reason length);", check["reason"])
+        self.assertEqual(external.session_probe(cut("kettle and pebble"), self.PAIR)["session_state"], "observed")
+
+    def test_a_blocked_empty_or_cut_turn_1_of_session_a_is_named_when_turn_2_fails(self):
+        def turn_1(exchange, reply="OK.", turn_2=None):
+            def respond(sid, history, text):
+                if (sid, len(history) + 1) == ("s1", 1):
+                    return reply
+                if turn_2 is not None and (sid, len(history) + 1) == ("s1", 2):
+                    raise turn_2
+                return "You gave me no words." if text == external.RECALL_MESSAGE else "OK."
+            return FakeChannel(respond, lambda sid, turn: exchange if (sid, turn) == ("s1", 1) else {})
+        blocked = {"blocked": True, "block_type": "content_filter"}
+        cases = ((turn_1(blocked, ""), "the reply to turn 1 of session A was blocked (block type content_filter), so "
+                  "the words may not have reached the agent; the reply to turn 2 of session A does not hold both "
+                  "words"),
+                 (turn_1({}, " "), "the reply to turn 1 of session A is empty (finish reason stop), so the words may "
+                  "not have reached the agent; the reply to turn 2"),
+                 (turn_1({"finish_reason": "length"}, "O"), "the reply to turn 1 of session A is cut (finish reason "
+                  "length), so the words may not have reached the agent; the reply to turn 2"),
+                 (turn_1(blocked, "", ChannelError("agent_error", "the endpoint returned HTTP 502", 502)),
+                  "the reply to turn 1 of session A was blocked (block type content_filter), so the words may not have "
+                  "reached the agent; session A, turn 2 failed (agent_error, HTTP 502)"))
+        for fake, reason in cases:
+            with self.subTest(reason=reason):
+                check = external.session_probe(fake, self.PAIR)
+                self.assertEqual(check["session_state"], "not observed")
+                self.assertIn(reason, check["reason"])
+        check = external.session_probe(turn_1({}), self.PAIR)
+        self.assertNotIn("turn 1 of session A", check["reason"])     # a plain turn 1 is not named
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out):
+            preflight.print_external_probe(external.channel_probe(turn_1(blocked, "Blocked."), session_check=True,
+                                                                  pair=self.PAIR), 6)
+        self.assertIn("Channel probe (a recall test: four turns in two sessions; 6 calls):", out.getvalue())
+        self.assertIn("  turn 1 of session A: blocked True; block type content_filter", out.getvalue())
 
     def test_a_failed_turn_and_a_failed_control_session_are_not_observed(self):
         def fail(where):
@@ -1031,26 +1107,34 @@ class SessionProbeTests(unittest.TestCase):
         check = external.session_probe(FakeChannel(fail(("s1", 2))), self.PAIR)
         self.assertEqual((check["session_state"], len(check["calls"])), ("not observed", 2))     # no control session
         self.assertIn("session A, turn 2 failed (agent_error, HTTP 502)", check["reason"])
-        check = external.session_probe(FakeChannel(fail(("s2", 1))), self.PAIR)
-        self.assertEqual(check["session_state"], "not observed")
-        self.assertIn("the control session failed (agent_error)", check["reason"])
+        for turn in (1, 2):
+            check = external.session_probe(FakeChannel(fail(("s2", turn))), self.PAIR)
+            self.assertEqual((check["session_state"], len(check["calls"])), ("not observed", 2 + turn))
+            self.assertIn(f"the control session, turn {turn} failed (agent_error, HTTP 502)", check["reason"])
 
     def test_an_empty_or_blocked_control_reply_or_one_word_in_it_is_not_observed(self):
-        def control(reply, exchange=None):
+        def control(reply, exchange=None, turn=2):
             def respond(sid, history, text):
-                return reply if sid == "s2" else recall_from_history(sid, history, text)
-            return FakeChannel(respond, exchange)
-
-        def block_s2(sid, turn):
-            return {"blocked": True, "block_type": "content_filter"} if sid == "s2" else {}
-        cases = ((control(""), "the reply in the control session is empty (finish reason stop)"),
-                 (control("", block_s2), "the reply in the control session was blocked (block type content_filter)"),
-                 (control("I do not have", lambda sid, turn: {"finish_reason": "length"} if sid == "s2" else {}),
-                  "the reply in the control session is cut (finish reason length)"),
-                 (control("I am sor", lambda sid, turn: {"finish_reason": "error"} if sid == "s2" else {}),
-                  "the reply in the control session is cut (finish reason error)"),
+                if (sid, len(history) + 1) == ("s2", turn):
+                    return reply
+                return recall_from_history(sid, history, text)
+            return FakeChannel(respond, None if exchange is None
+                               else lambda sid, n: exchange if (sid, n) == ("s2", turn) else {})
+        blocked = {"blocked": True, "block_type": "content_filter"}
+        cases = ((control(""), "the reply to turn 2 of the control session is empty (finish reason stop)"),
+                 (control("", blocked), "the reply to turn 2 of the control session was blocked (block type "
+                  "content_filter)"),
+                 (control("I do not have", {"finish_reason": "length"}),
+                  "the reply to turn 2 of the control session is cut (finish reason length)"),
+                 (control("I am sor", {"finish_reason": "error"}),
+                  "the reply to turn 2 of the control session is cut (finish reason error)"),
                  (control("One of them was Kettle, I think."),
-                  "the reply in the control session holds one of the words (kettle)"))
+                  "the reply to turn 2 of the control session holds one of the words (kettle)"),
+                 (control("", turn=1), "the reply to turn 1 of the control session is empty (finish reason stop)"),
+                 (control("Sorry.", blocked, turn=1),
+                  "the reply to turn 1 of the control session was blocked (block type content_filter)"),
+                 (control("I can help wi", {"finish_reason": "length"}, turn=1),
+                  "the reply to turn 1 of the control session is cut (finish reason length)"))
         for fake, reason in cases:
             with self.subTest(reason=reason):
                 check = external.session_probe(fake, self.PAIR)
@@ -1060,13 +1144,16 @@ class SessionProbeTests(unittest.TestCase):
                          "observed")
         out = io.StringIO()
         with contextlib.redirect_stdout(out):
-            preflight.print_external_probe(external.channel_probe(control(""), session_check=True, pair=self.PAIR))
-        self.assertIn("  reason: the reply in the control session is empty", out.getvalue())
+            preflight.print_external_probe(external.channel_probe(control(""), session_check=True, pair=self.PAIR), 4)
+        self.assertIn("  reason: the reply to turn 2 of the control session is empty", out.getvalue())
 
     def test_the_pair_is_two_plain_words_and_no_message_holds_a_word_of_the_list(self):
         self.assertEqual(len(set(external.RECALL_WORDS)), len(external.RECALL_WORDS))
         self.assertTrue(all(re.fullmatch(r"[a-z]+", w) for w in external.RECALL_WORDS))
-        for text in (external.REMEMBER_MESSAGE, external.RECALL_MESSAGE, external.PROBE_MESSAGE):
+        # Words that a finance agent may say in a fresh reply ("an investment basket", "a bond ladder") are not in it.
+        self.assertEqual([w for w in ("basket", "bucket", "cushion", "ladder") if w in external.RECALL_WORDS], [])
+        for text in (external.REMEMBER_MESSAGE, external.RECALL_MESSAGE, external.PROBE_MESSAGE,
+                     external.CONTROL_MESSAGE):
             self.assertFalse([w for w in external.RECALL_WORDS if re.search(rf"\b{w}\b", text, re.I)], text)
         for _ in range(50):
             a, b = external.recall_pair()
@@ -1088,6 +1175,127 @@ class SessionProbeTests(unittest.TestCase):
                 self.assertEqual(t.history_held_by, held)
         finally:
             egress.close()
+
+
+class MockChatServer:
+    """A server for the probe behind httpx.MockTransport (no network). A request that names no session ID reads no
+    history, and the server names an ID in its response: "shared-1" each time (`one_id`), else a new ID. A request
+    that names an ID reads every message so far (`one_history`), else the messages of that ID. With `forget`, a
+    request that names no ID clears the history first. The agent answers the recall question with the last pair of
+    words in the history that it reads."""
+
+    def __init__(self, one_id, one_history, forget=False):
+        self.one_id, self.one_history, self.forget = one_id, one_history, forget
+        self.all, self.by_id, self.n, self.sent_ids = [], {}, 0, []
+
+    def answer(self, sid, text):
+        self.sent_ids.append(sid)
+        if sid is None:
+            if self.forget:
+                self.all.clear()
+            self.n += 1
+            named, history = ("shared-1" if self.one_id else f"srv-{self.n}"), []
+        else:
+            named, history = sid, list(self.all if self.one_history else self.by_id.get(sid, []))
+        pairs = [remembered(h) for h in history if remembered(h)]
+        reply = (f"{pairs[-1][0]} and {pairs[-1][1]}" if pairs else "You gave me no words.") \
+            if text == external.RECALL_MESSAGE else "OK."
+        self.all.append(text)
+        self.by_id.setdefault(named, []).append(text)
+        return named, reply
+
+    def json_http(self, request):
+        import httpx
+        body = json.loads(request.content)
+        named, reply = self.answer(body.get("session_id"), body["message"])
+        return httpx.Response(200, json={"reply": reply, "sid": named})
+
+    def a2a(self, request):
+        import httpx
+        m = json.loads(request.content)["params"]["message"]
+        named, reply = self.answer(m.get("contextId"), m["parts"][0]["text"])
+        return httpx.Response(200, json={"jsonrpc": "2.0", "id": "1", "result": {"message": {
+            "messageId": "m1", "contextId": named, "parts": [{"text": reply}]}}})
+
+
+class ServerIdProbeTests(unittest.TestCase):
+    """The probe through json-http with session_path, and through A2A: the server names the session or context ID in
+    its first response, and the later turns send it. The first mock is the one of the outside review: it names
+    "shared-1" for every session."""
+
+    PAIR = ("kettle", "pebble")
+
+    def probe(self, server, adapter="json-http"):
+        import httpx
+        from faias_harness.adapters.a2a import A2ATarget
+        from faias_harness.adapters.json_http import JsonHttpTarget
+        from faias_harness.egress import EgressClient
+        handler = server.json_http if adapter == "json-http" else server.a2a
+        egress = EgressClient(["127.0.0.1:9"], transport=httpx.MockTransport(handler))
+        try:
+            if adapter == "json-http":
+                t = JsonHttpTarget("http://127.0.0.1:9/chat", egress, options={
+                    "request": {"message": "{message}", "session_id": "{session_id}"}, "reply_path": "reply",
+                    "session_path": "sid"})
+            else:
+                t = A2ATarget("http://127.0.0.1:9/a2a", egress)
+            with no_outside_network():
+                return external.session_probe(t, self.PAIR)
+        finally:
+            egress.close()
+
+    def test_the_review_mock_is_not_observed_and_each_fix_alone_finds_it(self):
+        """One ID for every session, and the history of a named ID is the history of all sessions. The ID check finds
+        it, and so does the control's turn 2 alone; the ID check alone finds it with a control that asks at turn 1."""
+        server = MockChatServer(one_id=True, one_history=True)
+        check = self.probe(server)
+        self.assertEqual((check["session_state"], check["reason"]),
+                         ("not observed", external.SHARED_ID.format("session")))
+        self.assertEqual([c["ids"] for c in check["calls"]], [{"session": "shared-1"}] * 4)
+        self.assertEqual(server.sent_ids, [None, "shared-1", None, "shared-1"])
+        self.assertEqual(check["calls"][3]["holds"], list(self.PAIR))
+        with mock.patch.object(external, "_shared_ids", return_value=[]):        # the control's turn 2 alone
+            check = self.probe(MockChatServer(one_id=True, one_history=True))
+        self.assertEqual((check["session_state"], check["reason"]), ("not observed", external.CROSS_SESSION))
+        real = external._probe_session
+
+        def recall_at_turn_1(target, session, texts):
+            return real(target, session, texts[1:] if session == "B" else texts)
+        with mock.patch.object(external, "_probe_session", side_effect=recall_at_turn_1):      # the ID check alone
+            check = self.probe(MockChatServer(one_id=True, one_history=True))
+        self.assertEqual(len(check["calls"]), 3)
+        self.assertEqual(check["calls"][2]["holds"], [])                          # a recall at turn 1 sees nothing
+        self.assertEqual((check["session_state"], check["reason"]),
+                         ("not observed", external.SHARED_ID.format("session")))
+
+    def test_one_server_id_for_two_sessions_is_not_observed_when_the_replies_show_nothing(self):
+        """The server names "shared-1" each time but clears its history at a request that names no ID: no reply of the
+        control holds a word, and only the ID check finds the shared ID."""
+        check = self.probe(MockChatServer(one_id=True, one_history=True, forget=True))
+        self.assertEqual([c["holds"] for c in check["calls"]], [[], list(self.PAIR), [], []])
+        self.assertEqual((check["session_state"], check["reason"]),
+                         ("not observed", external.SHARED_ID.format("session")))
+
+    def test_a_new_server_id_with_one_history_for_later_turns_is_not_observed(self):
+        """A new ID for each session, but a request that names an ID reads every session: only the control's turn 2
+        finds it."""
+        check = self.probe(MockChatServer(one_id=False, one_history=True))
+        self.assertEqual([c["ids"]["session"] for c in check["calls"]], ["srv-1", "srv-1", "srv-2", "srv-2"])
+        self.assertEqual((check["session_state"], check["reason"]), ("not observed", external.CROSS_SESSION))
+
+    def test_a_new_server_id_and_history_for_each_session_is_observed(self):
+        server = MockChatServer(one_id=False, one_history=False)
+        check = self.probe(server)
+        self.assertEqual((check["session_state"], "reason" in check), ("observed", False))
+        self.assertEqual(server.sent_ids, [None, "srv-1", None, "srv-2"])
+
+    def test_a2a_with_one_context_for_two_sessions_is_not_observed(self):
+        check = self.probe(MockChatServer(one_id=True, one_history=False, forget=True), adapter="a2a")
+        self.assertEqual([c["ids"] for c in check["calls"]], [{"context": "shared-1"}] * 4)
+        self.assertEqual((check["session_state"], check["reason"]),
+                         ("not observed", external.SHARED_ID.format("context")))
+        check = self.probe(MockChatServer(one_id=False, one_history=False), adapter="a2a")
+        self.assertEqual(check["session_state"], "observed")
 
 
 class OpenSessionErrorTests(unittest.TestCase):

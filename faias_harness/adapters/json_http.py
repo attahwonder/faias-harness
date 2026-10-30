@@ -201,5 +201,12 @@ class JsonHttpTarget(ChannelTarget):
         ex["ids"] = {"session": s["server_id"]}
         return reply
 
+    def server_ids(self, session_id):
+        """With session_path: the session ID that the server named, which the later turns send (null until a response
+        holds it). Without it, {}: the harness names the session ID."""
+        if not self.session_path:
+            return {}
+        return {"session": (self._sessions.get(session_id) or {}).get("server_id")}
+
     def close_session(self, session_id):
         self._sessions.pop(session_id, None)

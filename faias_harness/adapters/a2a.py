@@ -197,5 +197,9 @@ class A2ATarget(ChannelTarget):
         ex["latency_ms"] = round((self.clock() - t0) * 1000)
         return text
 
+    def server_ids(self, session_id):
+        """The context ID that the agent returned, which the later turns send (null until a reply holds one)."""
+        return {"context": (self._sessions.get(session_id) or {}).get("context")}
+
     def close_session(self, session_id):
         self._sessions.pop(session_id, None)

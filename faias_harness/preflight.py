@@ -54,7 +54,8 @@ preflight then prints the M1 bar, the baseline log and its key, and the declarat
 setting `channel_inputs` names. The baseline must be a schema 5 log of an external TP-SEC-001 run. In evidence mode
 it must match the run on five declared fields (sec002_log.EXTERNAL_MATCH_FIELDS), and each field that differs is
 named with both values. The probe is a recall test: one session gives the agent two words and asks for them back, and
-a fresh control session asks the same question. --start refuses Tracks A and B when the probe does not observe
+a fresh control session sends a plain first turn and asks the same question at its second turn. It is four calls, or
+six with the Direct Line start event. --start refuses Tracks A and B when the probe does not observe
 session state, before the operator types `yes`. The probe's requests go to an egress log of their own, and its summary
 goes into the probe block of the header.
 
@@ -148,7 +149,7 @@ def external_start_problems(profile, settings):
     # start event, each session is one call more.
     probe, item = external.probe_calls(settings, profile), external.calls_per_session(profile)
     if settings.call_budget < probe + item:
-        what = ("the three turns of the channel probe in two sessions and one turn" if settings.procedure == SEC002
+        what = ("the four turns of the channel probe in two sessions and one turn" if settings.procedure == SEC002
                 else "the channel probe and one item")
         start = "; the Direct Line start event is one more call in each session" if item > 1 else ""
         problems.append(f"the call budget allows fewer than {probe + item} calls ({what}{start})")
@@ -334,7 +335,7 @@ def external_settings_report(profile, settings, est):
     if est is None:         # only a TP-SEC-002 run without its item file has no estimate
         print("Calls in the run: not available (the item file is not found)")
     elif sec002:
-        print(f"Calls in the run: at most {est['calls']} (plus the channel probe: {est['probe_calls']} calls, three "
+        print(f"Calls in the run: at most {est['calls']} (plus the channel probe: {est['probe_calls']} calls, four "
               "turns in two sessions; retries are extra)")
     else:
         n = est["probe_calls"]
@@ -346,7 +347,8 @@ def external_settings_report(profile, settings, est):
     if est is not None:
         note = "  WARNING: the calls are above the call budget; the run will stop at the cap" \
             if est["calls"] + est["probe_calls"] > settings.call_budget else ""
-        print(f"Estimated cost for the whole run: USD {est['cost_usd']:.4f}{note}")
+        print(f"Estimated cost of the run: USD {est['cost_usd']:.4f} (the {est['probe_calls']} calls of the channel "
+              f"probe are not in it){note}")
     print(f"Pacing: at least {settings.min_interval_ms} ms between calls; reply timeout {settings.reply_timeout_s} s; "
           f"stop after {settings.max_consecutive_errors} channel errors in a row")
     if sec002 and profile.adapter == "json-http":
@@ -365,9 +367,12 @@ def external_settings_report(profile, settings, est):
           "unless the response names them")
 
 
-def print_external_probe(probe):
+def print_external_probe(probe, calls):
+    """The probe block of the preflight. `calls`: the charged calls of the probe before retries (probe_calls)."""
     check = probe.get("session_check")
-    print("Channel probe (a recall test: three turns in two sessions):" if check else "Channel probe (one call):")
+    s = "" if calls == 1 else "s"
+    print(f"Channel probe (a recall test: four turns in two sessions; {calls} calls):" if check
+          else f"Channel probe ({calls} call{s}):")
     if probe.get("ok"):
         print(f"  reply received from {probe.get('channel_host')} in {probe.get('latency_ms')} ms"
               + (f"; model named: {probe['served_model']}" if probe.get("served_model") else ""))
@@ -377,10 +382,13 @@ def print_external_probe(probe):
               + (f", HTTP {probe['status']}" if probe.get("status") else "") + ")"
               + (f": {probe['detail']}" if probe.get("detail") else ""))
     if check:
+        first = (check.get("calls") or [{}])[0]
+        if "error" not in first:
+            print(f"  turn 1 of session A: blocked {first.get('blocked')}; block type {first.get('block_type')}")
         held = {c.get("session"): ", ".join(c.get("holds") or []) or "none" for c in check.get("calls") or []
-                if c.get("turn") == (2 if c.get("session") == "A" else 1)}
+                if c.get("turn") == 2}
         print(f"  session state: {probe.get('session_state')} (the words: {', '.join(check.get('words') or [])}; "
-              f"turn 2 of session A holds: {held.get('A', 'not sent')}; the control session holds: "
+              f"turn 2 of session A holds: {held.get('A', 'not sent')}; turn 2 of the control session holds: "
               f"{held.get('B', 'not sent')}; history held by: {check.get('history_held_by')})")
         if check.get("reason"):
             print(f"  reason: {check['reason']}")
@@ -455,7 +463,7 @@ def run_external(a, profile, settings, *, input_fn, executor, inspect_check):
     finally:
         egress.close()
     probe["egress"] = {"summary": elog.summary()}       # in the probe block of the header
-    print_external_probe(probe)
+    print_external_probe(probe, external.probe_calls(settings, profile))
     if not a.start:
         return 0
     if not probe.get("ok"):
