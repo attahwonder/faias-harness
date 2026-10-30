@@ -116,17 +116,40 @@ def read_e2(path=E2_FILE, repo=REPO):
             "transformation_families": [str(x) for x in data["transformation_families"]]}
 
 
-def build_header(settings, *, allow_hosts, config, session, baseline, e2, confirmation, probes=None, repo=REPO,
-                 variant="standard", engine="inspect"):
-    """The header of a TP-SEC-002 run (schema 9), without the lock. `config` and `session` are what config_read
-    returned for the kinds prompt and session (the header keeps the hashes, the counts and the limits, not the prompt).
-    `baseline`: the facts of sec002_log.read_baseline. `e2`: the block of read_e2."""
+def procedure_block(repo=REPO):
+    """The procedure block of a schema 9 header, from records/TP-SEC-002.yaml."""
     rec = sec001.load_record(tp=sec002.TP, repo=repo)
+    return {"tp": rec["tp"], "title": rec["title"], "irq": rec["irq"], "star": rec["star"],
+            "star_note": "copied from the Confidence line of the procedure; the harness never computes it",
+            "faias_version": sec002.FAIAS_VERSION, "source": rec["source"]}
+
+
+def corpus_block(baseline, k, repo=REPO):
+    """The corpus block of a schema 9 header, for a run on SRD-1 minimal and for an external run: the pool with the
+    facts of each objective in `baseline`, the track counts, the families, the languages, the cells table, the
+    manifest, the items hash, k with its basis, the authorship and the scorer keys. No item text."""
     data = sec002.load_set(repo)
     seqs, _, pool = sec002.load_items(repo)
     classes = {o: e["class"] for o, e in pool.items()}
     rows, keys = sec002_log.manifest(seqs), sec002_log.scorer_keys(pool)
     cells = sec002_log.cells_table(pool, data["families"])
+    return {"item_set": sec002.ITEM_SET, "objectives": sec002_log.objectives(classes, baseline),
+            "tracks": sec002_log.tracks(rows, cells), "families": list(data["families"]),
+            "languages": list(data["languages"]), "cells": cells, "manifest": rows,
+            "items_sha256": sec002_log.items_digest(classes, rows, cells, keys), "runs_per_item": k,
+            "runs_per_item_basis": ('"Two runs per sequence minimum" and "three is preferred where budget '
+                                    'allows" (PLAYBOOK_SEC_002.md line 24); each sequence, cell and isolation '
+                                    f"item runs k = {k} times, and the settings take 3 to 20"),
+            "authors": data.get("authors"), "generated_by": data.get("generated_by"), "scorer_keys": keys,
+            "scoring": "deterministic; no model judge"}
+
+
+def build_header(settings, *, allow_hosts, config, session, baseline, e2, confirmation, probes=None, repo=REPO,
+                 variant="standard", engine="inspect"):
+    """The header of a TP-SEC-002 run (schema 9), without the lock. `config` and `session` are what config_read
+    returned for the kinds prompt and session (the header keeps the hashes, the counts and the limits, not the prompt).
+    `baseline`: the facts of sec002_log.read_baseline. `e2`: the block of read_e2."""
+    data = sec002.load_set(repo)
     baseline = {**baseline, "differs_from_run": sec006_log.baseline_differences(baseline, sec006_log.run_facts(
         settings.model_id, variant, config["prompt_sha256"], settings.routing()))}
     match = not baseline["differs_from_run"]
@@ -135,23 +158,13 @@ def build_header(settings, *, allow_hosts, config, session, baseline, e2, confir
         "type": "header", "schema": sec002_log.SCHEMA,
         "label": sec002_log.run_label(match, baseline, authors=data.get("authors")),
         "engine_version": runlog.__version__, "code": sec002_log.code_facts(repo),
-        "procedure": {"tp": rec["tp"], "title": rec["title"], "irq": rec["irq"], "star": rec["star"],
-                      "star_note": "copied from the Confidence line of the procedure; the harness never computes it",
-                      "faias_version": sec002.FAIAS_VERSION, "source": rec["source"]},
+        "procedure": procedure_block(repo),
         "mode": settings.mode, "provider": settings.provider, "model": {"pinned_id": settings.model_id},
         "routing": settings.routing(),
         "prices_per_million_tokens": {"in": settings.price_in_per_m, "out": settings.price_out_per_m},
         "cap_usd": settings.cap_usd, "max_tokens": settings.max_tokens, "settings_hash": settings.digest(),
         "thresholds": sec002.thresholds_for_header(settings, repo=repo),
-        "corpus": {"item_set": sec002.ITEM_SET, "objectives": sec002_log.objectives(classes, baseline),
-                   "tracks": sec002_log.tracks(rows, cells), "families": list(data["families"]),
-                   "languages": list(data["languages"]), "cells": cells, "manifest": rows,
-                   "items_sha256": sec002_log.items_digest(classes, rows, cells, keys), "runs_per_item": k,
-                   "runs_per_item_basis": ('"Two runs per sequence minimum" and "three is preferred where budget '
-                                           'allows" (PLAYBOOK_SEC_002.md line 24); each sequence, cell and isolation '
-                                           f"item runs k = {k} times, and the settings take 3 to 20"),
-                   "authors": data.get("authors"), "generated_by": data.get("generated_by"), "scorer_keys": keys,
-                   "scoring": "deterministic; no model judge"},
+        "corpus": corpus_block(baseline, k, repo),
         "config": {"read_through": "config_read (GET /config/prompt of SRD-1 minimal, through the srd1-http adapter)",
                    "prompt_sha256": config["prompt_sha256"], "prompt_source": config.get("prompt_source"),
                    "prompt_chars": len(config["prompt"])},

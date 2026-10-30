@@ -49,6 +49,12 @@ section 13). It prints the adapter, the endpoint host, what the channel lets the
 model and version, the calls against the call budget, and whether the key variable is present (never its value).
 --probes makes one channel probe (one benign message). --start makes the probe, refuses if it gets no usable
 reply, and starts the run only after the operator types `yes`.
+An external settings file with `procedure: TP-SEC-002` (version 0.8) runs TP-SEC-002 through the channel. The
+preflight then prints the M1 bar, the baseline log and its key, and the declaration of the channel inputs that the
+setting `channel_inputs` names. The baseline must be a schema 5 log of an external TP-SEC-001 run. In evidence mode
+it must match the run on five declared fields (sec002_log.EXTERNAL_MATCH_FIELDS), and each field that differs is
+named with both values. The probe has a second turn in the same session that asks for a word of the first reply.
+--start refuses Tracks A and B when the probe does not observe session state, before the operator types `yes`.
 
 Exit codes: 0 table printed, or a run finished; 2 start refused or profile or settings invalid; 3 start
 conditions met, but a profile alone starts no run; 4 the operator did not type `yes`; 5 the run stopped at the cap
@@ -135,7 +141,10 @@ def external_start_problems(profile, settings):
         env = registry.key_env(profile)
         if env and not os.environ.get(env):
             problems.append(f"the environment variable {env} is not set")
-    if settings.call_budget < 2:
+    if settings.procedure == SEC002 and settings.call_budget < 3:
+        problems.append("the call budget allows fewer than three calls (the two turns of the channel probe and one "
+                        "turn)")
+    elif settings.call_budget < 2:
         problems.append("the call budget allows fewer than two calls (the channel probe and one item)")
     return problems
 
@@ -288,7 +297,8 @@ def external_settings_report(profile, settings, est):
     """Print the settings block of an external run. It never prints the value of a key."""
     from .adapters import registry
     from .adapters.base import host_entry
-    print(f"Engine run: TP-SEC-001 against an external target, item set {settings.item_set}")
+    sec002 = settings.procedure == SEC002
+    print(f"Engine run: {settings.procedure} against an external target, item set {settings.item_set}")
     if registry.is_external(profile.adapter):
         entry = registry.ADAPTERS[profile.adapter]
         print(f"Target: adapter {profile.adapter}: {entry.channel}; endpoint host {host_entry(profile.endpoint) if profile.endpoint else 'not set'}")
@@ -298,15 +308,31 @@ def external_settings_report(profile, settings, est):
     print(f"Declared model: {settings.declared_model_id or 'not declared'}; declared target version: "
           f"{settings.declared_target_version or 'not declared'} (declared by the operator, not observed)")
     print(f"Runs per item: {settings.runs_per_item} (FAIAS minimum 3)")
-    m4 = "not set" if settings.m4_value is None else settings.m4_value
-    print(f"M4 bar: {m4}; reason: {settings.m4_reason or 'not set'}")
-    print(f"Calls in the run: {est['calls']} (plus 1 channel probe; retries are extra)")
+    if sec002:
+        m1 = "not set" if settings.m1_value is None else settings.m1_value
+        print(f"M1 bar (material uplift): {m1}; reason: {settings.m1_reason or 'not set'}")
+        print("M2 to M6: from records/TP-SEC-002.yaml, not from the settings")
+        print(f"Baseline (a TP-SEC-001 log of an external run on the full set): "
+              f"{settings.m4_baseline_log or 'not named'}")
+        print(f"Baseline public key: {settings.m4_baseline_pubkey or 'not named'}")
+        print("Replies in the log: full (an external run keeps each reply)")
+    else:
+        m4 = "not set" if settings.m4_value is None else settings.m4_value
+        print(f"M4 bar: {m4}; reason: {settings.m4_reason or 'not set'}")
+    if est is None:         # only a TP-SEC-002 run without its item file has no estimate
+        print("Calls in the run: not available (the item file is not found)")
+    elif sec002:
+        print(f"Calls in the run: at most {est['calls']} (plus the channel probe: {est['probe_calls']} calls, two turns "
+              "in one session; retries are extra)")
+    else:
+        print(f"Calls in the run: {est['calls']} (plus 1 channel probe; retries are extra)")
     mc = f", max_calls {settings.max_calls}" if settings.max_calls is not None else ""
     print(f"Budget: cap USD {settings.cap_usd}; cost per call USD {settings.cost_per_call_usd} (the operator's "
           f"estimate){mc}; call budget {settings.call_budget}")
-    note = "  WARNING: the calls are above the call budget; the run will stop at the cap" \
-        if est["calls"] + 1 > settings.call_budget else ""
-    print(f"Estimated cost for the whole run: USD {est['cost_usd']:.4f}{note}")
+    if est is not None:
+        note = "  WARNING: the calls are above the call budget; the run will stop at the cap" \
+            if est["calls"] + est["probe_calls"] > settings.call_budget else ""
+        print(f"Estimated cost for the whole run: USD {est['cost_usd']:.4f}{note}")
     print(f"Pacing: at least {settings.min_interval_ms} ms between calls; reply timeout {settings.reply_timeout_s} s; "
           f"stop after {settings.max_consecutive_errors} channel errors in a row")
     env = registry.key_env(profile) if registry.is_external(profile.adapter) else None
@@ -320,7 +346,8 @@ def external_settings_report(profile, settings, est):
 
 
 def print_external_probe(probe):
-    print("Channel probe (one call):")
+    check = probe.get("session_check")
+    print("Channel probe (two turns in one session):" if check else "Channel probe (one call):")
     if probe.get("ok"):
         print(f"  reply received from {probe.get('channel_host')} in {probe.get('latency_ms')} ms"
               + (f"; model named: {probe['served_model']}" if probe.get("served_model") else ""))
@@ -329,6 +356,10 @@ def print_external_probe(probe):
         print(f"  no usable reply (error: {probe.get('error') or 'empty reply'}"
               + (f", HTTP {probe['status']}" if probe.get("status") else "") + ")"
               + (f": {probe['detail']}" if probe.get("detail") else ""))
+    if check:
+        why = check.get("reason") or (f"error: {check['error']}" if check.get("error") else None)
+        print(f"  session state: {probe.get('session_state')} (the second turn asked for the longest word of the "
+              f"first reply: {', '.join(check.get('words') or []) or 'none'})" + (f"; {why}" if why else ""))
 
 
 def _default_external_executor(**kw):
@@ -342,7 +373,8 @@ def run_external(a, profile, settings, *, input_fn, executor, inspect_check):
     from .adapters.base import CallBudget
     from .engine import external
     reasons = registry.problems(profile)
-    est = external.estimate(settings, profile=profile)
+    sec002 = settings.procedure == SEC002
+    est = None if sec002 and _sec002_items() is None else external.estimate(settings, profile=profile)
     print()
     external_settings_report(profile, settings, est)
     if reasons:
@@ -351,11 +383,26 @@ def run_external(a, profile, settings, *, input_fn, executor, inspect_check):
         for p in reasons:
             print(f"  - {p}")
         return 2
+    label, base_problems, target = external.sec001.LABELS.get(settings.item_set), [], None
+    if sec002:          # the declaration of the channel inputs and the baseline, as for a run on SRD-1 minimal
+        target = external.target_block(profile, settings)
+        lines = sec002_channel_inputs(settings.channel_inputs)[0]
+        label, more, base_problems = sec002_baseline(settings, target=target)
+        for line in lines + more:
+            print(line)
     if not a.start and not a.probes:
+        if base_problems and settings.mode == "evidence":
+            print()
+            print("BASELINE REFUSED. No run starts. Fix these points first:")
+            for p in base_problems:
+                print(f"  - {p}")
+            return 2
         print("Channel probe: not run (use --probes, or --start)")
         return 0
     print()
     problems = external_start_problems(profile, settings)
+    if sec002 and not settings.m4_baseline_log:
+        problems.append(BASELINE_REQUIRED)          # --probes and --start: the run has no measure without it
     if a.start:
         from .engine import runlog
         problems += runlog.key_problems(a.sign_key) if a.sign_key else ["no signing key given (--sign-key)"]
@@ -365,7 +412,9 @@ def run_external(a, profile, settings, *, input_fn, executor, inspect_check):
         if a.positive_control:
             problems.append("--positive-control does not apply to an external run: the harness cannot weaken a "
                             "deployed agent; run a second staging agent with no rules, with its own profile")
-        if settings.m4_value is None or not settings.m4_reason:
+        if sec002:
+            problems += sec002_start_problems(settings, target=target)
+        elif settings.m4_value is None or not settings.m4_reason:
             problems.append("reviewer_values.M4 needs a value and a reason before a run (verify refuses a log without them)")
     # The probe of an external run reaches the firm's agent, so it needs the isolation attestation too.
     if problems:
@@ -376,7 +425,7 @@ def run_external(a, profile, settings, *, input_fn, executor, inspect_check):
     budget = CallBudget(settings.cap_usd, settings.cost_per_call_usd, settings.max_calls)
     egress = external.make_egress(profile)
     try:
-        probe = external.channel_probe(external.make_target(profile, settings, egress, budget))
+        probe = external.channel_probe(external.make_target(profile, settings, egress, budget), session_check=sec002)
     finally:
         egress.close()
     print_external_probe(probe)
@@ -386,12 +435,20 @@ def run_external(a, profile, settings, *, input_fn, executor, inspect_check):
         print()
         print("START REFUSED: the channel probe got no usable reply. Fix the channel first.")
         return 2
+    refused = external.sec002_start_problems(settings, {"channel": probe}) if sec002 else []
+    if refused:         # before the operator types yes: Tracks A and B need the session state
+        print()
+        print("START REFUSED. No run starts. Fix these points first:")
+        for p in refused:
+            print(f"  - {p}")
+        return 2
     print()
     print("Start conditions are met.")
-    print(f"Item set {settings.item_set}. This run sends {est['calls']} calls ({settings.runs_per_item} runs per item) "
+    sends = f"sends at most {est['calls']} calls" if sec002 else f"sends {est['calls']} calls"
+    print(f"Item set {settings.item_set}. This run {sends} ({settings.runs_per_item} runs per item) "
           f"through the {profile.adapter} channel to {profile.endpoint}. Call budget {settings.call_budget} "
           f"({budget.calls} used by the probe); estimated cost USD {est['cost_usd']:.4f}; cap USD {settings.cap_usd}. "
-          f"The result is labelled '{external.sec001.LABELS[settings.item_set]}'.")
+          f"The result is labelled '{label}'.")
     answer = input_fn("Type yes to start the run (anything else cancels): ").strip()
     if answer != "yes":
         print("Run not started: `yes` was not typed.")
@@ -550,13 +607,14 @@ def _sec002_items():
     return sec002.load_set() if (REPO / sec002.ITEM_FILE).is_file() else None
 
 
-def sec002_channel_inputs():
+def sec002_channel_inputs(path=None):
     """The declaration of the channel inputs of a TP-SEC-002 run (run_sec002.read_e2): (lines to print, problems). The
     transformation families that it lists must be those of the item file, because the run makes its cells from the
-    item file and its header quotes the declaration. The engine does not compare the two."""
+    item file and its header quotes the declaration. The engine does not compare the two. `path`: the declaration of
+    an external run (its setting channel_inputs); without it, the declaration of SRD-1 (run_sec002.E2_FILE)."""
     from .engine import run_sec002, sec002
     try:
-        e2 = run_sec002.read_e2(run_sec002.E2_FILE)
+        e2 = run_sec002.read_e2(path or run_sec002.E2_FILE)
     except ValueError as e:
         return [f"Channel inputs (E2): {e}"], [str(e)]
     declared = e2["transformation_families"]
@@ -576,7 +634,7 @@ def sec002_channel_inputs():
     return lines + ["  The item file has the same transformation families."], []
 
 
-def sec002_baseline(settings, variant="standard"):
+def sec002_baseline(settings, variant="standard", target=None):
     """The check of the baseline log of a TP-SEC-002 run: (run label, lines to print, problems). With no log named,
     the line is BASELINE REQUIRED, and main refuses --probes and --start. A named log is read as the engine reads it
     (sec002_log.read_baseline): a TP-SEC-001 log on the full set, its signature checked against baseline_pubkey, and
@@ -586,7 +644,11 @@ def sec002_baseline(settings, variant="standard"):
     scorer does not give again are problems too. In explore mode they are printed, and the run label says so. The run
     label takes its authorship part from the item file. It is None when no run can start: with no baseline log, with
     no item file, with a baseline log that cannot be read, or with an authors value that is not declared
-    (sec002_start_problems refuses each of them)."""
+    (sec002_start_problems refuses each of them).
+
+    `target`: the target block of an external run (external.target_block). The baseline must then be a schema 5 log of
+    an external TP-SEC-001 run. It is compared on the five declared fields of sec002_log.EXTERNAL_MATCH_FIELDS, and
+    the label says that the match is on declared fields."""
     from .engine import run_sec006, sec002, sec002_log, sec006_log
     if not settings.m4_baseline_log:
         return None, [BASELINE_REQUIRED], []
@@ -594,9 +656,10 @@ def sec002_baseline(settings, variant="standard"):
     if data is None:
         return None, ["Baseline check: not made (the pool of the item file names the baseline items, and the item "
                       "file is not found)"], []
+    external = target is not None
     try:
         base = sec002_log.read_baseline(settings.m4_baseline_log, [o["id"] for o in data["objectives"]],
-                                        pubkey=settings.m4_baseline_pubkey)
+                                        pubkey=settings.m4_baseline_pubkey, external=external)
     except ValueError as e:
         return None, [f"Baseline check: {e}"], [str(e)]
     sig, variance = base["signature"], base.get("M4_per_run_variance")
@@ -607,12 +670,19 @@ def sec002_baseline(settings, variant="standard"):
              "differently now",
              f"M1 bar: {'not set' if settings.m1_value is None else settings.m1_value}; the run-to-run variance of the "
              f"baseline (its M4 value): {'not computed' if variance is None else variance}"]
-    base["differs_from_run"] = sec006_log.baseline_differences(base, sec006_log.run_facts(
-        settings.model_id, variant, run_sec006.prompt_sha256(variant), settings.routing()))
+    if external:
+        base["differs_from_run"] = sec002_log.external_differences(base, sec002_log.external_run_facts(target))
+    else:
+        base["differs_from_run"] = sec006_log.baseline_differences(base, sec006_log.run_facts(
+            settings.model_id, variant, run_sec006.prompt_sha256(variant), settings.routing()))
     match = not base["differs_from_run"]
     authors = data.get("authors")
-    label = None if sec002.authorship_problem(authors) else sec002_log.run_label(match, base, authors=authors)
-    if match:
+    label = (None if sec002.authorship_problem(authors)
+             else sec002_log.run_label(match, base, authors=authors, external=external))
+    if match and external:
+        lines.append("Baseline match: yes (the same profile hash, adapter, endpoint host, declared model and declared "
+                     f"version as the run; {sec002_log.EXTERNAL_MATCH})")
+    elif match:
         lines.append("Baseline match: yes (the same model ID, variant, system prompt hash, routing locks and tool "
                      "definitions hash as the run)")
     else:
@@ -620,7 +690,8 @@ def sec002_baseline(settings, variant="standard"):
                                            sec002_log.difference_problems(base["differs_from_run"])]
     if settings.mode == "evidence":
         problems = sec002_log.evidence_problems(base)
-        return label, lines, problems + ([f"evidence mode needs {sec002_log.EVIDENCE_BASELINE}"] if problems else [])
+        needs = sec002_log.EVIDENCE_BASELINE_EXTERNAL if external else sec002_log.EVIDENCE_BASELINE
+        return label, lines, problems + ([f"evidence mode needs {needs}"] if problems else [])
     if not match:
         lines.append(f"  Explore mode allows this. The run label adds '{sec002_log.ANOTHER_TARGET}'.")
     if base["mismatches"]:
@@ -628,12 +699,14 @@ def sec002_baseline(settings, variant="standard"):
     return label, lines, []
 
 
-def sec002_start_problems(settings, variant="standard"):
+def sec002_start_problems(settings, variant="standard", target=None):
     """What a TP-SEC-002 run needs besides the SRD-1 conditions: the M1 bar with its reason (verify refuses a log
     without them), the item file and a declaration of the channel inputs with its families (sec002_channel_inputs),
     an authors value of the item file that is declared (sec002.AUTHORSHIP; the run label takes its part from it), and a
     baseline log that sec002_baseline accepts. The engine runs the standard variant with tools off and raises on
-    anything else, so the preflight refuses the positive control and tools on first."""
+    anything else, so the preflight refuses the positive control and tools on first. `target`: the target block of an
+    external run, which has no variant and no tools of SRD-1 (run_external refuses --positive-control itself), and
+    whose declaration of the channel inputs is the setting channel_inputs."""
     from .engine import sec002
     problems = []
     if settings.m1_value is None or not settings.m1_reason:
@@ -641,13 +714,14 @@ def sec002_start_problems(settings, variant="standard"):
     data = _sec002_items()
     if data is not None and sec002.authorship_problem(data.get("authors")):
         problems.append(f"the item file: {sec002.authorship_problem(data.get('authors'))}")
-    if variant != "standard":
+    if target is None and variant != "standard":
         problems.append(f"the variant {variant} does not apply to TP-SEC-002: the engine runs SRD-1 minimal with its "
                         "system prompt (the standard variant) only")
     if getattr(settings, "tools_enabled", False):
         problems.append("TP-SEC-002 runs with tools off (SRD-1 sends no tool definition to the model): set "
                         "tools_enabled to false")
-    return problems + sec002_channel_inputs()[1] + sec002_baseline(settings, variant)[2]
+    e2 = sec002_channel_inputs(settings.channel_inputs if target is not None else None)[1]
+    return problems + e2 + sec002_baseline(settings, variant, target)[2]
 
 
 def _inspect_missing():

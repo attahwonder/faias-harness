@@ -17,7 +17,11 @@ deployed staging agent through a channel adapter (docs/ARCHITECTURE.md, section 
 routing locks, because the harness does not make the agent's model calls. Its budget is a cap in USD and the
 operator's estimate of the cost of one call; the run stops before a call that would pass floor(cap / cost), or
 `max_calls` if that is lower. In evidence mode it must declare the model and the version of the target, and the
-M4 value with its reason. The declared values are recorded as declared, not observed.
+M4 value with its reason. The declared values are recorded as declared, not observed. Since 0.8 its `procedure` is
+TP-SEC-001 (the default) or TP-SEC-002. A TP-SEC-002 file takes `baseline_log`, `baseline_pubkey`, `channel_inputs` (the
+declaration of the channel inputs of the target, required) and `reviewer_values.M1` in place of M4. In evidence mode
+it needs the M1 value with its reason, the baseline log and its public key. The TP-SEC-002 fields enter the settings
+hash only for a TP-SEC-002 file, so a TP-SEC-001 external file keeps its hash.
 
 The setting `procedure` (version 0.6) chooses the procedure of an SRD-1 run: TP-SEC-001 (the default) or
 TP-SEC-006 (docs/ARCHITECTURE.md, section 16). Only TP-SEC-006 takes `store_replies` (full or hash_only; since 0.8,
@@ -528,9 +532,13 @@ def load_settings(path):
 
 EXT_REQUIRED = ["kind", "mode", "cap_usd", "cost_per_call_usd"]
 EXT_OPTIONAL = ["item_set", "runs_per_item", "max_calls", "reply_timeout_s", "min_interval_ms",
-                "max_consecutive_errors", "declared", "reviewer_values"]
+                "max_consecutive_errors", "declared", "reviewer_values", "procedure", "baseline_log", "baseline_pubkey",
+                "channel_inputs"]
 EXT_DEFAULTS = {"reply_timeout_s": 90, "min_interval_ms": 500, "max_consecutive_errors": 5}
 DECLARED_KEYS = ("model_id", "target_version")
+# The procedures of an external run (since 0.8). TP-SEC-002 takes the keys of EXT_SEC002_KEYS, and only it.
+EXT_PROCEDURES = ("TP-SEC-001", SEC002)
+EXT_SEC002_KEYS = ("baseline_log", "baseline_pubkey", "channel_inputs")
 
 
 @dataclass(frozen=True)
@@ -548,7 +556,14 @@ class ExternalSettings:
     declared_target_version: object = None
     m4_value: object = None
     m4_reason: object = None
+    procedure: str = PROCEDURE_DEFAULT
+    m4_baseline_log: object = None      # TP-SEC-002 only: baseline_log, named as in Settings
+    m4_baseline_pubkey: object = None   # TP-SEC-002 only: baseline_pubkey
+    m1_value: object = None             # TP-SEC-002 only; the bar of a material uplift
+    m1_reason: object = None
+    channel_inputs: object = None       # TP-SEC-002 only: the declaration of the channel inputs (evidence output E2)
     kind = "external"
+    store_replies = "full"      # a class attribute: an external run keeps each reply in its run record
 
     @property
     def call_budget(self):
@@ -556,7 +571,9 @@ class ExternalSettings:
         return by_cap if self.max_calls is None else min(by_cap, self.max_calls)
 
     def canonical(self):
-        return {
+        """The validated content as one dict. Its hash is the settings hash. The TP-SEC-002 fields are in it only for
+        a TP-SEC-002 run, so the settings hash of a TP-SEC-001 external run is unchanged."""
+        out = {
             "kind": "external", "mode": self.mode, "item_set": self.item_set, "runs_per_item": self.runs_per_item,
             "cap_usd": self.cap_usd, "cost_per_call_usd": self.cost_per_call_usd, "max_calls": self.max_calls,
             "reply_timeout_s": self.reply_timeout_s, "min_interval_ms": self.min_interval_ms,
@@ -564,6 +581,11 @@ class ExternalSettings:
             "declared": {"model_id": self.declared_model_id, "target_version": self.declared_target_version},
             "reviewer_values": {"M4": {"value": self.m4_value, "reason": self.m4_reason}},
         }
+        if self.procedure == SEC002:
+            out.update(procedure=self.procedure, baseline_log=self.m4_baseline_log,
+                       baseline_pubkey=self.m4_baseline_pubkey, channel_inputs=self.channel_inputs)
+            out["reviewer_values"]["M1"] = {"value": self.m1_value, "reason": self.m1_reason}
+        return out
 
     def digest(self):
         blob = json.dumps(self.canonical(), sort_keys=True, ensure_ascii=False, separators=(",", ":"))
@@ -610,8 +632,24 @@ def validate_external(raw):
         problems.append("max_calls must be a whole number from 1 to 1000000 or null")
     if "runs_per_item" in raw and not _whole(raw["runs_per_item"], RUNS_MIN, RUNS_MAX):
         problems.append(f"runs_per_item must be a whole number from {RUNS_MIN} (the FAIAS minimum) to {RUNS_MAX}")
-    if "item_set" in raw and raw["item_set"] not in ITEM_SETS:
-        problems.append(f"item_set must be one of {', '.join(ITEM_SETS)}")
+    proc = raw.get("procedure", PROCEDURE_DEFAULT)
+    sec002 = proc == SEC002
+    if proc not in EXT_PROCEDURES:
+        problems.append(f"procedure must be one of {', '.join(EXT_PROCEDURES)} for an external run")
+    if sec002:
+        if "item_set" in raw and raw["item_set"] != SEC002_ITEM_SET:
+            problems.append(f"item_set must be {SEC002_ITEM_SET} for the procedure TP-SEC-002")
+        for k in ("baseline_log", "baseline_pubkey"):
+            if raw.get(k) is not None and not (isinstance(raw[k], str) and raw[k].strip()):
+                problems.append(f"{k} must be the path of a file, or null")
+        ci = raw.get("channel_inputs")
+        if not (isinstance(ci, str) and ci.strip()):
+            problems.append("channel_inputs must be the path of the declaration of the channel inputs of the target "
+                            "(evidence output E2), in the form of targets/srd1/channel_inputs.yaml")
+    else:
+        problems += [f"{k} applies to the procedure TP-SEC-002 only" for k in EXT_SEC002_KEYS if k in raw]
+        if "item_set" in raw and raw["item_set"] not in ITEM_SETS:
+            problems.append(f"item_set must be one of {', '.join(ITEM_SETS)}")
     if "reply_timeout_s" in raw and not (_num(raw["reply_timeout_s"]) and 5 <= raw["reply_timeout_s"] <= 600):
         problems.append("reply_timeout_s must be a number from 5 to 600")
     if "min_interval_ms" in raw and not _whole(raw["min_interval_ms"], 0, 60000):
@@ -628,26 +666,34 @@ def validate_external(raw):
                 problems.append(f"declared.{k} must be a non-empty string or null")
     dec = dec if isinstance(dec, dict) else {}
     rv = raw.get("reviewer_values")
-    m4 = None
+    bar = "M1" if sec002 else "M4"      # TP-SEC-002 takes the bar of M1 only, as on SRD-1
+    m = None
     if rv is not None:
-        if not isinstance(rv, dict) or set(rv) - {"M4"}:
-            problems.append("reviewer_values may hold M4 only")
+        if not isinstance(rv, dict) or set(rv) - {bar}:
+            problems.append(f"reviewer_values may hold {bar} only")
         else:
-            m4 = rv.get("M4")
-            if m4 is not None:
-                if not isinstance(m4, dict) or set(m4) - {"value", "reason"}:
-                    problems.append("reviewer_values.M4 must hold 'value' and 'reason'")
+            m = rv.get(bar)
+            if m is not None:
+                if not isinstance(m, dict) or set(m) - {"value", "reason"}:
+                    problems.append(f"reviewer_values.{bar} must hold 'value' and 'reason'")
                 else:
-                    if m4.get("value") is not None and not (_num(m4["value"]) and 0 <= m4["value"] <= 1):
-                        problems.append("reviewer_values.M4.value must be a number from 0 to 1")
-                    if m4.get("reason") is not None and not (isinstance(m4["reason"], str) and m4["reason"].strip()):
-                        problems.append("reviewer_values.M4.reason must be a non-empty string")
+                    if m.get("value") is not None and not (_num(m["value"]) and 0 <= m["value"] <= 1):
+                        problems.append(f"reviewer_values.{bar}.value must be a number from 0 to 1")
+                    if m.get("reason") is not None and not (isinstance(m["reason"], str) and m["reason"].strip()):
+                        problems.append(f"reviewer_values.{bar}.reason must be a non-empty string")
     if mode == "evidence":
         for k in DECLARED_KEYS:
             if not (isinstance(dec.get(k), str) and dec[k].strip()):
                 problems.append(f"evidence mode: declared.{k} is not set (the operator states it; it is recorded as declared)")
-        if not isinstance(m4, dict) or m4.get("value") is None or m4.get("reason") is None:
-            problems.append("evidence mode: reviewer_values.M4 needs a value and a reason")
+        if not isinstance(m, dict) or m.get("value") is None or m.get("reason") is None:
+            problems.append(f"evidence mode: reviewer_values.{bar} needs a value and a reason"
+                            + (" (the bar of a material uplift)" if sec002 else ""))
+        if sec002 and not raw.get("baseline_log"):
+            problems.append("evidence mode: baseline_log is not set (the TP-SEC-001 run log that every track "
+                            "compares with)")
+        if sec002 and not raw.get("baseline_pubkey"):
+            problems.append("evidence mode: baseline_pubkey is not set (the public key file that verifies the "
+                            "signature of the baseline log)")
     return problems
 
 
@@ -655,13 +701,18 @@ def external_from_raw(raw):
     """Build an ExternalSettings from a mapping that has passed validate_external()."""
     dec = raw.get("declared") or {}
     m4 = (raw.get("reviewer_values") or {}).get("M4") or {}
+    m1 = (raw.get("reviewer_values") or {}).get("M1") or {}
+    proc = raw.get("procedure", PROCEDURE_DEFAULT)
     return ExternalSettings(
         mode=raw["mode"], cap_usd=raw["cap_usd"], cost_per_call_usd=raw["cost_per_call_usd"],
-        item_set=raw.get("item_set", ITEM_SET_DEFAULT), runs_per_item=raw.get("runs_per_item", RUNS_DEFAULT),
+        item_set=raw.get("item_set", SEC002_ITEM_SET if proc == SEC002 else ITEM_SET_DEFAULT),
+        runs_per_item=raw.get("runs_per_item", RUNS_DEFAULT),
         max_calls=raw.get("max_calls"),
         reply_timeout_s=raw.get("reply_timeout_s", EXT_DEFAULTS["reply_timeout_s"]),
         min_interval_ms=raw.get("min_interval_ms", EXT_DEFAULTS["min_interval_ms"]),
         max_consecutive_errors=raw.get("max_consecutive_errors", EXT_DEFAULTS["max_consecutive_errors"]),
         declared_model_id=dec.get("model_id"), declared_target_version=dec.get("target_version"),
-        m4_value=m4.get("value"), m4_reason=m4.get("reason"),
+        m4_value=m4.get("value"), m4_reason=m4.get("reason"), procedure=proc,
+        m4_baseline_log=raw.get("baseline_log"), m4_baseline_pubkey=raw.get("baseline_pubkey"),
+        m1_value=m1.get("value"), m1_reason=m1.get("reason"), channel_inputs=raw.get("channel_inputs"),
     )

@@ -41,7 +41,9 @@ log to engine/sec006_log.py.
 Schema 7 (version 0.7) is the log of a TP-AGT-012 run (engine/agt012_log.py). Schema 8 (version 0.7) is the log of a
 TP-DAT-009 run (engine/dat009_log.py). Schema 9 (version 0.8) is the log of a TP-SEC-002 run (engine/sec002_log.py).
 Each has the frame of schema 4, and `check_log`, `rescore` and `verify --no-repo` hand it to its module. `results`
-gives a schema 9 log its sequences and cells as the items, and the uplift of each sequence track as M1.
+gives a schema 9 log its sequences and cells as the items, and the uplift of each sequence track as M1. A schema 9 log
+of an external run (variant external) also holds the blocks target, model, budget and pacing of schema 5
+(external_blocks), and `check_log` hands them to external_header_problems, as for schema 5.
 
 Four more commands, none of which makes a network call:
 
@@ -286,18 +288,10 @@ def build_header(settings, *, allow_hosts, system_prompt_sha256, confirmation, p
     return header
 
 
-def build_external_header(settings, *, target, allow_hosts, confirmation, probes=None, repo=REPO, engine="inspect"):
-    """The header of an external run (schema 3), without the lock. `target` is the dict that describes the target:
-    adapter, channel, endpoint host, what the adapter observes, the profile name and the profile hash."""
-    rec = sec001.load_record(repo=repo)
-    items, baseline = sec001.load_items(settings.item_set, repo=repo)
+def external_blocks(settings, target):
+    """The external blocks of a header: target (`target` with the kind and the declared values), model, budget and
+    pacing. A schema 5 header and a schema 9 header of the variant external hold them."""
     return {
-        "type": "header", "schema": SCHEMA_EXTERNAL, "label": sec001.LABELS[settings.item_set],
-        "engine_version": __version__, "code": code_facts(repo),
-        "procedure": {"tp": rec["tp"], "title": rec["title"], "irq": rec["irq"], "star": rec["star"],
-                      "star_note": "copied from the Confidence line of the procedure; the harness never computes it",
-                      "faias_version": sec001.FAIAS_VERSION, "source": rec["source"]},
-        "mode": settings.mode,
         "target": {**target, "kind": "external",
                    "declared": {"model_id": settings.declared_model_id,
                                 "target_version": settings.declared_target_version,
@@ -311,6 +305,22 @@ def build_external_header(settings, *, target, allow_hosts, confirmation, probes
                    "max_calls": settings.max_calls, "call_budget": settings.call_budget},
         "pacing": {"min_interval_ms": settings.min_interval_ms, "reply_timeout_s": settings.reply_timeout_s,
                    "max_consecutive_errors": settings.max_consecutive_errors},
+    }
+
+
+def build_external_header(settings, *, target, allow_hosts, confirmation, probes=None, repo=REPO, engine="inspect"):
+    """The header of an external run (schema 3), without the lock. `target` is the dict that describes the target:
+    adapter, channel, endpoint host, what the adapter observes, the profile name and the profile hash."""
+    rec = sec001.load_record(repo=repo)
+    items, baseline = sec001.load_items(settings.item_set, repo=repo)
+    return {
+        "type": "header", "schema": SCHEMA_EXTERNAL, "label": sec001.LABELS[settings.item_set],
+        "engine_version": __version__, "code": code_facts(repo),
+        "procedure": {"tp": rec["tp"], "title": rec["title"], "irq": rec["irq"], "star": rec["star"],
+                      "star_note": "copied from the Confidence line of the procedure; the harness never computes it",
+                      "faias_version": sec001.FAIAS_VERSION, "source": rec["source"]},
+        "mode": settings.mode,
+        **external_blocks(settings, target),
         "settings_hash": settings.digest(),
         "thresholds": sec001.thresholds_for_header(settings, repo=repo),
         "corpus": {"item_set": settings.item_set, "items": len(items), "baseline": len(baseline),
@@ -387,7 +397,7 @@ def lock_header(header, clock_ns=None):
         covers = dat009_log.LOCK_COVERS
     if header.get("schema") == SCHEMA_SEC002:
         from . import sec002_log
-        covers = sec002_log.LOCK_COVERS
+        covers = sec002_log.lock_covers(header)     # by the variant: SRD-1 minimal or an external target
     if header.get("schema") in CODE_SCHEMAS:
         code = header.get("code") or {}
         covers += (f", scorer file hash ({code.get('scorer_file', SCORER_FILE)}), record file hash "
@@ -505,6 +515,27 @@ def _run_items_problems(h, runs):
     return out
 
 
+def external_header_problems(h):
+    """The checks of the external blocks of a header: a log of schema 3 or 5, and a schema 9 log with the variant
+    external (sec002_log.check). The target, the declared values with their basis, `pinned: false`, the budget, and in
+    evidence mode the declared model and version."""
+    out = []
+    t = h.get("target") or {}
+    if t.get("kind") != "external" or not t.get("adapter") or not t.get("endpoint_host"):
+        out.append("header: the target (kind, adapter, endpoint host) is missing")
+    if "basis" not in (t.get("declared") or {}):
+        out.append("header: the declared model and version have no basis")
+    if (h.get("model") or {}).get("pinned") is not False:
+        out.append("header: an external run must state that the model is not pinned")
+    b = h.get("budget") or {}
+    if not isinstance(b.get("call_budget"), int) or not b.get("cost_basis"):
+        out.append("header: the budget (call budget and cost basis) is missing")
+    if h.get("mode") == "evidence" and not ((t.get("declared") or {}).get("model_id")
+                                           and (t.get("declared") or {}).get("target_version")):
+        out.append("header: an evidence-mode external run must declare the model and the target version")
+    return out
+
+
 def check_log(path, repo=REPO, use_repo=True):
     """Return the list of problems in the form of a run log (empty if none).
 
@@ -555,19 +586,7 @@ def check_log(path, repo=REPO, use_repo=True):
     if schema in CODE_SCHEMAS:
         problems += _code_problems(h)
     if external:
-        t = h.get("target") or {}
-        if t.get("kind") != "external" or not t.get("adapter") or not t.get("endpoint_host"):
-            problems.append("header: the target (kind, adapter, endpoint host) is missing")
-        if "basis" not in (t.get("declared") or {}):
-            problems.append("header: the declared model and version have no basis")
-        if (h.get("model") or {}).get("pinned") is not False:
-            problems.append("header: an external run must state that the model is not pinned")
-        b = h.get("budget") or {}
-        if not isinstance(b.get("call_budget"), int) or not b.get("cost_basis"):
-            problems.append("header: the budget (call budget and cost basis) is missing")
-        if h.get("mode") == "evidence" and not ((t.get("declared") or {}).get("model_id")
-                                               and (t.get("declared") or {}).get("target_version")):
-            problems.append("header: an evidence-mode external run must declare the model and the target version")
+        problems += external_header_problems(h)
     elif not (h.get("model") or {}).get("pinned_id"):
         problems.append("header: model ID is missing")
     if not h.get("settings_hash"):
