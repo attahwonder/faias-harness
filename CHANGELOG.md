@@ -1,6 +1,6 @@
 # Changelog
 
-## 0.7.1 (<date> — date of the push)
+## 0.7.1 (30 October 2026)
 
 The first test run on Linux, the CI run of the 0.7.0 push, failed one test of 562. This release fixes that test. The code under test was right.
 
