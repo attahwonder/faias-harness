@@ -542,9 +542,41 @@ def _sequences(recs, runs, now):
     return [f"sequence runs rescored: {len(got)}; left out: {left_out}; mismatches: {len(mismatches)}"], mismatches
 
 
+MONITORING_SOURCE = "config_read('session') of the target: session_monitoring"
+
+
+def measures(h, runs, isolation):
+    """The measures of a schema 9 log (sec002.compute_measures) from its header, its run records and its isolation_set
+    record (None when the run stopped before the isolation arm). The engine writes them in the summary, and rescore
+    computes them again from the log alone: the pool and its baseline facts, k, the families, the M1 bar, the
+    languages of the e2 block and the monitoring fact of the session limits are all in the header."""
+    corpus, e2, limits = h.get("corpus") or {}, h.get("e2") or {}, h.get("session_limits") or {}
+    pool = {o.get("id"): {k: o.get(k) for k in ("class", "baseline_blocked", "baseline_unknown")}
+            for o in corpus.get("objectives") or [] if isinstance(o, dict)}
+    return sec002.compute_measures(
+        runs, pool_facts=pool, runs_per_item=corpus.get("runs_per_item"),
+        m1_bar=((h.get("thresholds") or {}).get("M1") or {}).get("value"), families=list(corpus.get("families") or []),
+        languages={"languages": list(e2.get("languages") or []), "e2": e2},
+        monitoring={"exists": limits.get("session_monitoring"), "source": MONITORING_SOURCE}, isolation=isolation)
+
+
+def _measures_compared(recs, runs, now):
+    """The measures computed again from the run records, with each rescored score and outcome (`now`, by record key),
+    against the measures of the summary. Returns (lines, mismatches)."""
+    s = recs[-1]
+    if s.get("type") != "summary" or not isinstance(s.get("measures"), dict):
+        return ["summary measures: not compared (the log has no summary with measures)"], []
+    rescored = [{**r, **now.get((r.get("item"), r.get("run"), r.get("turn")), {})} for r in runs]
+    isolation = next((r for r in recs if r.get("type") == "isolation_set"), None)
+    got = measures(recs[0], rescored, isolation)
+    mismatches = [f"summary {m}: recorded {runlog.canonical(s['measures'].get(m))}; now {runlog.canonical(got[m])}"
+                  for m in sorted(got) if runlog.canonical(got[m]) != runlog.canonical(s["measures"].get(m))]
+    return [f"summary measures compared: {len(got)}; mismatches: {len(mismatches)}"], mismatches
+
+
 def _rescored(recs, runs, replies):
-    """Rescore each run record whose key (item, run, turn) is in `replies`, the reply to score. Returns (lines,
-    mismatches)."""
+    """Rescore each run record whose key (item, run, turn) is in `replies`, the reply to score. Then compute the
+    measures again and compare them with the summary. Returns (lines, mismatches)."""
     pool = _log_pool(recs[0])
     now, mismatches = {}, []
     for r in runs:
@@ -561,16 +593,17 @@ def _rescored(recs, runs, replies):
             mismatches.append(f"{sec006_log._run_name(*key)}: recorded {runlog.canonical(_recorded(r, got))}; now "
                               f"{runlog.canonical(got)}")
     seq_lines, seq_mismatches = _sequences(recs, runs, now)
-    return ([f"runs rescored: {len(now)} of {len(runs)}; mismatches: {len(mismatches)}"] + seq_lines,
-            mismatches + seq_mismatches)
+    m_lines, m_mismatches = _measures_compared(recs, runs, now)
+    return ([f"runs rescored: {len(now)} of {len(runs)}; mismatches: {len(mismatches)}"] + seq_lines + m_lines,
+            mismatches + seq_mismatches + m_mismatches)
 
 
 def rescore(recs, repo=runlog.REPO, replies=None):
-    """Score each stored reply again with the scorer of this checkout: the score and the outcome of each turn, and
-    the outcome of each run of each sequence. The classes and the scorer keys come from the log, so no item text is
-    needed. Returns (lines, mismatches), or (lines, None) when nothing is rescored. A log with store_replies hash_only
-    holds no reply. Then `replies` names the store file of the replies (rescore_from_store). Without it, nothing is
-    rescored."""
+    """Score each stored reply again with the scorer of this checkout: the score and the outcome of each turn, the
+    outcome of each run of each sequence, and the measures of the summary (`measures`). The classes and the scorer
+    keys come from the log, so no item text is needed. Returns (lines, mismatches), or (lines, None) when nothing is
+    rescored. A log with store_replies hash_only holds no reply. Then `replies` names the store file of the replies
+    (rescore_from_store). Without it, nothing is rescored."""
     h, runs = recs[0], [r for r in recs if r.get("type") == "run"]
     used = runlog.sha256_hex((Path(repo) / SCORER_FILE).read_bytes())
     logged = (h.get("code") or {}).get("scorer_sha256")

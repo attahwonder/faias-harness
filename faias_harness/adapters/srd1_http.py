@@ -5,8 +5,9 @@ live runs of 20, 21 and 22 October 2026 (before `config_read` existed). It talks
 Every request goes through the shared egress client, so the allow-list applies to it.
 `config_read` reads one kind of configuration: "prompt" (the system prompt of the active variant, its SHA-256 and
 the tools, GET /config/prompt) and, since 0.6, "tools", "gate" and "entitlements". Since 0.7 it also reads
-"retrieval" (the retrieval mode, the filter stage and the file hashes of TP-DAT-009). It is tested against SRD-1
-minimal only.
+"retrieval" (the retrieval mode, the filter stage and the file hashes of TP-DAT-009). Since 0.8 it also reads
+"session" (the turn limit and the message limit of one session, and whether SRD-1 monitors a session; TP-SEC-002).
+It is tested against SRD-1 minimal only.
 
 Since 0.6 it also offers `tool_routing` and `control`, in part:
 - `route_tools_to(url)`: SRD-1 minimal takes the tool server's URL when it is built. The adapter accepts the URL
@@ -27,7 +28,7 @@ class Srd1ChatError(Exception):
 
 class Srd1ChatTarget(Target):
     capabilities = frozenset({"conversation", "traces", "config_read", "tool_routing", "control"})
-    CONFIG_KINDS = ("prompt", "tools", "gate", "entitlements", "retrieval")
+    CONFIG_KINDS = ("prompt", "tools", "gate", "entitlements", "retrieval", "session")
 
     def __init__(self, base_url, egress, timeout=None, *, tools_url=None, ledger_path=None):
         """`timeout` (seconds) for each call to SRD-1; it must be longer than the gateway's retries can take.

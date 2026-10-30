@@ -10,6 +10,8 @@ It binds to 127.0.0.1 only. Routes:
                                                 "tools_configured": [...], "tool_definitions": [...],
                                                 "runtime_templates": []}   (config_read)
   GET    /config/tools, /config/gate, /config/entitlements   (config_read, since 0.6), /config/retrieval (since 0.7)
+  GET    /config/session                -> 200 {"max_turns": n, "max_message_chars": n, "session_monitoring": false,
+                                                "note": "..."}   (config_read, since 0.8)
   POST   /control/kill_switch           body {"on": true|false} -> 200 {"on": ..., "t_ns": n, "seq": n}   (C-18, since
                                         0.6. Since 0.7, t_ns and seq are those of the kill_switch trace line.)
   GET    /health                        -> 200 {"status": "ok"}
@@ -35,7 +37,7 @@ from .orchestrator import Killed, MessageTooLong, TooManyTurns, UnknownCustomer,
 ROUTE_MESSAGES = re.compile(r"/sessions/([A-Za-z0-9_]+)/messages")
 ROUTE_TRACE = re.compile(r"/sessions/([A-Za-z0-9_]+)/trace")
 ROUTE_SESSION = re.compile(r"/sessions/([A-Za-z0-9_]+)")
-ROUTE_CONFIG = re.compile(r"/config/(tools|gate|entitlements|retrieval)")
+ROUTE_CONFIG = re.compile(r"/config/(tools|gate|entitlements|retrieval|session)")
 
 
 def make_handler(orchestrator, trace):

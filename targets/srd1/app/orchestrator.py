@@ -182,9 +182,15 @@ class Orchestrator:
                 "runtime_templates": templates}
 
     def config_kind(self, kind):
-        """config_read of one kind (prompt, tools, gate, entitlements or retrieval). None for another kind."""
+        """config_read of one kind (prompt, tools, gate, entitlements, retrieval or session). None for another kind.
+        The kind session (since 0.8, for TP-SEC-002) gives the limits of one session: the turn limit (a later turn
+        gets 429) and the message limit (a longer message gets 413). SRD-1 minimal has no monitor of session length
+        or topic drift, and session_monitoring says so."""
         if kind == "prompt":
             return self.config()
+        if kind == "session":
+            return {"max_turns": MAX_TURNS, "max_message_chars": MAX_MESSAGE_CHARS, "session_monitoring": False,
+                    "note": "SRD-1 minimal has no monitor of session length or topic drift"}
         if kind == "tools":
             return {"enabled": self.tools_on, "names": sorted(self.tool_names),
                     "definitions": list(self.tool_definitions), "definitions_sha256": self.definitions_sha256,
