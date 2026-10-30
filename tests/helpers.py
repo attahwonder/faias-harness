@@ -67,6 +67,62 @@ def own_agt012_items(test, items, folder):
     return path
 
 
+# The earlier turns of the neutral TP-SEC-002 fixture: ordinary questions of a bank customer, written for the tests.
+# No turn asks for any objective, and no turn holds a digit.
+SEC002_NEUTRAL_TURNS = (
+    "Hello. What time does my local branch open on a Saturday?",
+    "How do I order a new debit card to replace one that is worn out?",
+    "I moved house last month. How do I update my address on my account?",
+    "Can I set up a standing order in the mobile app?",
+    "How long does a payment to another bank usually take to arrive?",
+    "Where can I find my sort code in the app?",
+    "Can I pay in a cheque by taking a photo of it?",
+    "How do I turn on a text alert when my balance gets low?",
+    "What should I do if I think that I have lost my card?",
+    "Is there a cash machine inside the branch on the high street?",
+    "How can I see my statements from last year?",
+    "Can I change the name on my account after I get married?",
+    "How do I add a second person to a joint account?",
+    "Thank you, that is helpful. I have one more question.",
+)
+
+
+def sec002_neutral_fixture(repo):
+    """A neutral test fixture in the form of items/TP-SEC-002.json, at full size. It is a test fixture: it is not the
+    item set of the procedure, and it is not attack text.
+
+    The pool is 20 TP-SEC-001 items: the first 6 of class C1, 4 of C2, 4 of C3 and 6 of C4, by ID. Track A has one
+    sequence for each pool objective (20). Track B has one sequence for each of the first 15 C1, C3 and C4 objectives of
+    the pool, in ID order. Sequence n (from 0) has 6 + n mod 7 turns, so the 35 sequences have 6 to 12 turns (A-01
+    has 6). Its earlier turns are SEC002_NEUTRAL_TURNS from place n on, in a fixed rotation. Its final turn is the
+    TP-SEC-001 text of its objective, read from items/TP-SEC-001.json when the fixture is built. The activity of each
+    sequence is the one that the activity rule gives for its turns. Returns the item set as a dict."""
+    from faias_harness.engine import sec002, sec002_families, sec006
+    base = json.loads((Path(repo) / "items" / "TP-SEC-001.json").read_text(encoding="utf-8"))
+    items = {i["id"]: i for i in base["items"]}
+    by_class = {c: sorted(k for k, i in items.items() if i["class"] == c) for c in sec002.POOL_SPREAD}
+    pool = [o for c, n in sec002.POOL_SPREAD.items() for o in by_class[c][:n]]
+    track_b = [o for o in sorted(pool) if items[o]["class"] in sec002.TRACK_B_CLASSES][:sec002.SIZES["B"]]
+    plan = ([("A", f"A-{n:02d}", o) for n, o in enumerate(pool, 1)]
+            + [("B", f"B-{n:02d}", o) for n, o in enumerate(track_b, 1)])
+    tracks, rotation = {"A": [], "B": []}, len(SEC002_NEUTRAL_TURNS)
+    for n, (track, sid, o) in enumerate(plan):
+        size = sec002.MIN_TURNS + n % (sec002.MAX_TURNS - sec002.MIN_TURNS + 1)
+        turns = [SEC002_NEUTRAL_TURNS[(n + j) % rotation] for j in range(size - 1)] + [items[o]["text"]]
+        tracks[track].append({"id": sid, "objective": o,
+                              "activity": sec006.activity_of(" ".join(turns), base["activity_rule"]),
+                              "technique": "neutral questions (a test fixture)", "turns": turns})
+    return {"procedure": sec002.TP,
+            "status": "a neutral test fixture: not the item set of the procedure, and not attack text",
+            "authors": "one model family (a neutral test fixture, built by code in tests/helpers.py)",
+            "generated_by": {"family": "a neutral test fixture", "date": "2026-10-30",
+                             "prompt": "not recorded: no prompt; the fixture is built by code"},
+            "objectives": [{"id": o, "class": items[o]["class"]} for o in pool], "tracks": tracks,
+            "families": list(sec002_families.FAMILIES), "languages": [], "activity_rule": base["activity_rule"],
+            "sizes": {"A": len(tracks["A"]), "B": len(tracks["B"]), "objectives": len(pool),
+                      "families": len(sec002_families.FAMILIES), "languages": 0}}
+
+
 def lock_time_twice_clock():
     """A clock that gives its first value twice, then 1 ns more at each call. The engine takes the lock time from
     the first value. A clock that moves in steps (Python before 3.13 on Windows) can give that time again."""
