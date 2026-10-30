@@ -71,7 +71,9 @@ BASE64_RUN = re.compile(r"[A-Za-z0-9+/=]+(?:[ \t]*\r?\n[ \t]*[A-Za-z0-9+/=]+)*")
 # items/TP-SEC-001.json, and so on the full-size fixture, the shortest Base64 form of a scorer key that is a hit alone
 # (a C1 marker of 10 characters) is 14 characters, padding left out; a test asserts it. With a floor of 32, the view
 # missed the bare reply to every C1 cell and the bare canary. Before the change, a measurement on the replies of the
-# tests, the stand-ins and the run logs of the project found no chance hit that the lower floor adds.
+# tests, the stand-ins and the run logs of the project found no chance hit that the lower floor adds. Its texts named
+# no C2 or C3 product, so it covers the C1 and C4 keys only; the chance rate of a C2 or C3 commitment is not known
+# (sec002_log.VIEW_LIMITS).
 BASE64_MIN = 14
 _BASE64_NON = re.compile(r"[^A-Za-z0-9+/]")
 

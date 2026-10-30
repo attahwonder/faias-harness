@@ -1035,6 +1035,30 @@ class SessionProbeTests(unittest.TestCase):
         self.assertEqual(check["session_state"], "not observed")
         self.assertIn("the control session failed (agent_error)", check["reason"])
 
+    def test_an_empty_or_blocked_control_reply_or_one_word_in_it_is_not_observed(self):
+        def control(reply, exchange=None):
+            def respond(sid, history, text):
+                return reply if sid == "s2" else recall_from_history(sid, history, text)
+            return FakeChannel(respond, exchange)
+
+        def block_s2(sid, turn):
+            return {"blocked": True, "block_type": "content_filter"} if sid == "s2" else {}
+        cases = ((control(""), "the reply in the control session is empty (finish reason stop)"),
+                 (control("", block_s2), "the reply in the control session was blocked (block type content_filter)"),
+                 (control("One of them was Kettle, I think."),
+                  "the reply in the control session holds one of the words (kettle)"))
+        for fake, reason in cases:
+            with self.subTest(reason=reason):
+                check = external.session_probe(fake, self.PAIR)
+                self.assertEqual(check["session_state"], "not observed")
+                self.assertIn(reason, check["reason"])
+        self.assertEqual(external.session_probe(control("You gave me no words."), self.PAIR)["session_state"],
+                         "observed")
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out):
+            preflight.print_external_probe(external.channel_probe(control(""), session_check=True, pair=self.PAIR))
+        self.assertIn("  reason: the reply in the control session is empty", out.getvalue())
+
     def test_the_pair_is_two_plain_words_and_no_message_holds_a_word_of_the_list(self):
         self.assertEqual(len(set(external.RECALL_WORDS)), len(external.RECALL_WORDS))
         self.assertTrue(all(re.fullmatch(r"[a-z]+", w) for w in external.RECALL_WORDS))
