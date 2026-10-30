@@ -32,6 +32,16 @@ For TP-DAT-009 (version 0.7) it also prints the filter stage, the delegation cre
 setting. The positive control (--positive-control) uses the display filter and the service credential. So --start
 refuses the standard variant with either of them. The refund gate is not read, because the tool arm serves
 document_search only.
+For TP-SEC-002 (version 0.8) it prints the M1 bar with its reason, the baseline log and its public key, and the
+declaration of the channel inputs (targets/srd1/channel_inputs.yaml): the languages and the transformation families.
+--start refuses families that are not those of the item file. With no baseline log named, it prints BASELINE
+REQUIRED, and --probes and --start refuse. A named baseline log is read as the engine reads it: a TP-SEC-001 log on
+the full set, its signature checked against `baseline_pubkey`, and its stored scores scored again with this scorer.
+The run-to-run variance of the baseline (its M4 value) is printed next to the M1 bar. In evidence mode the preflight
+and --start refuse a baseline log of another target (each field that differs is named, with both values), one that
+is not in evidence mode, and one whose stored scores this scorer does not give again. Explore mode allows these, and
+the run label says so. The engine runs the standard variant with tools off, so --start refuses the positive control
+and tools on.
 
 With --settings <settings.yaml> of `kind: external` (version 0.5), it checks an external run instead: TP-SEC-001
 against a deployed staging agent, through the channel adapter that the profile names (docs/ARCHITECTURE.md,
@@ -52,7 +62,7 @@ from pathlib import Path
 
 from . import yamlio
 from .profile import REPO, ProfileError, load_profile
-from .settings import AGT012, DAT009, SEC006, SettingsError, load_settings
+from .settings import AGT012, DAT009, SEC002, SEC006, SettingsError, load_settings
 
 NEEDS_FILE = REPO / "records" / "capability_needs.yaml"
 RECORDS_DIR = REPO / "records"
@@ -238,14 +248,22 @@ def settings_report(settings, estimate_usd):
         print(f"Retrieval: filter stage {settings.retrieval_filter}; delegation credential "
               f"{settings.delegation_credential}; arms {', '.join(settings.arms)}; halt on crossing "
               f"{settings.halt_on_crossing}")
+    elif settings.procedure == SEC002:
+        m1 = "not set" if settings.m1_value is None else settings.m1_value
+        print(f"M1 bar (material uplift): {m1}; reason: {settings.m1_reason or 'not set'}")
+        print("M2 to M6: from records/TP-SEC-002.yaml, not from the settings")
+        print(f"Baseline (a TP-SEC-001 run log on the full set): {settings.m4_baseline_log or 'not named'}")
+        print(f"Baseline public key: {settings.m4_baseline_pubkey or 'not named'}")
+        print(f"Replies in the log: {settings.store_replies}")
     else:
         print(f"M4 bar: {m4}; reason: {settings.m4_reason or 'not set'}")
     pin, pout = settings.price_in_per_m, settings.price_out_per_m
     print(f"Prices (USD per million tokens): in {pin if pin is not None else 'not set'}, "
           f"out {pout if pout is not None else 'not set'}")
     cap = f"USD {settings.cap_usd}" if settings.cap_usd is not None else "not set"
-    if estimate_usd is None:
-        print(f"Worst-case estimate: not available (prices not set); cap: {cap}")
+    if estimate_usd is None:      # with the prices set, only a TP-SEC-002 run without its item file has no estimate
+        why = "prices not set" if pin is None or pout is None else "the item file is not found"
+        print(f"Worst-case estimate: not available ({why}); cap: {cap}")
     else:
         note = "  WARNING: the estimate is above the cap; the run may stop at the cap" \
             if settings.cap_usd is not None and estimate_usd > settings.cap_usd else ""
@@ -418,6 +436,9 @@ def _default_executor(**kw):
     if proc == DAT009:
         from .engine import run_dat009
         return run_dat009.execute(**kw)
+    if proc == SEC002:
+        from .engine import run_sec002
+        return run_sec002.execute(**kw)
     from .engine import spike
     return spike.execute(**kw)
 
@@ -519,6 +540,107 @@ def dat009_sends(settings):
     return f"opens {sessions} sessions on {len(settings.arms)} arms and sends at most {calls} model calls"
 
 
+BASELINE_REQUIRED = ("BASELINE REQUIRED: a TP-SEC-002 run compares each track with a TP-SEC-001 run log on the full "
+                     "set, in both modes; name the log in baseline_log and its public key file in baseline_pubkey")
+
+
+def _sec002_items():
+    """The item file of TP-SEC-002 (sec002.ITEM_FILE), or None when it is not found."""
+    from .engine import sec002
+    return sec002.load_set() if (REPO / sec002.ITEM_FILE).is_file() else None
+
+
+def sec002_channel_inputs():
+    """The declaration of the channel inputs of a TP-SEC-002 run (run_sec002.read_e2): (lines to print, problems). The
+    transformation families that it lists must be those of the item file, because the run makes its cells from the
+    item file and its header quotes the declaration. The engine does not compare the two."""
+    from .engine import run_sec002, sec002
+    try:
+        e2 = run_sec002.read_e2(run_sec002.E2_FILE)
+    except ValueError as e:
+        return [f"Channel inputs (E2): {e}"], [str(e)]
+    declared = e2["transformation_families"]
+    lines = [f"Channel inputs (E2, {e2['file']}): languages {', '.join(e2['languages']) or 'none'}; transformation "
+             f"families {', '.join(declared) or 'none'}",
+             f"  declared by {e2['declared_by']} on {e2['declared_on']}; status: {e2['status']}"]
+    data = _sec002_items()
+    if data is None:
+        missing = f"the item file {sec002.ITEM_FILE} is not found"
+        return lines + [f"Item file: {sec002.ITEM_FILE} is not found"], [missing]
+    families = list(data["families"])
+    if sorted(families) != sorted(declared):
+        p = (f"the declaration of the channel inputs ({e2['file']}) lists the transformation families "
+             f"{', '.join(declared) or 'none'}, and the item file lists {', '.join(families) or 'none'}: the two "
+             "lists must hold the same families")
+        return lines + [f"  - {p}"], [p]
+    return lines + ["  The item file has the same transformation families."], []
+
+
+def sec002_baseline(settings, variant="standard"):
+    """The check of the baseline log of a TP-SEC-002 run: (run label, lines to print, problems). With no log named,
+    the line is BASELINE REQUIRED, and main refuses --probes and --start. A named log is read as the engine reads it
+    (sec002_log.read_baseline): a TP-SEC-001 log on the full set, its signature checked against baseline_pubkey, and
+    its stored scores scored again with this scorer. A log that cannot be read, a key file inside the repository and a
+    signature that does not verify are problems in both modes. In evidence mode, a log of another target (each field
+    that differs is named, with both values), a log that is not in evidence mode and a log whose stored scores this
+    scorer does not give again are problems too. In explore mode they are printed, and the run label says so."""
+    from .engine import run_sec006, sec002_log, sec006_log
+    if not settings.m4_baseline_log:
+        return sec002_log.run_label(None), [BASELINE_REQUIRED], []
+    data = _sec002_items()
+    if data is None:
+        return sec002_log.run_label(None), ["Baseline check: not made (the pool of the item file names the baseline "
+                                            "items, and the item file is not found)"], []
+    try:
+        base = sec002_log.read_baseline(settings.m4_baseline_log, [o["id"] for o in data["objectives"]],
+                                        pubkey=settings.m4_baseline_pubkey)
+    except ValueError as e:
+        return sec002_log.run_label(None), [f"Baseline check: {e}"], [str(e)]
+    sig, variance = base["signature"], base.get("M4_per_run_variance")
+    lines = [f"Baseline signature: verified (public key SHA-256 {sig['public_key_sha256']})" if sig["verified"]
+             else f"Baseline signature: not checked ({sig['reason']})",
+             f"Baseline mode: {base['mode']}; item set: {base['item_set']}",
+             f"Baseline rescore with this scorer: {base['mismatches']} of {base['runs_rescored']} runs score "
+             "differently now",
+             f"M1 bar: {'not set' if settings.m1_value is None else settings.m1_value}; the run-to-run variance of the "
+             f"baseline (its M4 value): {'not computed' if variance is None else variance}"]
+    base["differs_from_run"] = sec006_log.baseline_differences(base, sec006_log.run_facts(
+        settings.model_id, variant, run_sec006.prompt_sha256(variant), settings.routing()))
+    match = not base["differs_from_run"]
+    label = sec002_log.run_label(match, base)
+    if match:
+        lines.append("Baseline match: yes (the same model ID, variant, system prompt hash, routing locks and tool "
+                     "definitions hash as the run)")
+    else:
+        lines += ["Baseline match: no"] + [f"  - {p}" for p in
+                                           sec002_log.difference_problems(base["differs_from_run"])]
+    if settings.mode == "evidence":
+        problems = sec002_log.evidence_problems(base)
+        return label, lines, problems + ([f"evidence mode needs {sec002_log.EVIDENCE_BASELINE}"] if problems else [])
+    if not match:
+        lines.append(f"  Explore mode allows this. The run label adds '{sec002_log.ANOTHER_TARGET}'.")
+    if base["mismatches"]:
+        lines.append(f"  Explore mode allows this. The run label adds '{sec002_log.RESCORED_DIFFERS}'.")
+    return label, lines, []
+
+
+def sec002_start_problems(settings, variant="standard"):
+    """What a TP-SEC-002 run needs besides the SRD-1 conditions: the M1 bar with its reason (verify refuses a log
+    without them), the item file and a declaration of the channel inputs with its families (sec002_channel_inputs),
+    and a baseline log that sec002_baseline accepts. The engine runs the standard variant with tools off and raises on
+    anything else, so the preflight refuses the positive control and tools on first."""
+    problems = []
+    if settings.m1_value is None or not settings.m1_reason:
+        problems.append("reviewer_values.M1 needs a value and a reason before a run (verify refuses a log without them)")
+    if variant != "standard":
+        problems.append(f"the variant {variant} does not apply to TP-SEC-002: the engine runs SRD-1 minimal with its "
+                        "system prompt (the standard variant) only")
+    if getattr(settings, "tools_enabled", False):
+        problems.append("TP-SEC-002 runs with tools off (SRD-1 sends no tool definition to the model): set "
+                        "tools_enabled to false")
+    return problems + sec002_channel_inputs()[1] + sec002_baseline(settings, variant)[2]
+
+
 def _inspect_missing():
     from .engine import spike
     return None if spike.inspect_available() else "the run engine inspect_ai is not installed"
@@ -578,17 +700,19 @@ def main(argv=None, *, input_fn=input, gateway_factory=_default_gateway, executo
     if variant == "prompt_free_gate" and (settings is None or settings.procedure != AGT012):
         print("--variant prompt_free_gate applies to the procedure TP-AGT-012 only")
         return 2
-    sec006_label, base_problems, isolation = None, [], None
+    sec006_label, sec002_label, base_problems, isolation = None, None, [], None
     if settings is not None:
         print()
         from . import selftest
-        from .engine import run_agt012, run_dat009, run_sec006, spike
+        from .engine import run_agt012, run_dat009, run_sec002, run_sec006, spike
         if settings.procedure == SEC006:
             est = run_sec006.estimate(settings)
         elif settings.procedure == AGT012:
             est = run_agt012.estimate(settings)
         elif settings.procedure == DAT009:
             est = run_dat009.estimate(settings)
+        elif settings.procedure == SEC002:
+            est = run_sec002.estimate(settings) if _sec002_items() is not None else None
         else:
             est = spike.estimate(settings)
         settings_report(settings, est)
@@ -599,11 +723,17 @@ def main(argv=None, *, input_fn=input, gateway_factory=_default_gateway, executo
             sec006_label, lines, base_problems = sec006_baseline(settings, variant)
             for line in lines:
                 print(line)
+        if settings.procedure == SEC002:
+            lines = sec002_channel_inputs()[0]
+            sec002_label, more, base_problems = sec002_baseline(settings, variant)
+            for line in lines + more:
+                print(line)
     if not a.start and not a.probes:
         if settings is not None:
             if base_problems and settings.mode == "evidence":
                 print()
-                print("M4 BASELINE REFUSED. No run starts. Fix these points first:")
+                print(f"{'M4 ' if settings.procedure == SEC006 else ''}BASELINE REFUSED. No run starts. Fix these "
+                      "points first:")
                 for p in base_problems:
                     print(f"  - {p}")
                 return 2
@@ -611,6 +741,8 @@ def main(argv=None, *, input_fn=input, gateway_factory=_default_gateway, executo
         return 0
     print()
     problems = start_problems(profile, settings)
+    if settings is not None and settings.procedure == SEC002 and not settings.m4_baseline_log:
+        problems.append(BASELINE_REQUIRED)          # --probes and --start: the run has no measure without it
     if settings is not None and a.start:
         from .engine import runlog
         problems += runlog.key_problems(a.sign_key) if a.sign_key else ["no signing key given (--sign-key)"]
@@ -623,6 +755,8 @@ def main(argv=None, *, input_fn=input, gateway_factory=_default_gateway, executo
             problems += agt012_start_problems(settings)
         if settings.procedure == DAT009:
             problems += dat009_start_problems(settings, variant)
+        if settings.procedure == SEC002:
+            problems += sec002_start_problems(settings, variant)
         from . import selftest
         problems += selftest.gate_problems(settings.procedure, isolation, settings.mode)   # TP-AGT-012, TP-DAT-009
     if a.probes and not a.start:
@@ -655,6 +789,9 @@ def main(argv=None, *, input_fn=input, gateway_factory=_default_gateway, executo
     elif settings.procedure == DAT009:
         from .engine import dat009_log
         sends, label = dat009_sends(settings), dat009_log.LABEL
+    elif settings.procedure == SEC002:
+        from .engine import run_sec002
+        sends, label = f"sends at most {run_sec002.planned_calls(settings)} model calls", sec002_label
     else:
         sends = f"sends {len(spike.run_items(settings)) * settings.runs_per_item} model calls"
         label = spike.sec001.LABELS[settings.item_set]

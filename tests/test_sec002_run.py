@@ -1,6 +1,7 @@
 """TP-SEC-002 on SRD-1 minimal: config_read("session"), the engine end to end against a local stand-in model host, the
 estimate and the planned calls, the stops, the cell texts made at run time and removed from each reply before the
-score, and the rescore of the measures. No outside network.
+score, the rescore of the measures, the run-log commands on a schema 9 log, and the preflight with its baseline
+checks. No outside network.
 
 The runs use a test item file of 2 sequences (A-01 and B-01, each of 6 turns, on the pool objective C1-01) and 2
 cells (C1-01 in two families). The test points sec002.ITEM_FILE at its own copy. The baseline is a stand-in TP-SEC-001
@@ -9,15 +10,20 @@ No test holds a marker, a placeholder value or an encoded text: each test reads 
 items/TP-SEC-001.json, the placeholder from the system prompt, and makes each encoded form itself.
 """
 import base64
+import contextlib
 import dataclasses
+import io
 import json
+import os
 import tempfile
 import unittest
 from pathlib import Path
 from types import SimpleNamespace
 from unittest import mock
 
-from faias_harness import settings as settings_mod
+import yaml
+
+from faias_harness import preflight
 from faias_harness.adapters.srd1_http import Srd1ChatTarget
 from faias_harness.egress import EgressClient
 from faias_harness.engine import run_sec002, runlog, sec002, sec002_families, sec002_log, sec006, spike
@@ -26,7 +32,8 @@ from targets.srd1.app import trace as tr
 from targets.srd1.app.build import CONFIGURED_TOOLS
 from targets.srd1.app.orchestrator import Orchestrator, load_system_prompt
 from targets.srd1.app.server import Srd1Server
-from tests.helpers import FAKE_KEY_VALUE, KEY_ENV, StandInModelHost, make_settings, no_outside_network
+from tests.helpers import (EVIDENCE_RAW, FAKE_KEY_VALUE, KEY_ENV, StandInModelHost, make_settings, no_outside_network,
+                           raw_settings)
 from tests.test_srd1 import FakeGateway
 
 REPO = Path(__file__).resolve().parents[1]
@@ -95,21 +102,19 @@ def tearDownModule():
     _MOD["tmp"].cleanup()
 
 
-@dataclasses.dataclass(frozen=True)
-class Sec002Settings(settings_mod.Settings):
-    """The settings of a TP-SEC-002 run, made in the test: the settings file of this procedure is not loaded here.
-    It adds the reviewer-set bar of M1 and its reason, which sec002.thresholds_for_header reads."""
-    m1_value: object = None
-    m1_reason: object = None
+M1_BAR = {"M1": {"value": 0.1, "reason": "test value for the unit tests"}}
+
+
+def sec002_raw(**changes):
+    """The settings mapping of a TP-SEC-002 run in evidence mode, with the baseline of this module."""
+    return raw_settings(**{"procedure": "TP-SEC-002", "item_set": "TP-SEC-002", "cap_usd": 10.0,
+                           "baseline_log": _MOD["baseline"], "baseline_pubkey": str(_MOD["pub"]),
+                           "reviewer_values": M1_BAR, **changes})
 
 
 def sec002_settings(**changes):
-    base = make_settings(cap_usd=10.0)
-    values = {f.name: getattr(base, f.name) for f in dataclasses.fields(base)}
-    values.update(procedure="TP-SEC-002", item_set="TP-SEC-002", m4_baseline_log=_MOD["baseline"],
-                  m4_baseline_pubkey=str(_MOD["pub"]), m1_value=0.1, m1_reason="test value for the unit tests")
-    values.update(changes)
-    return Sec002Settings(**values)
+    """The settings of a TP-SEC-002 run, loaded through the validator, with `changes` to the fields of Settings."""
+    return dataclasses.replace(make_settings(**sec002_raw()), **changes)
 
 
 def pool_entry():
@@ -145,12 +150,8 @@ def echo(text, nth, messages):
 
 
 def verify(res, use_repo=True, items=None):
-    """runlog.verify_log with the test key and the form check of schema 9 (sec002_log.check), which this test gives to
-    verify_log in place of runlog.check_log. `items`: the item file of the run, when it is not the test item file."""
-    def check(path, repo=REPO, use_repo=True):
-        return sec002_log.check(runlog.read_log(path), repo=repo, use_repo=use_repo)
-    with mock.patch.object(runlog, "check_log", check), mock.patch.object(sec002, "ITEM_FILE",
-                                                                          items or sec002.ITEM_FILE):
+    """runlog.verify_log with the test key. `items`: the item file of the run, when it is not the test item file."""
+    with mock.patch.object(sec002, "ITEM_FILE", items or sec002.ITEM_FILE):
         return runlog.verify_log(res.log_path, res.sig_path, _MOD["pub"], repo=REPO, use_repo=use_repo)
 
 
@@ -531,6 +532,285 @@ class EngineTests(unittest.TestCase):
                       f"{len(ECHO_OBJS)} of {len(ECHO_OBJS)} pool objectives, from items/TP-SEC-001.json of this "
                       "checkout)", lines)
         self.assertIn("summary measures compared: 7; mismatches: 0", lines)
+
+    def test_the_run_log_commands_hand_a_schema_9_log_to_its_module(self):
+        """check_log, verify, verify --no-repo and rescore read a schema 9 log with sec002_log. No test of this module
+        puts a stand-in in place of any of them. The lock covers the scorer hash, as for each log with a code block."""
+        run = self.complete()
+        log, sig, pub = run.res.log_path, run.res.sig_path, _MOD["pub"]
+        self.assertEqual((runlog.check_log(log), runlog.check_log(log, use_repo=False)), ([], []))
+        ok, msg = runlog.verify_log(log, sig, pub)
+        self.assertEqual((ok, msg), (True, "PASS: signature valid (pinned public key); log form ok"))
+        ok, msg = runlog.verify_log(log, sig, pub, use_repo=False)
+        self.assertTrue(ok, msg)
+        self.assertEqual(msg.splitlines()[1:], [sec002_log.summary_line(run.recs), "repository item set: not checked"])
+        self.assertTrue(msg.splitlines()[1].startswith("items hash: matches"), msg)
+        lines, mismatches = runlog.rescore_log(log)
+        self.assertEqual(mismatches, [], lines)
+        self.assertEqual(lines[0], f"scorer used: {sec002_log.SCORER_FILE} of this checkout, sha256 "
+                                   f"{run.recs[0]['code']['scorer_sha256']}")
+        self.assertIn("summary measures compared: 7; mismatches: 0", lines)
+        for argv in (["verify", "--log", str(log), "--sig", str(sig), "--pubkey", str(pub)],
+                     ["verify", "--log", str(log), "--sig", str(sig), "--pubkey", str(pub), "--no-repo"],
+                     ["rescore", "--log", str(log)]):
+            buf = io.StringIO()
+            with contextlib.redirect_stdout(buf):
+                rc = runlog.main(argv)
+            self.assertEqual(rc, 0, buf.getvalue())
+            self.assertIn(f"label: {sec002.LABEL}", buf.getvalue())
+        # The lock
+        self.assertIn(runlog.SCHEMA_SEC002, runlog.CODE_SCHEMAS)
+        h = json.loads(json.dumps(run.recs[0]))
+        fixed = runlog.lock_fixed(h)
+        self.assertEqual((fixed["scorer_sha256"], fixed["record_sha256"]),
+                         (h["code"]["scorer_sha256"], h["code"]["record_sha256"]))
+        self.assertEqual(runlog.sha256_hex(runlog.canonical(fixed)), h["lock"]["hash"])
+        h["code"]["scorer_sha256"] = "0" * 64
+        copy = _MOD["dir"] / "scorer_hash_edited.jsonl"
+        copy.write_bytes(b"".join(runlog.canonical(r).encode("utf-8") + b"\n" for r in [h] + run.recs[1:]))
+        self.assertEqual(runlog.check_log(copy), ["header: the lock hash does not match the fixed parts of the header"])
+
+    def test_results_gives_one_row_for_a_schema_9_log(self):
+        run = self.complete()
+        for use_repo in (True, False):
+            lines, refused = runlog.results([run.res.log_path], str(_MOD["pub"]), use_repo=use_repo)
+            self.assertEqual(refused, [], lines)
+            self.assertTrue(lines[0].startswith("results: 1 logs verified"), lines[0])
+            cols = [c.strip() for c in lines[2].strip(" |").split(" | ")]
+            rows = lines[4:]
+            self.assertEqual(len(rows), 1, lines)
+        row = runlog.result_row(run.recs, "complete/run_log.jsonl")
+        self.assertEqual(rows[0], "| " + " | ".join(str(row.get(c, "-")).replace("|", "\\|") for c in cols) + " |")
+        self.assertEqual((row["procedure"], row["label"], row["items"], row["k"]),
+                         ("TP-SEC-002", sec002.LABEL, "4 (2 sequences, 2 cells)", "3"))
+        self.assertEqual(row["M1"],
+                         "Track A: uplift 1, materially_higher true; Track B: uplift 0, materially_higher false")
+        self.assertEqual(row["M4"], "within_threshold true")
+
+    def test_runlog_rescore_takes_the_store_of_a_hash_only_log(self):
+        run = self.run_sec002("hash_only", store_replies="hash_only")
+        store = write_store(run, _MOD["dir"] / "store_for_runlog.jsonl")
+        lines, mismatches = runlog.rescore_log(run.res.log_path)
+        self.assertEqual((mismatches, lines[-1]), (None, sec002_log.NO_STORE))
+        lines, differences = runlog.rescore_log(run.res.log_path, replies=str(store))
+        self.assertEqual(differences, [], lines)
+        self.assertIn("summary measures compared: 7; mismatches: 0", lines)
+        for extra, want in (([], 2), (["--replies", str(store)], 0)):
+            buf = io.StringIO()
+            with contextlib.redirect_stdout(buf):
+                rc = runlog.main(["rescore", "--log", str(run.res.log_path), *extra])
+            self.assertEqual(rc, want, buf.getvalue())
+        lines, mismatches = runlog.rescore_log(_MOD["baseline"], replies=str(store))
+        self.assertIsNone(mismatches)
+        self.assertIn("--replies is for a TP-SEC-006 or TP-SEC-002 log with store_replies hash_only", lines[0])
+
+
+class PreflightTests(unittest.TestCase):
+    """The preflight of a TP-SEC-002 run against the stand-in baselines of this module. No probe call and no run is
+    made: the probes are stand-ins, and the operator types "no" unless a test gives an executor that records its
+    call. The declaration of the channel inputs is a copy with the two families of the test item file."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.dir = _MOD["dir"] / "preflight"
+        cls.dir.mkdir(parents=True, exist_ok=True)
+        att = cls.dir / "attestation.txt"
+        att.write_text("Test system, synthetic data only.\n", encoding="utf-8")
+        doc = yaml.safe_load((REPO / "targets" / "srd1" / "profile.yaml").read_text(encoding="utf-8"))
+        doc["attestation_file"] = str(att)
+        cls.profile = cls.dir / "profile.yaml"
+        cls.profile.write_text(yaml.safe_dump(doc), encoding="utf-8")
+        cls.e2 = cls.dir / "channel_inputs.yaml"
+        cls.e2.write_text(E2_TEXT.replace(", ".join(sec002_families.FAMILIES), ", ".join(CELL_FAMILIES)),
+                          encoding="utf-8")
+        cls.start = ("--start", "--sign-key", str(_MOD["priv"]))
+
+    def preflight(self, *extra, baseline=None, mode="evidence", e2=None, executor=None, answer="no", **changes):
+        """The preflight with a TP-SEC-002 settings file. `baseline`: a log in place of the baseline of this module.
+        `changes`: changes to the settings mapping."""
+        raw = sec002_raw(mode=mode, **changes)
+        if baseline is not None:
+            raw["baseline_log"] = str(baseline)
+        path = self.dir / "settings.yaml"
+        path.write_text(yaml.safe_dump(raw), encoding="utf-8")
+
+        class Gateway:      # stands in for the gateway of the probes
+            class cap:
+                spent_usd = 0.0
+        probes = {"judge_family": "not applicable", "tool_call": {"ok": True}, "reasoning_text": {"present": False},
+                  "cost_usd": 0.0}
+        buf = io.StringIO()
+        with contextlib.redirect_stdout(buf), no_outside_network(), mock.patch.dict(os.environ, ENV), \
+                mock.patch.object(spike, "run_probes", lambda g: probes), \
+                mock.patch.object(run_sec002, "E2_FILE", str(e2 or self.e2)):
+            rc = preflight.main(["--profile", str(self.profile), "--settings", str(path), *extra],
+                                input_fn=lambda p: answer, gateway_factory=lambda s: Gateway(),
+                                executor=executor or (lambda **k: self.fail("no run may start")),
+                                inspect_check=lambda: None)
+        return rc, buf.getvalue()
+
+    def baseline_copy(self, name, change=None, edit=None):
+        """A copy of the baseline log of this module in its own folder, signed with the test key. `change` changes its
+        header, which is then locked again, so the copy stands for a genuine log of another target. `edit` changes
+        its records after the header."""
+        recs = runlog.read_log(_MOD["baseline"])
+        if change:
+            change(recs[0])
+            runlog.lock_header(recs[0], recs[0]["lock"]["time_ns"])
+        if edit:
+            edit(recs)
+        copy = self.dir / "baselines" / name / "run_log.jsonl"
+        copy.parent.mkdir(parents=True, exist_ok=True)
+        copy.write_bytes(b"".join(runlog.canonical(r).encode("utf-8") + b"\n" for r in recs))
+        runlog.sign_log(copy, _MOD["priv"])
+        self.assertTrue(runlog.verify_log(copy, copy.with_name(copy.name + ".sig"), _MOD["pub"])[0])
+        return copy
+
+    def problems(self, out, head="START REFUSED. No run starts. Fix these points first:"):
+        return out.split(head + "\n")[1].splitlines()
+
+    def test_a_matching_baseline_reaches_the_typed_yes_with_the_label(self):
+        rc, out = self.preflight(*self.start)
+        self.assertEqual(rc, 4, out[-1500:])
+        runs = sum(1 for r in runlog.read_log(_MOD["baseline"]) if r["type"] == "run")
+        for text in ("Engine run: TP-SEC-002 on SRD-1 minimal, item set TP-SEC-002",
+                     "M1 bar (material uplift): 0.1; reason: test value for the unit tests",
+                     f"Baseline (a TP-SEC-001 run log on the full set): {_MOD['baseline']}",
+                     f"Baseline public key: {_MOD['pub']}", "Replies in the log: full",
+                     f"Baseline signature: verified (public key SHA-256 {runlog.sha256_hex(_MOD['pub'].read_bytes())})",
+                     "Baseline mode: evidence; item set: TP-SEC-001",
+                     f"Baseline rescore with this scorer: 0 of {runs} runs score differently now",
+                     "Baseline match: yes", "  The item file has the same transformation families.",
+                     f"sends at most {run_sec002.planned_calls(sec002_settings())} model calls",
+                     f"The result is labelled '{sec002.LABEL}'."):
+            self.assertIn(text, out)
+        self.assertNotIn("BASELINE REQUIRED", out)
+
+    def test_evidence_mode_refuses_a_baseline_of_another_target_and_names_the_field(self):
+        """The twin of the TP-SEC-006 test, for the six fields: a signed baseline with one field changed is refused,
+        exit 2, by the preflight and by --start, and the refusal names that field only."""
+        run = {"model_id": EVIDENCE_RAW["model_id"], "variant": "standard",
+               "system_prompt_sha256": runlog.sha256_hex(load_system_prompt()),
+               "routing.only": EVIDENCE_RAW["routing"]["only"],
+               "routing.quantizations": EVIDENCE_RAW["routing"]["quantizations"], "tool_definitions_sha256": None}
+        other = "other-vendor/other-model"
+        changed = {"model_id": (other, lambda h: h["model"].update(pinned_id=other)),
+                   "variant": ("positive_control", lambda h: h["variant"].update(name="positive_control")),
+                   "system_prompt_sha256": ("0" * 64, lambda h: h.update(system_prompt_sha256="0" * 64)),
+                   "routing.only": (["otherhost"], lambda h: h["routing"].update(only=["otherhost"])),
+                   "routing.quantizations": (["bf16"], lambda h: h["routing"].update(quantizations=["bf16"])),
+                   "tool_definitions_sha256": ("1" * 64, lambda h: h.update(tools={"definitions_sha256": "1" * 64}))}
+        for field, (value, change) in changed.items():
+            copy = self.baseline_copy(field, change)
+            want = f"the baseline log differs from the run in {field}: baseline {value!r}, run {run[field]!r}"
+            for extra in ((), self.start):
+                with self.subTest(field=field, start=bool(extra)):
+                    rc, out = self.preflight(*extra, baseline=copy)
+                    self.assertEqual(rc, 2, out[-1500:])
+                    head = ("START REFUSED. No run starts. Fix these points first:" if extra
+                            else "BASELINE REFUSED. No run starts. Fix these points first:")
+                    self.assertEqual(self.problems(out, head),
+                                     [f"  - {want}", f"  - evidence mode needs {sec002_log.EVIDENCE_BASELINE}"])
+                    self.assertNotIn("M4 BASELINE", out)
+
+    def test_explore_mode_starts_with_a_baseline_of_another_target_and_labels_it(self):
+        copy = self.baseline_copy("variant_explore", lambda h: h["variant"].update(name="positive_control"))
+        rc, out = self.preflight(baseline=copy, mode="explore")
+        self.assertEqual(rc, 0, out[-1500:])
+        for text in ("Baseline match: no", "  - the baseline log differs from the run in variant: baseline "
+                                           "'positive_control', run 'standard'",
+                     f"  Explore mode allows this. The run label adds '{sec002_log.ANOTHER_TARGET}'."):
+            self.assertIn(text, out)
+        calls = []
+
+        def executor(**kw):
+            calls.append(kw)
+            return SimpleNamespace(status="complete", log_path="log", sig_path="sig",
+                                   summary={"label": "x", "model_calls": 0, "cost_usd": 0})
+        rc, out = self.preflight(*self.start, baseline=copy, mode="explore", executor=executor, answer="yes")
+        self.assertEqual(rc, 0, out[-1500:])
+        self.assertIn(f"The result is labelled '{sec002.LABEL}; {sec002_log.ANOTHER_TARGET}'.", out)
+        self.assertEqual(len(calls), 1)
+        self.assertEqual((calls[0]["settings"].procedure, calls[0]["settings"].m4_baseline_log, calls[0]["variant"]),
+                         ("TP-SEC-002", str(copy), "standard"))
+
+    def test_a_baseline_whose_stored_scores_differ_from_this_scorer(self):
+        """One score edited in a copy of the baseline log, signed again. Evidence mode refuses it with the count.
+        Explore mode allows it, and the label says so."""
+        def edit(recs):
+            next(r for r in recs if r["type"] == "run")["score"]["evidence"] = "an edited score"
+        copy = self.baseline_copy("score_edited", edit=edit)
+        runs = sum(1 for r in runlog.read_log(copy) if r["type"] == "run")
+        want = f"the stored scores of the baseline log differ from this scorer: 1 of {runs} runs score differently now"
+        for extra, head in (((), "BASELINE REFUSED. No run starts. Fix these points first:"),
+                            (self.start, "START REFUSED. No run starts. Fix these points first:")):
+            rc, out = self.preflight(*extra, baseline=copy)
+            self.assertEqual(rc, 2, out[-1500:])
+            self.assertEqual(self.problems(out, head),
+                             [f"  - {want}", f"  - evidence mode needs {sec002_log.EVIDENCE_BASELINE}"])
+            self.assertIn(f"Baseline rescore with this scorer: 1 of {runs} runs score differently now", out)
+        rc, out = self.preflight(*self.start, baseline=copy, mode="explore")
+        self.assertEqual(rc, 4, out[-1500:])
+        self.assertIn(f"  Explore mode allows this. The run label adds '{sec002_log.RESCORED_DIFFERS}'.", out)
+        self.assertIn(f"The result is labelled '{sec002.LABEL}; {sec002_log.RESCORED_DIFFERS}'.", out)
+
+    def test_the_variance_of_the_baseline_is_printed_next_to_the_m1_bar(self):
+        rc, out = self.preflight()
+        self.assertEqual(rc, 0, out[-1500:])
+        self.assertIn("M1 bar: 0.1; the run-to-run variance of the baseline (its M4 value): not computed", out)
+
+        def edit(recs):
+            recs[-1]["measures"]["M4"]["value"] = 0.25
+        rc, out = self.preflight(baseline=self.baseline_copy("variance", edit=edit))
+        self.assertEqual(rc, 0, out[-1500:])
+        self.assertIn("M1 bar: 0.1; the run-to-run variance of the baseline (its M4 value): 0.25", out)
+
+    def test_a_baseline_on_the_spike_set_is_refused_in_both_modes(self):
+        want = "the baseline log is on the item set 'spike', not TP-SEC-001"
+        rc, out = self.preflight(baseline=_MOD["spike"])
+        self.assertEqual(rc, 2, out[-1500:])
+        self.assertTrue(self.problems(out, "BASELINE REFUSED. No run starts. Fix these points first:")[0]
+                        .startswith(f"  - {want}"), out[-1500:])
+        rc, out = self.preflight(*self.start, baseline=_MOD["spike"], mode="explore")
+        self.assertEqual(rc, 2, out[-1500:])
+        self.assertTrue(self.problems(out)[0].startswith(f"  - {want}"), out[-1500:])
+
+    def test_start_refuses_families_that_are_not_those_of_the_item_file(self):
+        """The engine does not compare the declaration of the channel inputs with the item file. The preflight does."""
+        rc, out = self.preflight(*self.start, e2=_MOD["e2"])
+        self.assertEqual(rc, 2, out[-1500:])
+        want = (f"the declaration of the channel inputs ({_MOD['dir'].name}/channel_inputs.yaml) lists the "
+                f"transformation families {', '.join(sec002_families.FAMILIES)}, and the item file lists "
+                f"{', '.join(CELL_FAMILIES)}: the two lists must hold the same families")
+        self.assertEqual(self.problems(out), [f"  - {want}"])
+        self.assertIn(f"  - {want}", out.split("START REFUSED")[0])     # printed with the declaration too
+        bad = self.dir / "channel_inputs_bad.yaml"
+        bad.write_text(self.e2.read_text(encoding="utf-8").replace("declared_on: 2026-10-30\n", ""), encoding="utf-8")
+        rc, out = self.preflight(*self.start, e2=bad)
+        self.assertEqual(rc, 2, out[-1500:])
+        self.assertEqual(self.problems(out), ["  - the declaration of the channel inputs (channel_inputs_bad.yaml) "
+                                              "lacks declared_on"])
+
+    def test_start_refuses_the_positive_control_and_tools_on_before_the_engine(self):
+        """The engine raises on both. The preflight refuses each with its own line, and no run starts. Explore mode,
+        so that the baseline of the standard prompt is not refused for the positive control."""
+        control = ("the variant positive_control does not apply to TP-SEC-002: the engine runs SRD-1 minimal with its "
+                   "system prompt (the standard variant) only")
+        tools = ("TP-SEC-002 runs with tools off (SRD-1 sends no tool definition to the model): set tools_enabled "
+                 "to false")
+        for extra, changes, want in ((("--positive-control",), {}, control),
+                                     (("--variant", "positive_control"), {}, control),
+                                     ((), {"tools_enabled": True, "tool_key_env": "FAIAS_TEST_TOOL_KEY"}, tools)):
+            with self.subTest(extra=extra, changes=changes):
+                rc, out = self.preflight(*self.start, *extra, mode="explore", **changes)
+                self.assertEqual(rc, 2, out[-1500:])
+                self.assertEqual(self.problems(out), [f"  - {want}"])
+
+    def test_start_refuses_without_the_m1_bar(self):
+        rc, out = self.preflight(*self.start, mode="explore", reviewer_values=None)
+        self.assertEqual(rc, 2, out[-1500:])
+        self.assertEqual(self.problems(out), ["  - reviewer_values.M1 needs a value and a reason before a run (verify "
+                                              "refuses a log without them)"])
 
 
 class _Log:

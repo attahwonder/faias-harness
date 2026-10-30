@@ -20,10 +20,10 @@ operator's estimate of the cost of one call; the run stops before a call that wo
 M4 value with its reason. The declared values are recorded as declared, not observed.
 
 The setting `procedure` (version 0.6) chooses the procedure of an SRD-1 run: TP-SEC-001 (the default) or
-TP-SEC-006 (docs/ARCHITECTURE.md, section 16). Only TP-SEC-006 takes `store_replies` (full or hash_only),
-`m4_baseline_log`, `m4_baseline_pubkey` (the public key file that verifies the baseline log's signature; keep it
-outside the repository) and `reviewer_values.M3`. In evidence mode it needs the baseline log, its public key and the
-M3 and M4 values with their reasons. A TP-SEC-001 file keeps its settings hash.
+TP-SEC-006 (docs/ARCHITECTURE.md, section 16). Only TP-SEC-006 takes `store_replies` (full or hash_only; since 0.8,
+TP-SEC-002 takes it too), `m4_baseline_log`, `m4_baseline_pubkey` (the public key file that verifies the baseline
+log's signature; keep it outside the repository) and `reviewer_values.M3`. In evidence mode it needs the baseline log,
+its public key and the M3 and M4 values with their reasons. A TP-SEC-001 file keeps its settings hash.
 
 The settings `tools_enabled` and `tool_key_env` (version 0.6) turn on SRD-1's one tool, fee_refund. They are off
 by default. With tools on, the engine serves the tool through the harness's MCP tool emulator and generates a key
@@ -38,6 +38,15 @@ default), pre_ranking or post_generation. `delegation_credential` is user (the d
 of pipeline and tool (both by default). `halt_on_crossing` is false by default. It needs `tools_enabled: true`, for
 the tool arm. The four settings enter the settings hash only for a TP-DAT-009 run, so every other file keeps its
 settings hash. In evidence mode it needs no reviewer value, because M1 to M6 come from the record.
+
+The procedure TP-SEC-002 (version 0.8) takes `store_replies`, `baseline_log`, `baseline_pubkey` and
+`reviewer_values.M1`. `baseline_log` is the TP-SEC-001 run log on the full set that every track compares with, and
+`baseline_pubkey` is the public key file that verifies its signature (keep it outside the repository). They fill the
+fields m4_baseline_log and m4_baseline_pubkey of Settings; a TP-SEC-002 file that uses those two names is refused.
+M1 is the bar of a material uplift, with its reason. A file with `baseline_log: null` loads: the preflight then prints
+BASELINE REQUIRED, and --probes and --start refuse it. In evidence mode it needs the M1 value with its reason, the
+baseline log and its public key. It needs no M4 value, because M2 to M6 come from the record. The four settings enter
+the settings hash only for a TP-SEC-002 run, so every other file keeps its settings hash.
 """
 import hashlib
 import json
@@ -55,15 +64,19 @@ TOP_REQUIRED = ["provider", "model_id", "mode", "routing", "price_in_per_m", "pr
 TOP_OPTIONAL = ["max_tokens", "reviewer_values", "temperature", "seed", "runs_per_item", "item_set", "kind",
                 "procedure", "store_replies", "m4_baseline_log", "m4_baseline_pubkey", "tools_enabled",
                 "tool_key_env", "containment", "halt_on_bypass", "selftest_pubkey", "retrieval_filter",
-                "delegation_credential", "arms", "halt_on_crossing"]
+                "delegation_credential", "arms", "halt_on_crossing", "baseline_log", "baseline_pubkey"]
 RUNS_MIN, RUNS_MAX, RUNS_DEFAULT = 3, 20, 3     # three is the FAIAS minimum (PLAYBOOK_SEC_001.md line 27)
 # The item set of a run: the full set in items/TP-SEC-001.json (the default), or the 20 items of the engine spike.
 ITEM_SETS, ITEM_SET_DEFAULT = ("TP-SEC-001", "spike"), "TP-SEC-001"
-# The procedure of an SRD-1 run (version 0.6). TP-SEC-006 runs its own item set, and only it takes store_replies,
-# m4_baseline_log, m4_baseline_pubkey and a reviewer value for M3.
-PROCEDURES, PROCEDURE_DEFAULT, SEC006, AGT012 = ("TP-SEC-001", "TP-SEC-006", "TP-AGT-012", "TP-DAT-009"), \
-    "TP-SEC-001", "TP-SEC-006", "TP-AGT-012"
+# The procedure of an SRD-1 run (version 0.6). TP-SEC-006 runs its own item set, and only it takes m4_baseline_log,
+# m4_baseline_pubkey and a reviewer value for M3. It and TP-SEC-002 take store_replies.
+PROCEDURES, PROCEDURE_DEFAULT, SEC006, AGT012 = ("TP-SEC-001", "TP-SEC-006", "TP-AGT-012", "TP-DAT-009",
+                                                 "TP-SEC-002"), "TP-SEC-001", "TP-SEC-006", "TP-AGT-012"
 DAT009 = "TP-DAT-009"
+# TP-SEC-002 runs its own item set. Its baseline settings fill the fields m4_baseline_log and m4_baseline_pubkey.
+SEC002 = "TP-SEC-002"
+SEC002_ITEM_SET = "TP-SEC-002"
+SEC002_KEYS = {"baseline_log": "m4_baseline_log", "baseline_pubkey": "m4_baseline_pubkey"}
 # The item set of a TP-AGT-012 run is its own set; the containment exercise's default delays (ms) and run count.
 AGT012_ITEM_SET = "TP-AGT-012"
 AGT012_DELAYS_DEFAULT = (0, 50, 200, 800, 2000)
@@ -114,6 +127,8 @@ class Settings:
     m4_baseline_pubkey: object = None
     m3_value: object = None
     m3_reason: object = None
+    m1_value: object = None             # TP-SEC-002 only; the bar of a material uplift
+    m1_reason: object = None
     tools_enabled: bool = False
     tool_key_env: object = None
     containment_delays_ms: tuple = ()      # TP-AGT-012 only; the delays of the containment exercise
@@ -167,6 +182,10 @@ class Settings:
             out.update(procedure=self.procedure, retrieval_filter=self.retrieval_filter,
                        delegation_credential=self.delegation_credential, arms=list(self.arms),
                        halt_on_crossing=self.halt_on_crossing)
+        if self.procedure == SEC002:
+            out.update(procedure=self.procedure, store_replies=self.store_replies, baseline_log=self.m4_baseline_log,
+                       baseline_pubkey=self.m4_baseline_pubkey)
+            out["reviewer_values"]["M1"] = {"value": self.m1_value, "reason": self.m1_reason}
         if self.selftest_pubkey is not None:
             out["selftest_pubkey"] = self.selftest_pubkey
         return out
@@ -266,14 +285,19 @@ def validate(raw):
     sec006 = proc == SEC006
     agt012 = proc == AGT012
     dat009 = proc == DAT009
+    sec002 = proc == SEC002
     if not dat009:
         problems += [f"{k} applies to the procedure TP-DAT-009 only" for k in DAT009_KEYS if k in raw]
+    if not sec002:
+        problems += [f"{k} applies to the procedure TP-SEC-002 only" for k in SEC002_KEYS if k in raw]
+    if "store_replies" in raw and not (sec006 or sec002):
+        problems.append("store_replies applies to the procedures TP-SEC-006 and TP-SEC-002 only")
     if dat009:
         if "item_set" in raw and raw["item_set"] != DAT009_ITEM_SET:
             problems.append(f"item_set must be {DAT009_ITEM_SET} for the procedure TP-DAT-009")
         if raw.get("tools_enabled") is not True:
             problems.append("TP-DAT-009 needs tools_enabled: true (the tool arm serves document_search)")
-        for k in ("store_replies", "m4_baseline_log", "m4_baseline_pubkey"):
+        for k in ("m4_baseline_log", "m4_baseline_pubkey"):
             if k in raw:
                 problems.append(f"{k} applies to the procedure TP-SEC-006 only")
         problems += _validate_dat009(raw)
@@ -288,18 +312,32 @@ def validate(raw):
         pk = raw.get("m4_baseline_pubkey")
         if pk is not None and not (isinstance(pk, str) and pk.strip()):
             problems.append("m4_baseline_pubkey must be the path of a public key file, or null")
+    elif sec002:
+        if "item_set" in raw and raw["item_set"] != SEC002_ITEM_SET:
+            problems.append(f"item_set must be {SEC002_ITEM_SET} for the procedure TP-SEC-002")
+        if "store_replies" in raw and raw["store_replies"] not in STORE_REPLIES:
+            problems.append(f"store_replies must be one of {', '.join(STORE_REPLIES)}")
+        for k, old in SEC002_KEYS.items():
+            if old in raw:
+                problems.append(f"{old} applies to the procedure TP-SEC-006 only; a TP-SEC-002 file names it {k}")
+        bl = raw.get("baseline_log")
+        if bl is not None and not (isinstance(bl, str) and bl.strip()):
+            problems.append("baseline_log must be the path of a TP-SEC-001 run log, or null")
+        pk = raw.get("baseline_pubkey")
+        if pk is not None and not (isinstance(pk, str) and pk.strip()):
+            problems.append("baseline_pubkey must be the path of a public key file, or null")
     elif agt012:
         if "item_set" in raw and raw["item_set"] != AGT012_ITEM_SET:
             problems.append(f"item_set must be {AGT012_ITEM_SET} for the procedure TP-AGT-012")
         if raw.get("tools_enabled") is not True:
             problems.append("TP-AGT-012 needs tools_enabled: true (the run drives SRD-1's one tool, fee_refund)")
-        for k in ("store_replies", "m4_baseline_log", "m4_baseline_pubkey"):
+        for k in ("m4_baseline_log", "m4_baseline_pubkey"):
             if k in raw:
                 problems.append(f"{k} applies to the procedure TP-SEC-006 only")
     else:
         if "item_set" in raw and raw["item_set"] not in ITEM_SETS:
             problems.append(f"item_set must be one of {', '.join(ITEM_SETS)}")
-        for k in ("store_replies", "m4_baseline_log", "m4_baseline_pubkey"):
+        for k in ("m4_baseline_log", "m4_baseline_pubkey"):
             if k in raw:
                 problems.append(f"{k} applies to the procedure TP-SEC-006 only")
     if not agt012:
@@ -356,14 +394,15 @@ def validate(raw):
         routing = {}
 
     rv = raw.get("reviewer_values")
-    m4 = m3 = None
-    allowed = {"M3", "M4"} if sec006 else {"M4"}
+    m4 = m3 = m1 = None
+    # TP-SEC-002 takes the bar of M1 only: its M3 and M4 thresholds are 0 cells, from the record.
+    allowed = {"M3", "M4"} if sec006 else {"M1"} if sec002 else {"M4"}
     if "reviewer_values" in raw and rv is not None:
         if not isinstance(rv, dict) or set(rv) - allowed:
-            problems.append("reviewer_values may hold M3 and M4 only" if sec006 else "reviewer_values may hold M4 only")
+            problems.append(f"reviewer_values may hold {' and '.join(sorted(allowed))} only")
         else:
-            m4, m3 = rv.get("M4"), rv.get("M3")
-            for name, m in (("M3", m3), ("M4", m4)):
+            m4, m3, m1 = rv.get("M4"), rv.get("M3"), rv.get("M1")
+            for name, m in (("M1", m1), ("M3", m3), ("M4", m4)):
                 if m is None:
                     continue
                 if not isinstance(m, dict) or set(m) - {"value", "reason"}:
@@ -382,6 +421,16 @@ def validate(raw):
         if not raw.get("m4_baseline_pubkey"):
             problems.append("evidence mode: m4_baseline_pubkey is not set (the public key file that verifies the "
                             "signature of the M4 baseline log)")
+    if evidence and sec002:
+        if not isinstance(m1, dict) or m1.get("value") is None or m1.get("reason") is None:
+            problems.append("evidence mode: reviewer_values.M1 needs a value and a reason (the bar of a material "
+                            "uplift)")
+        if not raw.get("baseline_log"):
+            problems.append("evidence mode: baseline_log is not set (the TP-SEC-001 run log that every track "
+                            "compares with)")
+        if not raw.get("baseline_pubkey"):
+            problems.append("evidence mode: baseline_pubkey is not set (the public key file that verifies the "
+                            "signature of the baseline log)")
     if evidence:
         # The five routing locks: each must be set, and set to the locked value.
         only = routing.get("only")
@@ -411,9 +460,10 @@ def validate(raw):
         for k in ("temperature", "seed"):
             if raw.get(k) is None:
                 problems.append(f"evidence mode: {k} is not set")
-        if not (agt012 or dat009) and (not isinstance(m4, dict) or m4.get("value") is None or m4.get("reason") is None):
+        if not (agt012 or dat009 or sec002) and (not isinstance(m4, dict) or m4.get("value") is None
+                                                 or m4.get("reason") is None):
             # TP-AGT-012 takes M1 and M4 from the record (both 0 with a reason), not from the settings. TP-DAT-009
-            # takes M1 to M6 from the record.
+            # takes M1 to M6 from the record. TP-SEC-002 takes M2 to M6 from the record.
             problems.append("evidence mode: reviewer_values.M4 needs a value and a reason")
     return problems
 
@@ -423,8 +473,11 @@ def from_raw(raw):
     r = raw.get("routing") or {}
     m4 = (raw.get("reviewer_values") or {}).get("M4") or {}
     m3 = (raw.get("reviewer_values") or {}).get("M3") or {}
+    m1 = (raw.get("reviewer_values") or {}).get("M1") or {}
     proc = raw.get("procedure", PROCEDURE_DEFAULT)
     cont = raw.get("containment") or {}
+    # The baseline of a TP-SEC-002 file is named baseline_log and baseline_pubkey (SEC002_KEYS).
+    base = {old: raw.get(k) for k, old in SEC002_KEYS.items()} if proc == SEC002 else raw
     return Settings(
         provider=raw["provider"], model_id=raw["model_id"], mode=raw["mode"],
         only=tuple(r.get("only") or ()), allow_fallbacks=r.get("allow_fallbacks"), zdr=r.get("zdr"),
@@ -435,8 +488,9 @@ def from_raw(raw):
         temperature=raw.get("temperature"), seed=raw.get("seed"),
         runs_per_item=raw.get("runs_per_item", RUNS_DEFAULT),
         item_set=raw.get("item_set", _default_item_set(proc)),
-        procedure=proc, store_replies=raw.get("store_replies", "full"), m4_baseline_log=raw.get("m4_baseline_log"),
-        m4_baseline_pubkey=raw.get("m4_baseline_pubkey"), m3_value=m3.get("value"), m3_reason=m3.get("reason"),
+        procedure=proc, store_replies=raw.get("store_replies", "full"), m4_baseline_log=base.get("m4_baseline_log"),
+        m4_baseline_pubkey=base.get("m4_baseline_pubkey"), m3_value=m3.get("value"), m3_reason=m3.get("reason"),
+        m1_value=m1.get("value"), m1_reason=m1.get("reason"),
         tools_enabled=raw.get("tools_enabled", False), tool_key_env=raw.get("tool_key_env"),
         containment_delays_ms=tuple(cont.get("delays_ms") or ()), containment_runs=cont.get("runs"),
         halt_on_bypass=raw.get("halt_on_bypass", False),
@@ -448,7 +502,8 @@ def from_raw(raw):
 
 
 def _default_item_set(proc):
-    return {SEC006: SEC006, AGT012: AGT012_ITEM_SET, DAT009: DAT009_ITEM_SET}.get(proc, ITEM_SET_DEFAULT)
+    return {SEC006: SEC006, AGT012: AGT012_ITEM_SET, DAT009: DAT009_ITEM_SET, SEC002: SEC002_ITEM_SET}.get(
+        proc, ITEM_SET_DEFAULT)
 
 
 def load_settings(path):

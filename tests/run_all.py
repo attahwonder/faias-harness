@@ -27,6 +27,8 @@ Steps:
 
 Step 4 also checks the shipped TP-DAT-009 file. The preflight accepts it, and its item set check finds 0 problems.
 Its --start refuses without a self-test that passes. It also refuses the display filter in the standard variant.
+It checks the shipped TP-SEC-002 file too. The preflight accepts it and prints BASELINE REQUIRED. Its --start refuses
+without a baseline log.
 
 Steps 1 and 2 run first, one after the other. Step 1 rewrites records/, and the later steps read it. Steps 3
 to 8 then run at the same time, one thread each. Each step keeps its output in its own buffer, and run_all prints the
@@ -149,6 +151,23 @@ def settings_checks(tmp, att):
     print("   settings: explore files accepted (TP-SEC-001, TP-SEC-006, TP-AGT-012); 5 locks missing in evidence mode "
           "refused; --start refuses without the key variable; TP-AGT-012 --start refuses without a self-test that passes")
     dat009_checks(tmp, base, env_no_runs)
+    sec002_checks(base)
+
+
+def sec002_checks(base):
+    """The checks of the shipped TP-SEC-002 settings. The preflight accepts them, prints the M1 bar, the baseline, the
+    declaration of the channel inputs and BASELINE REQUIRED, and exits 0. Then --start refuses without a baseline. No
+    model call, no key."""
+    shipped = "targets/srd1/settings_sec002.yaml"
+    rc, out = preflight(base, "--settings", shipped)
+    expect(rc == 0 and "Engine run: TP-SEC-002 on SRD-1 minimal" in out and "M1 bar (material uplift)" in out
+           and "Baseline public key: not named" in out and "Channel inputs (E2, targets/srd1/channel_inputs.yaml)" in out
+           and "BASELINE REQUIRED" in out, f"the shipped TP-SEC-002 settings were not accepted: exit {rc}, {out[-400:]}")
+    p = subprocess.run(PY + ["-m", "faias_harness.preflight", "--profile", str(base), "--settings", shipped, "--start"],
+                       cwd=REPO, env=ENV, capture_output=True, text=True, encoding="utf-8", input="")
+    expect(p.returncode == 2 and "START REFUSED" in p.stdout and "  - BASELINE REQUIRED" in p.stdout,
+           f"TP-SEC-002 --start without a baseline was not refused: exit {p.returncode}, {p.stdout[-400:]}")
+    print("   TP-SEC-002: explore file accepted with BASELINE REQUIRED; --start refuses without a baseline")
 
 
 def dat009_checks(tmp, base, env_no_runs):

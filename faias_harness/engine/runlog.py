@@ -39,8 +39,9 @@ sec006_log.LOG_HOLDS states what the redaction misses. `check_log`, `rescore` an
 log to engine/sec006_log.py.
 
 Schema 7 (version 0.7) is the log of a TP-AGT-012 run (engine/agt012_log.py). Schema 8 (version 0.7) is the log of a
-TP-DAT-009 run (engine/dat009_log.py). Each has the frame of schema 4, and `check_log`, `rescore` and `verify
---no-repo` hand it to its module.
+TP-DAT-009 run (engine/dat009_log.py). Schema 9 (version 0.8) is the log of a TP-SEC-002 run (engine/sec002_log.py).
+Each has the frame of schema 4, and `check_log`, `rescore` and `verify --no-repo` hand it to its module. `results`
+gives a schema 9 log its sequences and cells as the items, and the uplift of each sequence track as M1.
 
 Four more commands, none of which makes a network call:
 
@@ -54,10 +55,10 @@ Four more commands, none of which makes a network call:
 
   results  --log <log or folder> ...
 
-`rescore` takes `--replies <store>` for a TP-SEC-006 log with store_replies hash_only. The store file holds the
-replies as received (sec006_log.rescore_from_store). Without it, such a log gives exit 2. `results` runs `verify` on
-each log and prints one table, with a row for each log that passes. A log that fails is refused and named under the
-table, and the exit code is 1.
+`rescore` takes `--replies <store>` for a TP-SEC-006 or TP-SEC-002 log with store_replies hash_only. The store file
+holds the replies as received (sec006_log.rescore_from_store, sec002_log.rescore_from_store). Without it, such a log
+gives exit 2. `results` runs `verify` on each log and prints one table, with a row for each log that passes. A log
+that fails is refused and named under the table, and the exit code is 1.
 
 When the header of the log holds a label, `verify`, `rescore` and `stamp` print it on a line `label: <label>`. For
 `verify`, that line comes after the PASS or FAIL line. For `rescore` and `stamp`, it is the first line. `results`
@@ -527,6 +528,9 @@ def check_log(path, repo=REPO, use_repo=True):
     if h.get("schema") == SCHEMA_DAT009:
         from . import dat009_log
         return dat009_log.check(recs, repo=repo, use_repo=use_repo)
+    if h.get("schema") == SCHEMA_SEC002:
+        from . import sec002_log
+        return sec002_log.check(recs, repo=repo, use_repo=use_repo)
     if h.get("schema") == SCHEMA_SELFTEST:
         from .. import selftest
         return selftest.check(path, recs, repo=repo, use_repo=use_repo)
@@ -717,6 +721,9 @@ def _no_repo_lines(log_path):
         elif recs[0].get("schema") == SCHEMA_DAT009:
             from . import dat009_log
             items_line = dat009_log.summary_line(recs)
+        elif recs[0].get("schema") == SCHEMA_SEC002:
+            from . import sec002_log
+            items_line = sec002_log.summary_line(recs)
         elif recs[0].get("schema") == SCHEMA_SELFTEST:
             items_line = f"probe records: {sum(1 for r in recs if r.get('type') == 'probe')} (a self-test log has no item set)"
         else:
@@ -735,15 +742,19 @@ def rescore_log(log_path, repo=REPO, replies=None):
     The marker and product of each item come from the scorer keys in the log (schemas 4 and 5), or else from the
     item set of the checkout. A clean-baseline run is never scored: its recorded score must be the baseline score.
     Returns (lines to print, mismatches). Makes no network call. A TP-SEC-006 log (schema 6) is rescored by
-    sec006_log.rescore. When that log holds the reply hashes only, `replies` names the store file of the replies.
-    Without it, mismatches is None. Only such a log takes `replies`."""
+    sec006_log.rescore, and a TP-SEC-002 log (schema 9) by sec002_log.rescore. When such a log holds the reply hashes
+    only, `replies` names the store file of the replies. Without it, mismatches is None. Only such a log takes
+    `replies`."""
     recs = read_log(log_path)
     if recs[0].get("schema") == SCHEMA_SEC006:
         from . import sec006_log
         return sec006_log.rescore(recs, repo=repo, replies=replies)
+    if recs[0].get("schema") == SCHEMA_SEC002:
+        from . import sec002_log
+        return sec002_log.rescore(recs, repo=repo, replies=replies)
     if replies is not None:
-        return [f"not rescored: --replies is for a TP-SEC-006 log with store_replies hash_only, and this log is of "
-                f"schema {recs[0].get('schema')}"], None
+        return [f"not rescored: --replies is for a TP-SEC-006 or TP-SEC-002 log with store_replies hash_only, and "
+                f"this log is of schema {recs[0].get('schema')}"], None
     if recs[0].get("schema") == SCHEMA_AGT012:
         from . import agt012_log
         return agt012_log.rescore(recs, repo=repo)
@@ -893,6 +904,17 @@ def result_row(recs, name):
     for k, m in (s.get("measures") or {}).items():
         if MEASURE_KEY.fullmatch(k):
             row[k] = measure_cell(m)
+    if h.get("schema") == SCHEMA_SEC002:
+        # A TP-SEC-002 log: its items are the sequences and the cells, and M1 has a block for each sequence track.
+        tracks = corpus.get("tracks") or {}
+        seqs = sum((tracks.get(t) or {}).get("sequences") or 0 for t in ("A", "B"))
+        cells = (tracks.get("C_ii") or {}).get("cells") or 0
+        row["items"] = f"{seqs + cells} ({seqs} sequences, {cells} cells)"
+        m1 = (s.get("measures") or {}).get("M1")
+        if isinstance(m1, dict):
+            row["M1"] = "; ".join(f"Track {t}: uplift {_fmt(m1[t].get('uplift'))}, materially_higher "
+                                  f"{_fmt(m1[t].get('materially_higher'))}" for t in ("A", "B")
+                                  if isinstance(m1.get(t), dict))
     return row
 
 
@@ -944,8 +966,8 @@ def main(argv=None):
                                        "difference; exit 2 when nothing is rescored, for example a TP-SEC-006 log "
                                        "with store_replies hash_only and no --replies)")
     d.add_argument("--log", required=True)
-    d.add_argument("--replies", help="for a TP-SEC-006 log with store_replies hash_only: the store file of the "
-                                     "replies as received (docs/ARCHITECTURE.md, section 16)")
+    d.add_argument("--replies", help="for a TP-SEC-006 or TP-SEC-002 log with store_replies hash_only: the store "
+                                     "file of the replies as received (docs/ARCHITECTURE.md, section 16)")
     e = sub.add_parser("stamp", help="write <log>.sha256 and print the OpenTimestamps command (no network call)")
     e.add_argument("--log", required=True)
     f = sub.add_parser("results", help="verify N run logs and print one table, a row for each log that passes "
