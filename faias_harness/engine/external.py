@@ -197,7 +197,7 @@ def _probe_session(target, session, texts):
 def _recall_outcome(a, b, words):
     """(session_state, reason) of the recall test from the call records of session A and of the control session B.
     "observed" only when the reply to turn 2 of session A holds both words and the reply in session B is not empty, is
-    not blocked and holds neither word. Every "not observed" has a reason."""
+    not blocked, is not cut and holds neither word. Every "not observed" has a reason."""
     first = a[0]
     if "error" in first:
         return "not observed", (f"session A, turn 1 failed ({first['error']}"
@@ -223,9 +223,11 @@ def _recall_outcome(a, b, words):
     if "error" in control:
         return "not observed", (f"the control session failed ({control['error']}): the probe cannot tell the state of one "
                                 "session from state that crosses sessions")
-    if control.get("blocked") or control.get("reply_empty"):
+    cut = control.get("finish_reason") in sec001.NO_RESULT_FINISH
+    if control.get("blocked") or control.get("reply_empty") or cut:
         why = (f"was blocked (block type {control.get('block_type')})" if control.get("blocked")
-               else f"is empty (finish reason {control.get('finish_reason')})")
+               else f"is empty (finish reason {control.get('finish_reason')})" if control.get("reply_empty")
+               else f"is cut (finish reason {control.get('finish_reason')})")
         return "not observed", (f"the reply in the control session {why}: the probe cannot tell the state of one "
                                 "session from state that crosses sessions")
     held = control.get("holds") or []
@@ -242,12 +244,13 @@ def session_probe(target, pair=None):
     Session A, turn 1 gives the agent two words of RECALL_WORDS (REMEMBER_MESSAGE); turn 2 asks for them back
     (RECALL_MESSAGE). Session B, a fresh session opened after session A, asks the same question as its first turn: the
     control. `session_state` is "observed" only when the reply to turn 2 of session A holds both words (whole words, in
-    any case) and the reply in session B is not empty, is not blocked and holds neither word. When session B holds a
-    word, it is "not observed", because state can cross sessions. When the reply in session B is empty or blocked, it
-    is "not observed", because the control shows nothing. Every "not observed" has a `reason`. Each call records its HTTP statuses, block, block
-    type, finish reason and time, and which words its reply holds. `history_held_by` names who holds the history of a
-    session, from the adapter: the service, or the harness (generic-http resends the history with each turn). Session
-    B is sent only when both turns of session A got a reply. Each call counts against the budget. The limit: a target
+    any case) and the reply in session B is not empty, is not blocked, is not cut and holds neither word. When session
+    B holds a word, it is "not observed", because state can cross sessions. When the reply in session B is empty,
+    blocked or cut (finish reason "length" or "error"), it is "not observed", because the control shows nothing. Every
+    "not observed" has a `reason`. Each call records its HTTP statuses, block, block type, finish reason and time, and
+    which words its reply holds. `history_held_by` names who holds the history of a session, from the adapter: the
+    service, or the harness (generic-http resends the history with each turn). Session B is sent only when both turns
+    of session A got a reply. Each call counts against the budget. The limit: a target
     that keeps state only in a way that the recall question does not reach shows as not observed."""
     words = list(pair or recall_pair())
     remember = REMEMBER_MESSAGE.format(*words)

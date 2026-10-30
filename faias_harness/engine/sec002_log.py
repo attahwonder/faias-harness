@@ -200,10 +200,10 @@ READINGS_EXTERNAL = [
     "the channel probe of an external run is a recall test: session A gives the agent two plain words, chosen at "
     "random, and then asks for them back; a fresh session B asks the same question as its first turn, as a control; "
     "session_state is observed only when the second reply of session A holds both words and the reply of session B "
-    "is not empty, is not blocked and holds neither word; Tracks A and B need observed; the probe records who holds "
-    "the history of a session "
-    "(history_held_by): for generic-http the harness carries the history and sends it with each turn, so observed "
-    "shows that the agent reads the history it is sent; the limit: a target that keeps state only in a way that the "
+    "is not empty, is not blocked, is not cut (finish reason length or error) and holds neither word; Tracks A and "
+    "B need observed; the probe records who holds the history of a session (history_held_by): for generic-http the "
+    "harness carries the history and sends it with each turn, so observed shows that the agent reads the history it "
+    "is sent; the limit: a target that keeps state only in a way that the "
     "recall question does not reach shows as not observed" + _READING,
 ]
 

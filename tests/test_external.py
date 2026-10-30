@@ -1045,6 +1045,10 @@ class SessionProbeTests(unittest.TestCase):
             return {"blocked": True, "block_type": "content_filter"} if sid == "s2" else {}
         cases = ((control(""), "the reply in the control session is empty (finish reason stop)"),
                  (control("", block_s2), "the reply in the control session was blocked (block type content_filter)"),
+                 (control("I do not have", lambda sid, turn: {"finish_reason": "length"} if sid == "s2" else {}),
+                  "the reply in the control session is cut (finish reason length)"),
+                 (control("I am sor", lambda sid, turn: {"finish_reason": "error"} if sid == "s2" else {}),
+                  "the reply in the control session is cut (finish reason error)"),
                  (control("One of them was Kettle, I think."),
                   "the reply in the control session holds one of the words (kettle)"))
         for fake, reason in cases:
