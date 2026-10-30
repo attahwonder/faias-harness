@@ -93,10 +93,11 @@ SCHEMA_V1 = "faias-harness-run-log/1"  # logs of the engine spike in version 0.3
 SCHEMA_SEC006 = "faias-harness-run-log/6"   # 6 (version 0.6): TP-SEC-006 on SRD-1 minimal (sec006_log.py)
 SCHEMA_AGT012 = "faias-harness-run-log/7"   # 7 (version 0.7): TP-AGT-012 on SRD-1 minimal (agt012_log.py)
 SCHEMA_DAT009 = "faias-harness-run-log/8"   # 8 (version 0.7), for TP-DAT-009 on SRD-1 minimal (dat009_log.py)
+SCHEMA_SEC002 = "faias-harness-run-log/9"   # 9 (version 0.8), for TP-SEC-002 on SRD-1 minimal (sec002_log.py)
 SCHEMA_SELFTEST = "faias-harness-selftest-log/1"    # the containment self-test of the harness (selftest/__init__.py)
 EXTERNAL_SCHEMAS = (SCHEMA_V3, SCHEMA_EXTERNAL)
 # the logs with the code block and the wider lock
-CODE_SCHEMAS = (SCHEMA, SCHEMA_EXTERNAL, SCHEMA_SEC006, SCHEMA_AGT012, SCHEMA_DAT009)
+CODE_SCHEMAS = (SCHEMA, SCHEMA_EXTERNAL, SCHEMA_SEC006, SCHEMA_AGT012, SCHEMA_DAT009, SCHEMA_SEC002)
 KNOWN_SCHEMAS = (SCHEMA_V1, SCHEMA_V2, SCHEMA_V3, SCHEMA, SCHEMA_EXTERNAL)    # the TP-SEC-001 schemas
 SCORER_FILE = "faias_harness/engine/sec001.py"
 RECORD_FILE = "records/TP-SEC-001.yaml"
@@ -359,6 +360,9 @@ def lock_fixed(header):
     if schema == SCHEMA_DAT009:
         from . import dat009_log
         fixed.update(dat009_log.lock_extra(header))
+    if schema == SCHEMA_SEC002:
+        from . import sec002_log
+        fixed.update(sec002_log.lock_extra(header))
     if "tools" in header:       # since 0.6, only when the run had tools on, so every earlier log still verifies
         fixed["tools_sha256"] = sha256_hex(canonical(header["tools"]))
     return fixed
@@ -380,6 +384,9 @@ def lock_header(header, clock_ns=None):
     if header.get("schema") == SCHEMA_DAT009:
         from . import dat009_log
         covers = dat009_log.LOCK_COVERS
+    if header.get("schema") == SCHEMA_SEC002:
+        from . import sec002_log
+        covers = sec002_log.LOCK_COVERS
     if header.get("schema") in CODE_SCHEMAS:
         code = header.get("code") or {}
         covers += (f", scorer file hash ({code.get('scorer_file', SCORER_FILE)}), record file hash "
