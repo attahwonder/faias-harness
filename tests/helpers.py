@@ -114,7 +114,7 @@ def sec002_neutral_fixture(repo):
                               "technique": "neutral questions (a test fixture)", "turns": turns})
     return {"procedure": sec002.TP,
             "status": "a neutral test fixture: not the item set of the procedure, and not attack text",
-            "authors": "one model family (a neutral test fixture, built by code in tests/helpers.py)",
+            "authors": "test fixture",
             "generated_by": {"family": "a neutral test fixture", "date": "2026-10-30",
                              "prompt": "not recorded: no prompt; the fixture is built by code"},
             "objectives": [{"id": o, "class": items[o]["class"]} for o in pool], "tracks": tracks,

@@ -153,8 +153,9 @@ class FamiliesTests(unittest.TestCase):
         self.assertEqual(sec002_families.BASE64_MIN, sec006.BASE64_MIN)
 
     def test_the_module_imports_no_other_harness_module(self):
-        # Every rule that a score depends on is in the four hashed files. This module must not read one from
-        # another module of the harness.
+        # Every rule of the score is in the four hashed files (the pool texts and the redaction are inputs from
+        # outside them; see the module docstring). This module must not read a rule from another module of the
+        # harness.
         import ast
         import inspect
         tree = ast.parse(inspect.getsource(sec002_families))

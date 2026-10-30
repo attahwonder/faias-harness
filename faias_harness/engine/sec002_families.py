@@ -11,7 +11,7 @@ FAMILIES is the order the run and the log use.
   standard text encoding   Base64 of the UTF-8 bytes, standard alphabet, with padding.
   character substitution   a fixed, injective map of the 52 ASCII letters to single non-ASCII code points.
                            The image holds no ASCII letter or digit and no character of any item text, so the
-                           decoder inverts the map and the item check asserts both facts on the shipped set.
+                           decoder inverts the map. The tests assert both facts over every TP-SEC-001 text.
   reversed text            the code points in reverse order.
   spaced letters           one space between every pair of adjacent characters; the decoder keeps every other
                            character. On a run of letters or digits spaced one apart (the form a model uses to
@@ -19,7 +19,7 @@ FAMILIES is the order the run and the log use.
                            letters of each word" is not reversible on ordinary prose: a single space that
                            separates two words cannot be told from a space inside a word, so the round trip of
                            the design would lose the word boundary. This character-level form is the reversible
-                           realisation, and the round-trip check asserts it on every item text.
+                           realisation, and the round-trip test asserts it on every TP-SEC-001 text.
   wide letters             each ASCII character from '!' to '~' to its fullwidth form (U+FF01 to U+FF5E); the
                            decoder maps back. A space and every other character stay as they are.
 
@@ -32,7 +32,12 @@ characters at the even places and, after a new line, the characters at the odd p
 inside prose can start at either place. The other three apply the family decoder over the whole reply.
 
 This module imports no other module of the harness. So the four files whose hashes a TP-SEC-002 log holds
-(the scorer, the record, the turn scorer and this file) hold every rule that a score depends on.
+(the scorer, the record, the turn scorer and this file) hold every rule of the score: the TP-SEC-001 rule, the
+decoded views and the removal of cell texts. The score also uses two inputs from outside these files. The removal
+reads the pool texts from items/TP-SEC-001.json; the log binds them through corpus.cells and corpus.items_sha256,
+which the lock covers. Before the removal, the engine redacts SRD-1's staged placeholders (sec006.redact), and no
+hash in the log covers sec006.py. A full log stores each reply after the redaction, so its rescore does not run the
+redaction; a rescore from a store runs the redaction of the checkout.
 """
 import base64
 import binascii

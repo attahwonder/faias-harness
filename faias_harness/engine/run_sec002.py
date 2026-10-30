@@ -132,7 +132,8 @@ def build_header(settings, *, allow_hosts, config, session, baseline, e2, confir
     match = not baseline["differs_from_run"]
     store, k = settings.store_replies, settings.runs_per_item
     return {
-        "type": "header", "schema": sec002_log.SCHEMA, "label": sec002_log.run_label(match, baseline),
+        "type": "header", "schema": sec002_log.SCHEMA,
+        "label": sec002_log.run_label(match, baseline, authors=data.get("authors")),
         "engine_version": runlog.__version__, "code": sec002_log.code_facts(repo),
         "procedure": {"tp": rec["tp"], "title": rec["title"], "irq": rec["irq"], "star": rec["star"],
                       "star_note": "copied from the Confidence line of the procedure; the harness never computes it",

@@ -14,7 +14,8 @@ objective. It holds 15 Track B sequences (persona-switch, line 19), one for each
 objectives of the pool, in ID order. A C2 item asserts a persona in one message, and line 19 says that Track B never
 does that. Each sequence has 6 to 12 turns (line 18). Its final turn is the TP-SEC-001 text of its objective,
 unchanged. So the run and the baseline differ in the earlier turns only (a choice of this harness). The earlier turns
-do not ask for the objective. One model family wrote the sequences, and the set says so.
+do not ask for the objective. The set declares who wrote the sequences (`authors`, a key of AUTHORSHIP), and the
+label of each run says it.
 
 Track C(ii). A cell is one pool objective in one transformation family. The set holds no encoded text. A cell item
 holds a placeholder text (CELL_TEXT). The engine makes the encoded text from the pool text when it sends the cell.
@@ -51,7 +52,15 @@ FAIAS_VERSION = sec001.FAIAS_VERSION
 ITEM_SET = "TP-SEC-002"
 ITEM_FILE = "items/TP-SEC-002.json"
 POOL_SET = "TP-SEC-001"              # the item set that the pool names by ID
-LABEL = "uncalibrated scorer, not a finding; items from one model family; Track C(i) not run"
+# The base label of a run. Its authorship part comes from the `authors` value that the item file declares, by the
+# fixed map AUTHORSHIP. check_item_set refuses any other value, by name, and `label` raises on one.
+BASE_LABEL = "uncalibrated scorer, not a finding; {authorship}; Track C(i) not run"
+AUTHORSHIP = {
+    "one model family": "items from one model family",
+    "two model families": "items from two model families",
+    "a person": "items written by a person",
+    "test fixture": "a neutral test fixture, not the item set",
+}
 # 6 to 12 turns for each sequence (line 18). Line 62 gives the reason for the floor: a 3-turn sequence repeats the
 # single-turn result. Track B takes the same bounds (a choice of this harness; line 19 says "several turns").
 MIN_TURNS = 6
@@ -95,6 +104,23 @@ class Item:
 
 def load_set(repo=REPO):
     return json.loads((Path(repo) / ITEM_FILE).read_text(encoding="utf-8"))
+
+
+def authorship_problem(authors):
+    """Why `authors` is not a declared authorship value (a key of AUTHORSHIP), or None when it is one."""
+    if isinstance(authors, str) and authors in AUTHORSHIP:
+        return None
+    return (f"the authors value {authors!r} is not one of the declared authorship values "
+            f"({', '.join(repr(a) for a in AUTHORSHIP)})")
+
+
+def label(authors):
+    """The label of a run on a set that declares `authors`: BASE_LABEL with the authorship part of AUTHORSHIP.
+    Raises ValueError, with the value, for a value that is not a key of AUTHORSHIP."""
+    problem = authorship_problem(authors)
+    if problem:
+        raise ValueError(problem)
+    return BASE_LABEL.format(authorship=AUTHORSHIP[authors])
 
 
 def _pool_set(repo):
@@ -168,8 +194,9 @@ def check_item_set(data, repo=REPO):
     problems = []
     if data.get("procedure") != TP:
         problems.append("the set does not name the procedure TP-SEC-002")
-    if "one model family" not in str(data.get("authors", "")):
-        problems.append("the set does not say that one model family wrote it")
+    authorship = authorship_problem(data.get("authors"))
+    if authorship:
+        problems.append(authorship)
     gen = data.get("generated_by")
     if not (isinstance(gen, dict) and str(gen.get("family") or "").strip()
             and re.fullmatch(r"\d{4}-\d{2}-\d{2}", str(gen.get("date") or ""))

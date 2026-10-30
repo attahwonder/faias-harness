@@ -583,19 +583,22 @@ def sec002_baseline(settings, variant="standard"):
     its stored scores scored again with this scorer. A log that cannot be read, a key file inside the repository and a
     signature that does not verify are problems in both modes. In evidence mode, a log of another target (each field
     that differs is named, with both values), a log that is not in evidence mode and a log whose stored scores this
-    scorer does not give again are problems too. In explore mode they are printed, and the run label says so."""
-    from .engine import run_sec006, sec002_log, sec006_log
+    scorer does not give again are problems too. In explore mode they are printed, and the run label says so. The run
+    label takes its authorship part from the item file. It is None when no run can start: with no baseline log, with
+    no item file, with a baseline log that cannot be read, or with an authors value that is not declared
+    (sec002_start_problems refuses each of them)."""
+    from .engine import run_sec006, sec002, sec002_log, sec006_log
     if not settings.m4_baseline_log:
-        return sec002_log.run_label(None), [BASELINE_REQUIRED], []
+        return None, [BASELINE_REQUIRED], []
     data = _sec002_items()
     if data is None:
-        return sec002_log.run_label(None), ["Baseline check: not made (the pool of the item file names the baseline "
-                                            "items, and the item file is not found)"], []
+        return None, ["Baseline check: not made (the pool of the item file names the baseline items, and the item "
+                      "file is not found)"], []
     try:
         base = sec002_log.read_baseline(settings.m4_baseline_log, [o["id"] for o in data["objectives"]],
                                         pubkey=settings.m4_baseline_pubkey)
     except ValueError as e:
-        return sec002_log.run_label(None), [f"Baseline check: {e}"], [str(e)]
+        return None, [f"Baseline check: {e}"], [str(e)]
     sig, variance = base["signature"], base.get("M4_per_run_variance")
     lines = [f"Baseline signature: verified (public key SHA-256 {sig['public_key_sha256']})" if sig["verified"]
              else f"Baseline signature: not checked ({sig['reason']})",
@@ -607,7 +610,8 @@ def sec002_baseline(settings, variant="standard"):
     base["differs_from_run"] = sec006_log.baseline_differences(base, sec006_log.run_facts(
         settings.model_id, variant, run_sec006.prompt_sha256(variant), settings.routing()))
     match = not base["differs_from_run"]
-    label = sec002_log.run_label(match, base)
+    authors = data.get("authors")
+    label = None if sec002.authorship_problem(authors) else sec002_log.run_label(match, base, authors=authors)
     if match:
         lines.append("Baseline match: yes (the same model ID, variant, system prompt hash, routing locks and tool "
                      "definitions hash as the run)")
@@ -627,11 +631,16 @@ def sec002_baseline(settings, variant="standard"):
 def sec002_start_problems(settings, variant="standard"):
     """What a TP-SEC-002 run needs besides the SRD-1 conditions: the M1 bar with its reason (verify refuses a log
     without them), the item file and a declaration of the channel inputs with its families (sec002_channel_inputs),
-    and a baseline log that sec002_baseline accepts. The engine runs the standard variant with tools off and raises on
+    an authors value of the item file that is declared (sec002.AUTHORSHIP; the run label takes its part from it), and a
+    baseline log that sec002_baseline accepts. The engine runs the standard variant with tools off and raises on
     anything else, so the preflight refuses the positive control and tools on first."""
+    from .engine import sec002
     problems = []
     if settings.m1_value is None or not settings.m1_reason:
         problems.append("reviewer_values.M1 needs a value and a reason before a run (verify refuses a log without them)")
+    data = _sec002_items()
+    if data is not None and sec002.authorship_problem(data.get("authors")):
+        problems.append(f"the item file: {sec002.authorship_problem(data.get('authors'))}")
     if variant != "standard":
         problems.append(f"the variant {variant} does not apply to TP-SEC-002: the engine runs SRD-1 minimal with its "
                         "system prompt (the standard variant) only")

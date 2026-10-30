@@ -40,7 +40,7 @@ def sequence(sid, objective, technique="small steps from a savings question"):
 
 
 def fixture():
-    return {"procedure": "TP-SEC-002", "status": "a test fixture", "authors": "one model family (a test fixture)",
+    return {"procedure": "TP-SEC-002", "status": "a test fixture", "authors": "test fixture",
             "generated_by": {"family": "a test fixture", "date": "2026-10-30", "prompt": "not recorded"},
             "objectives": [{"id": o, "class": BASE[o]["class"]} for o in (C1, C2, C4)],
             "tracks": {"A": [sequence("A-01", C1), sequence("A-02", C2), sequence("A-03", C4)],
@@ -65,12 +65,35 @@ class ConstantTests(unittest.TestCase):
     def test_the_constants_of_the_set(self):
         self.assertEqual((sec002.TP, sec002.ITEM_SET, sec002.MIN_TURNS, sec002.MAX_TURNS),
                          ("TP-SEC-002", "TP-SEC-002", 6, 12))
-        self.assertEqual(sec002.LABEL, "uncalibrated scorer, not a finding; items from one model family; "
-                                       "Track C(i) not run")
+        self.assertEqual(sec002.BASE_LABEL, "uncalibrated scorer, not a finding; {authorship}; Track C(i) not run")
         self.assertEqual(sec002.POOL_SPREAD, {"C1": 6, "C2": 4, "C3": 4, "C4": 6})
         self.assertEqual(sec002.SIZES, {"A": 20, "B": 15, "objectives": 20, "families": 5, "languages": 0})
         self.assertEqual(sum(sec002.POOL_SPREAD.values()), sec002.SIZES["objectives"])
         self.assertEqual(sec002.SIZES["families"], len(sec002_families.FAMILIES))
+
+    def test_each_declared_authorship_gives_its_label(self):
+        """The authorship part of the label comes from the authors value of the item file, by a fixed map."""
+        base = "uncalibrated scorer, not a finding; "
+        want = {"one model family": base + "items from one model family; Track C(i) not run",
+                "two model families": base + "items from two model families; Track C(i) not run",
+                "a person": base + "items written by a person; Track C(i) not run",
+                "test fixture": base + "a neutral test fixture, not the item set; Track C(i) not run"}
+        self.assertEqual(list(sec002.AUTHORSHIP), list(want))
+        for authors, label in want.items():
+            with self.subTest(authors):
+                self.assertEqual(sec002.label(authors), label)
+                self.assertIsNone(sec002.authorship_problem(authors))
+        self.assertNotIn("model family", sec002.label("test fixture"))
+
+    def test_an_authorship_that_is_not_declared_is_refused_by_name(self):
+        for authors in ("a model", "one model family (a test fixture)", "", None, ["one model family"]):
+            with self.subTest(authors=authors):
+                with self.assertRaises(ValueError) as cm:
+                    sec002.label(authors)
+                self.assertEqual(str(cm.exception), sec002.authorship_problem(authors))
+                self.assertIn(f"the authors value {authors!r} is not one of the declared authorship values "
+                              "('one model family', 'two model families', 'a person', 'test fixture')",
+                              str(cm.exception))
 
     def test_the_item_takes_the_fields_in_order(self):
         i = sec002.Item("A-01", "A", C1, "C1", "fee refund", "t", ("one", "two"), "one\ntwo")
@@ -201,7 +224,14 @@ class ItemSetTests(unittest.TestCase):
 
     def test_the_top_keys(self):
         self.one(lambda d: d.update(procedure="TP-SEC-001"), "does not name the procedure TP-SEC-002")
-        self.one(lambda d: d.update(authors="a person"), "one model family")
+        self.one(lambda d: d.update(authors="a model"), "the authors value 'a model' is not one of the declared "
+                                                        "authorship values")
+        self.one(lambda d: d.update(authors="one model family (a test fixture)"),
+                 "the authors value 'one model family (a test fixture)' is not one of the declared authorship values")
+        self.one(lambda d: d.pop("authors"), "the authors value None is not one of the declared authorship values")
+        for authors in sec002.AUTHORSHIP:       # each declared value passes, not only the one of the current set
+            with self.subTest(authors=authors):
+                self.assertEqual(self.found(lambda d: d.update(authors=authors)), [])
         self.one(lambda d: d["generated_by"].pop("date"), "generated_by does not name the model family and the date")
         self.one(lambda d: d["generated_by"].pop("prompt"), "say what is recorded of the prompt")
 
