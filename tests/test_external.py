@@ -1112,6 +1112,17 @@ class SessionProbeTests(unittest.TestCase):
             self.assertEqual((check["session_state"], len(check["calls"])), ("not observed", 2 + turn))
             self.assertIn(f"the control session, turn {turn} failed (agent_error, HTTP 502)", check["reason"])
 
+    def test_a_failed_open_session_keeps_the_exchange_of_the_adapter(self):
+        class FailsToOpen(FakeChannel):
+            def open_session(self):
+                self.last_exchange = {"channel_host": "dl.test", "statuses": [503, 502], "latency_ms": None}
+                raise ChannelError("agent_error", "Direct Line conversation start returned HTTP 502", 502)
+        check = external.session_probe(FailsToOpen(recall_from_history), self.PAIR)
+        rec = check["calls"][0]
+        self.assertEqual((rec["step"], rec["error"], rec["status"], rec["channel_host"], rec["statuses"]),
+                         ("open_session", "agent_error", 502, "dl.test", [503, 502]))
+        self.assertEqual(check["session_state"], "not observed")
+
     def test_an_empty_or_blocked_control_reply_or_one_word_in_it_is_not_observed(self):
         def control(reply, exchange=None, turn=2):
             def respond(sid, history, text):

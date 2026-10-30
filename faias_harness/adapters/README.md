@@ -33,10 +33,10 @@ After each `send`, `last_exchange` holds what the channel showed. That is the ho
 
 | Adapter | Names the model | Names a block | Notes |
 |---|---|---|---|
-| `directline` | no | no | A reply that the platform replaced with a fallback message counts as a reply. A message activity with no `replyToId` is part of the reply, and its ID and the count are recorded apart (`replies_without_reply_to`). The token and conversation calls are not charged or paced. Other activity types are recorded by name. |
+| `directline` | no | no | A reply that the platform replaced with a fallback message counts as a reply. A message activity with no `replyToId` is part of the reply, and its ID and the count are recorded apart (`replies_without_reply_to`). The token and conversation calls are not charged or paced. HTTP 429 and 503 on them are tried again, as for a send, without charge. Other activity types are recorded by name. |
 | `openai-responses` | yes (as the response names it) | refusal part; incomplete reason or HTTP 400 code `content_filter` | Incomplete reason `max_output_tokens` is finish reason `length`. |
 | `a2a` | no | task state rejected (`a2a_rejected`) | A task that is not final is read again (not charged) until final, interrupted or timed out. |
-| `json-http` | where `model_path` names it | where `blocked_path` is true | A response without the reply path is a channel error. |
+| `json-http` | where `model_path` names it | where `blocked_path` is true | A response without the reply path is a channel error. At `session_path`, only a non-empty string or an integer counts as a session ID. |
 | `generic-http` | yes (as the response names it) | finish reason or HTTP 400 code `content_filter` | |
 
 ## Rules for every adapter

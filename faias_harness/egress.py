@@ -79,7 +79,8 @@ class EgressClient:
     def clear_cookies(self):
         """Forget every cookie that a response has set. Each external adapter calls it at each `open_session`, so a
         session starts with no cookie of an earlier session. Within one session, a cookie still goes with each later
-        request. The SRD-1 adapter and the gateway do not call it."""
+        request. One session is open at a time: opening a session clears the cookies of any session still open. The
+        SRD-1 adapter and the gateway do not call it."""
         self._client.cookies.clear()
 
     def _allowed(self, scheme, host, port):

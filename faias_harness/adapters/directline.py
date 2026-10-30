@@ -29,11 +29,12 @@ What the channel shows, and what it does not:
   An activity with another replyToId is not read. Other activity types are recorded by name in `last_exchange` and
   not read.
 - The token and conversation calls of `open_session` go to the Direct Line service, not to the agent. They are not
-  charged against the call budget and are not paced. The start event is charged, as a send.
+  charged against the call budget and are not paced. HTTP 429 and 503 are tried again, as for a send, without charge.
+  The start event is charged, as a send.
 """
 import secrets
 
-from .base import ChannelError, ChannelTarget, host_entry
+from .base import RETRY_STATUSES, ChannelError, ChannelTarget, host_entry
 
 API = "/v3/directline"
 AUTH_MODES = ("secret", "token_endpoint")
@@ -130,13 +131,25 @@ class DirectLineTarget(ChannelTarget):
                                f"Direct Line {step} returned HTTP {r.status_code}", r.status_code)
         return self._json(r)
 
+    def _setup_request(self, method, url, step, *, json=None, headers=None):
+        """A token or conversation call. HTTP 429 and 503 are tried again, as for a send (at most `self.retries` times,
+        with the same waits), but not charged: the call goes to the Direct Line service, not to the agent."""
+        attempt = 0
+        while True:
+            r = self._request(method, url, json=json, headers=headers, timeout=30)
+            if r.status_code not in RETRY_STATUSES or attempt >= self.retries:
+                return r
+            self.last_exchange["retry_reasons"].append(f"{step}_http_{r.status_code}")
+            self.sleep(self._wait_s(r, attempt))
+            attempt += 1
+
     def _token(self, user_id):
         if self.auth == "token_endpoint":
-            data = self._check(self._request("GET", self.options["token_endpoint"], timeout=30), "token endpoint")
+            data = self._check(self._setup_request("GET", self.options["token_endpoint"], "token"), "token endpoint")
         else:
-            data = self._check(self._request("POST", self.endpoint + API + "/tokens/generate",
-                                             json={"user": {"id": user_id, "name": "FAIAS harness"}},
-                                             headers=self._auth_headers(), timeout=30), "token generation")
+            data = self._check(self._setup_request("POST", self.endpoint + API + "/tokens/generate", "token",
+                                                   json={"user": {"id": user_id, "name": "FAIAS harness"}},
+                                                   headers=self._auth_headers()), "token generation")
         token = data.get("token") if isinstance(data, dict) else None
         if not token:
             raise ChannelError("channel_error", "Direct Line returned no token")
@@ -147,8 +160,8 @@ class DirectLineTarget(ChannelTarget):
         self.egress.clear_cookies()         # a new session carries no cookie of an earlier one
         user_id = "dl_faias_" + secrets.token_hex(6)
         token = self._token(user_id)
-        data = self._check(self._request("POST", self.endpoint + API + "/conversations",
-                                         headers={"Authorization": f"Bearer {token}"}, timeout=30),
+        data = self._check(self._setup_request("POST", self.endpoint + API + "/conversations", "conversation",
+                                               headers={"Authorization": f"Bearer {token}"}),
                            "conversation start")
         cid = data.get("conversationId")
         if not cid:

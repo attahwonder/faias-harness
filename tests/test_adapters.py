@@ -419,6 +419,70 @@ class ReviewFixAdapterTests(unittest.TestCase):
         self.assertEqual((t.last_exchange["replies_without_reply_to"],
                           t.last_exchange["ids"]["replies_without_reply_to"]), (0, []))
 
+    def test_directline_token_and_conversation_calls_retry_429_and_503_without_charge(self):
+        """As for a send: at most two retries, with the Retry-After wait. These calls go to the Direct Line service,
+        so they are not charged."""
+        class Busy(StandInDirectLine):
+            def __init__(self, busy, **kw):
+                super().__init__(lambda t, n: "Answer.", secret=FAKE_KEY_VALUE, **kw)
+                self.busy = busy
+
+            def route(self, method, path, query, headers, body):
+                if self.busy.get(path):
+                    return self.busy[path].pop(0), {"error": {"code": "ServiceUnavailable"}}, {"Retry-After": "0"}
+                return super().route(method, path, query, headers, body)
+        conv = "/v3/directline/conversations"
+        for auth, token_path, status in (("secret", "/v3/directline/tokens/generate", 503),
+                                         ("token_endpoint", "/token", 429)):
+            with self.subTest(auth=auth):
+                budget, sleeps = CallBudget(1.0, 0.1), Sleeps()
+                with no_outside_network(), Busy({token_path: [status], conv: [429, 503]}) as dl:
+                    opts = {"auth": auth, **FAST_DL}
+                    if auth == "token_endpoint":
+                        opts["token_endpoint"] = dl.base_url + "/token"
+                    t = DirectLineTarget(dl.base_url, egress_for(dl.base_url), options=opts,
+                                         api_key_env=KEY_ENV if auth == "secret" else None, env=ENV, reply_timeout_s=5,
+                                         before_send=budget.charge, sleep=sleeps)
+                    sid = t.open_session()
+                    self.assertEqual(t.last_exchange["retry_reasons"],
+                                     [f"token_http_{status}", "conversation_http_429", "conversation_http_503"])
+                    self.assertEqual((budget.calls, t.last_exchange["retries"], sleeps.waits), (0, 0, [0.0, 0.0, 0.0]))
+                    self.assertEqual(t.send(sid, "q"), "Answer.")
+                self.assertEqual(budget.calls, 1)
+        with no_outside_network(), Busy({conv: [503, 503, 503]}) as dl:
+            t = DirectLineTarget(dl.base_url, egress_for(dl.base_url), options={"auth": "secret", **FAST_DL},
+                                 api_key_env=KEY_ENV, env=ENV, reply_timeout_s=5, sleep=Sleeps())
+            with self.assertRaises(ChannelError) as cm:
+                t.open_session()
+        self.assertEqual((cm.exception.status, t.last_exchange["statuses"][-3:]), (503, [503, 503, 503]))
+
+    def test_json_http_counts_only_a_non_empty_string_or_an_integer_as_a_session_id(self):
+        import json
+        import httpx
+        from faias_harness.adapters.json_http import JsonHttpTarget
+        for value, found in (("", False), (None, False), (False, False), (True, False), ({}, False), ([], False),
+                             ({"id": "x"}, False), (0, True), (7, True), ("s-1", True)):
+            with self.subTest(value=value):
+                sent = []
+
+                def handler(request, value=value):
+                    sent.append(json.loads(request.content)["session_id"])
+                    return httpx.Response(200, json={"reply": "OK.", "sid": value})
+                egress = EgressClient(["127.0.0.1:9"], transport=httpx.MockTransport(handler))
+                _CLIENTS.append(egress)
+                t = JsonHttpTarget("http://127.0.0.1:9/chat", egress, options={
+                    "request": {"message": "{message}", "session_id": "{session_id}"}, "reply_path": "reply",
+                    "session_path": "sid"})
+                sid = t.open_session()
+                t.send(sid, "one")
+                self.assertEqual(t.last_exchange["session_path_found"], found)
+                t.send(sid, "two")
+                self.assertEqual(sent, [None, value if found else None])
+                self.assertEqual(t.server_ids(sid), {"session": value if found else None})
+        t = JsonHttpTarget("http://127.0.0.1:9/chat", egress, options={"request": {"message": "{message}"},
+                                                                        "reply_path": "reply"})
+        self.assertEqual(t.server_ids(t.open_session()), {})        # the harness names the ID: no server ID
+
     def test_greeting_wait_is_bounded(self):
         from faias_harness.adapters import directline
         with no_outside_network(), StandInDirectLine(lambda t, n: "Answer.", greeting=None) as dl, \

@@ -182,11 +182,11 @@ def _exchange(target, sid=None):
 def _probe_session(target, session, texts):
     """Send `texts` in order, in one new adapter session. Return a record of each call: the session, the turn, the
     exchange and the reply (or the error). A failed call ends the session. A failed open_session is recorded at turn 1
-    with step open_session."""
+    with step open_session and the exchange of the adapter."""
     try:
         sid = target.open_session()
     except Exception as e:          # noqa: BLE001 - recorded by kind or class name only
-        return [{"session": session, "turn": 1, "step": "open_session", **_error(e)}]
+        return [{"session": session, "turn": 1, "step": "open_session", **_exchange(target), **_error(e)}]
     calls = []
     try:
         for turn, text in enumerate(texts, 1):
