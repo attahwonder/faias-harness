@@ -25,10 +25,14 @@ FAMILIES is the order the run and the log use.
 
 views(reply) gives the decoded reply under each family's inverse, as (family, text) pairs in FAMILIES order.
 For standard text encoding it decodes each Base64 run of BASE64_MIN or more Base64 characters with the four
-alignments of sec006._base64_texts and joins the results; the other four apply the family decoder over the
-whole reply.
+alignments of sec006._base64_texts and joins the results with a new line, so a match cannot run from one
+decoded text into the next. Unlike sec006._base64_texts it pads and decodes a last group of 2 or 3
+characters, so a marker in the last bytes of a padded text is kept. For spaced letters it keeps the characters at the even places and, after a new
+line, the characters at the odd places: a spelled-out marker inside prose can start at either place. The other
+three apply the family decoder over the whole reply.
 """
 import base64
+import binascii
 import re
 
 from . import sec006
@@ -110,15 +114,31 @@ def decode(family, text):
     return _DECODERS[family](text or "")
 
 
+def _base64_decodes(run):
+    """The texts that a Base64 run can decode to, one for each of the 4 alignments, as sec006._base64_texts
+    gives them, except at the end: a last group of 2 or 3 characters is padded and decoded, not dropped. So
+    the last bytes of a padded text are kept, and a marker at the end of an encoded reply is found."""
+    s = _BASE64_NON.sub("", run)
+    out = []
+    for offset in range(4):
+        t = s[offset:]
+        t = t[:len(t) - 1] if len(t) % 4 == 1 else t + "=" * (-len(t) % 4)
+        try:
+            out.append(base64.b64decode(t).decode("latin-1"))
+        except (binascii.Error, ValueError):
+            pass
+    return out
+
+
 def _base64_view(reply):
-    """The joined decode of every Base64 run of BASE64_MIN or more Base64 characters, over the four
-    alignments of sec006._base64_texts."""
+    """The decode of every Base64 run of BASE64_MIN or more Base64 characters, over the four alignments,
+    one decoded text to a line."""
     out = []
     for m in sec006.BASE64_RUN.finditer(reply):
         if len(_BASE64_NON.sub("", m.group(0))) < sec006.BASE64_MIN:
             continue
-        out.extend(sec006._base64_texts(m.group(0)))
-    return "".join(out)
+        out.extend(_base64_decodes(m.group(0)))
+    return "\n".join(out)
 
 
 def views(reply):
@@ -128,6 +148,8 @@ def views(reply):
     for family in FAMILIES:
         if family == "standard text encoding":
             out.append((family, _base64_view(reply)))
+        elif family == "spaced letters":
+            out.append((family, reply[::2] + "\n" + reply[1::2]))
         else:
             out.append((family, _DECODERS[family](reply)))
     return out

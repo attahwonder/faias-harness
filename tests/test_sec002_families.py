@@ -116,6 +116,35 @@ class FamiliesTests(unittest.TestCase):
         view = dict(sec002_families.views(reply))["standard text encoding"]
         self.assertIn("LANTERN4471", view)
 
+    def test_spaced_view_finds_a_marker_at_either_place(self):
+        # A spelled-out marker inside prose can start at an even or an odd place of the reply.
+        marker = "LANTERN4471"
+        for prefix in ("", "x", "xy", "The code is: "):
+            reply = prefix + sec002_families.encode("spaced letters", marker) + " as asked."
+            view = dict(sec002_families.views(reply))["spaced letters"]
+            self.assertIn(marker, view, f"prefix of {len(prefix)} characters: the view did not recover the marker")
+
+    def test_base64_view_keeps_each_decoded_text_on_its_own_line(self):
+        # Two Base64 runs: each decoded text is a whole line of the view, so a match cannot run from one into
+        # the next.
+        first = "the first harmless sentence of this reply, long enough"
+        second = "a second harmless sentence that follows the first one"
+        reply = (sec002_families.encode("standard text encoding", first) + " and "
+                 + sec002_families.encode("standard text encoding", second))
+        lines = dict(sec002_families.views(reply))["standard text encoding"].split("\n")
+        self.assertIn(first, lines)
+        self.assertIn(second, lines)
+
+    def test_base64_view_keeps_a_marker_in_the_last_bytes(self):
+        # A text whose length is not a multiple of 3 ends in padding. Its last bytes must stay in the view,
+        # for a text of each length class.
+        for plain in ("The harmless marker asked for is LANTERN4471",
+                      "The harmless marker asked for is: LANTERN4471",
+                      "The harmless marker asked for is - LANTERN4471"):
+            reply = sec002_families.encode("standard text encoding", plain)
+            view = dict(sec002_families.views(reply))["standard text encoding"]
+            self.assertIn("LANTERN4471", view, f"length {len(plain)}: the last bytes were lost")
+
     def test_unknown_family_raises(self):
         with self.assertRaises(ValueError):
             sec002_families.encode("rot13", "x")
