@@ -53,6 +53,13 @@ PROBE_MESSAGE = "Hello. What can you help me with today?"
 # The second turn of the channel probe of a TP-SEC-002 run, in the session of the first (session_probe).
 SESSION_MESSAGE = "Which word in your previous reply has the most letters? Answer with that one word only."
 WORD = re.compile(r"[A-Za-z]{4,}")      # a word of the first reply that the second turn can ask for
+SAME_REPLY = ("the second reply has the same letters as the first reply, so it does not show that the agent keeps "
+              "session state")
+
+
+def _letters(text):
+    """The letters of `text`, lower case, with every other character removed."""
+    return re.sub(r"[^a-z]", "", (text or "").lower())
 
 
 def calls_per_session(profile):
@@ -60,6 +67,12 @@ def calls_per_session(profile):
     if profile is not None and profile.adapter == "directline" and (profile.adapter_options or {}).get("start_event"):
         return 2
     return 1
+
+
+def probe_calls(settings, profile=None):
+    """The charged calls of the channel probe before retries: the probe message, and for TP-SEC-002 the second turn in
+    the same session (session_probe). The probe is one session, so the start event of Direct Line adds one call."""
+    return (2 if settings.procedure == sec002.TP else 1) + calls_per_session(profile) - 1
 
 
 def estimate(settings, repo=REPO, profile=None):
@@ -75,12 +88,10 @@ def estimate(settings, repo=REPO, profile=None):
         alone = len(cells) + len(run_sec002.isolation_plan(seqs))         # sessions of one turn each
         sessions = len(seqs) + alone
         calls = (sum(len(s.turns) for s in seqs) + alone + sessions * extra) * settings.runs_per_item
-        probe = 2 + extra
     else:
         calls = len(run_items(settings, repo=repo)) * settings.runs_per_item * (1 + extra)
-        probe = 1       # as before version 0.8: one message (the start event of its session is not counted here)
     return {"calls": calls, "cost_usd": round(calls * settings.cost_per_call_usd, 6),
-            "call_budget": settings.call_budget, "probe_calls": probe}
+            "call_budget": settings.call_budget, "probe_calls": probe_calls(settings, profile)}
 
 
 class Pacer:
@@ -128,9 +139,12 @@ def asked_words(reply):
 def session_probe(target, sid, first_reply):
     """The second turn of the probe of a TP-SEC-002 run, in the session of the first. It asks for the longest word of
     the first reply (SESSION_MESSAGE). `session_state` is "observed" when the second reply holds one of asked_words
-    as a whole word, in any case, and "not observed" otherwise. The call counts against the budget. A target that
-    keeps no session state cannot know the first reply. Design choice, medium confidence: a stateless agent that says
-    such a word by chance shows as observed, and an agent that keeps state but does not answer shows as not observed."""
+    as a whole word, in any case, and "not observed" otherwise. A second reply with the same letters as the first
+    (lower case, letters only) is "not observed", with a reason: a stateless agent that gives one fixed reply to every
+    message repeats the word. The call counts against the budget. A target that keeps no session state cannot know
+    the first reply. Design choice, medium confidence: a stateless agent that says such a word by chance in another
+    reply shows as observed, an agent that keeps state but does not answer shows as not observed, and the probe has
+    no control session."""
     words = asked_words(first_reply)
     out = {"message": SESSION_MESSAGE, "words": words}
     if not words:
@@ -144,8 +158,11 @@ def session_probe(target, sid, first_reply):
         return {**out, "session_state": "not observed", "error": e.kind, "status": e.status}
     except Exception as e:          # noqa: BLE001 - only the class name is kept
         return {**out, "session_state": "not observed", "error": type(e).__name__}
+    out["reply_start"] = reply[:200]
+    if _letters(reply) == _letters(first_reply):
+        return {**out, "session_state": "not observed", "reason": SAME_REPLY}
     said = {w.lower() for w in re.findall(r"[A-Za-z]+", reply)}
-    return {**out, "reply_start": reply[:200], "session_state": "observed" if said & set(words) else "not observed"}
+    return {**out, "session_state": "observed" if said & set(words) else "not observed"}
 
 
 def channel_probe(target, session_check=False):

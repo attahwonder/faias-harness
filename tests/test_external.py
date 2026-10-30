@@ -283,6 +283,36 @@ class ExternalRunTests(unittest.TestCase):
             self.assertEqual(external.estimate(settings, profile=load_profile(greet))["calls"], 120)
             self.assertEqual(external.estimate(settings, profile=load_profile(self.dl_profile(dl)))["calls"], 60)
 
+    def test_start_refuses_a_call_budget_below_the_probe_and_one_item_with_the_start_event(self):
+        """With the Direct Line start event, the probe is two calls (its session's start event and the message), and
+        one item is two calls more. So --start needs a call budget of 4, and it names the reason. Without the start
+        event it needs 2, as before."""
+        with StandInDirectLine(respond, secret=FAKE_KEY_VALUE) as dl:
+            greet = self.profile("directline", dl.base_url, {"auth": "secret", "poll_ms": 50, "settle_ms": 0,
+                                                             "start_event": True}, name="greet_budget.yaml")
+            plain = self.dl_profile(dl)
+            settings, _ = ext_settings()
+            self.assertEqual((external.estimate(settings, profile=load_profile(greet))["probe_calls"],
+                              external.estimate(settings, profile=load_profile(plain))["probe_calls"]), (2, 1))
+            for prof, budget, want in ((greet, 2, "fewer than 4 calls (the channel probe and one item; the Direct Line "
+                                                  "start event is one more call in each session)"),
+                                       (greet, 3, "fewer than 4 calls (the channel probe and one item; the Direct Line "
+                                                  "start event is one more call in each session)"),
+                                       (plain, 1, "fewer than 2 calls (the channel probe and one item)")):
+                with self.subTest(start_event=prof == greet, budget=budget):
+                    rc, out = self.pf(["--profile", str(prof), "--settings", str(self.write_settings(max_calls=budget)),
+                                       "--start", "--sign-key", str(self.priv)], answer="no")
+                    self.assertEqual(rc, 2, out[-600:])
+                    head = "START REFUSED. No run starts. Fix these points first:\n"
+                    self.assertIn(head, out)
+                    self.assertEqual(out.split(head)[1].splitlines(), [f"  - the call budget allows {want}"])
+                    self.assertEqual(dl.requests, [])              # refused before the probe: nothing was sent
+            rc, out = self.pf(["--profile", str(greet), "--settings", str(self.write_settings(max_calls=4)), "--start",
+                               "--sign-key", str(self.priv)], answer="no")
+            self.assertEqual(rc, 4, out[-600:])                    # the probe ran; the operator did not type yes
+            self.assertIn("Calls in the run: 120 (plus the channel probe: 2 calls; retries are extra)", out)
+            self.assertNotIn("call budget allows", out)
+
     def test_shipped_example_settings_cannot_start_until_m4_is_set(self):
         rc, out = self.pf(["--profile", "targets/examples/copilot_studio.yaml", "--settings",
                            "targets/examples/external_settings.yaml", "--start", "--sign-key", str(self.priv)])
@@ -409,6 +439,12 @@ def keeps_state(text, nth, messages):
 def keeps_no_state(text, nth, messages):
     """A stand-in agent that does not read its session: each message is answered alone."""
     return "I do not see an earlier message from you in this chat." if text == external.SESSION_MESSAGE else REFUSAL
+
+
+def same_refusal(text, nth, messages):
+    """A stand-in agent that does not read its session and gives one fixed refusal to every message. Its second reply
+    holds the asked word, because it is the first reply again."""
+    return REFUSAL
 
 
 SEC_K = 3
@@ -538,6 +574,19 @@ class ExternalSec002Tests(unittest.TestCase):
             self.behaviour[0] = keeps_state
         self.assertEqual((probe["ok"], probe["session_state"]), (True, "not observed"))
         self.assertEqual(external.asked_words("Hello. What can you help me with today?"), [])
+        # One fixed refusal to both turns: the second reply holds the asked word, but it is the first reply again.
+        self.behaviour[0] = same_refusal
+        try:
+            probe, _ = self.probe(settings, self.profile_path)
+        finally:
+            self.behaviour[0] = keeps_state
+        check = probe["session_check"]
+        self.assertEqual((probe["ok"], probe["session_state"], check["words"]),
+                         (True, "not observed", [longest_word(REFUSAL).lower()]))
+        self.assertIn("the second reply has the same letters as the first reply", check.get("reason", ""))
+        # The rule compares the letters only, in lower case.
+        loud = SimpleNamespace(send=lambda sid, message: "  " + REFUSAL.upper().replace(" ", " - ") + "!!")
+        self.assertEqual(external.session_probe(loud, "s1", REFUSAL)["session_state"], "not observed")
 
     def test_each_turn_of_a_sequence_goes_in_one_adapter_session(self):
         """generic-http keeps the session as the message history: each turn of a run of A-01 carries the earlier turns
@@ -576,6 +625,9 @@ class ExternalSec002Tests(unittest.TestCase):
         self.assertEqual({d["field"] for d in h["baseline"]["differs_from_run"]},
                          {"target.profile_sha256", "target.adapter", "target.endpoint_host"})
         self.assertEqual(h["label"], f"{ext_label()}; {sec002_log.ANOTHER_TARGET}")
+        self.assertNotIn("matched", h["label"])        # baseline_match is false: the label names the basis only
+        self.assertIn("baseline compared on declared fields only; the harness did not observe the model, the version "
+                      "or the prompt; baseline from another target", h["label"])
         self.assertTrue(runlog.verify_log(run.res.log_path, run.res.sig_path, self.pub, repo=REPO)[0])
 
     def test_the_log_is_schema_9_with_the_variant_external_and_it_verifies_rescores_and_gives_results(self):
@@ -590,8 +642,10 @@ class ExternalSec002Tests(unittest.TestCase):
                          ("generic-http", "example-model", False, 1000, 0))
         self.assertEqual((h["label"], s["label"], h["baseline_match"], h["baseline_match_basis"]),
                          (ext_label(), ext_label(), True, sec002_log.EXTERNAL_MATCH))
-        self.assertIn("matched on declared fields; the harness did not observe the model, the version or the prompt",
-                      h["label"])
+        self.assertIn("baseline compared on declared fields only; the harness did not observe the model, the version "
+                      "or the prompt", h["label"])
+        self.assertEqual(h["baseline_match_basis"],
+                         "matched on declared fields; the harness did not observe the model, the version or the prompt")
         self.assertEqual(h["baseline"]["schema"], runlog.SCHEMA_EXTERNAL)
         self.assertEqual(h["probes"]["channel"]["session_state"], "observed")
         self.assertNotIn("config", h)
@@ -643,7 +697,7 @@ class ExternalSec002Tests(unittest.TestCase):
         p.write_text(yaml.safe_dump(self.raw(**changes)), encoding="utf-8")
         return p
 
-    def pf(self, *extra, answer="no", **changes):
+    def pf(self, *extra, answer="no", profile=None, **changes):
         """The preflight with a TP-SEC-002 external settings file. The operator's answer is `answer`."""
         asked = []
 
@@ -653,8 +707,9 @@ class ExternalSec002Tests(unittest.TestCase):
         buf = io.StringIO()
         executor = lambda **kw: external.execute(engine="direct", **kw)      # noqa: E731
         with no_outside_network(), mock.patch.dict(os.environ, ENV), contextlib.redirect_stdout(buf):
-            rc = preflight.main(["--profile", str(self.profile_path), "--settings", str(self.write_settings(**changes)),
-                                 *extra], input_fn=input_fn, inspect_check=lambda: None, external_executor=executor)
+            rc = preflight.main(["--profile", str(profile or self.profile_path), "--settings",
+                                 str(self.write_settings(**changes)), *extra], input_fn=input_fn,
+                                inspect_check=lambda: None, external_executor=executor)
         return rc, buf.getvalue(), asked
 
     def test_evidence_mode_refuses_a_baseline_that_differs_in_one_declared_field_and_names_it(self):
@@ -750,6 +805,27 @@ class ExternalSec002Tests(unittest.TestCase):
         self.assertEqual(external.estimate(settings, profile=greet)["calls"], (12 + 2 + 10 + 14) * SEC_K)
         self.assertEqual((external.estimate(settings, profile=plain)["probe_calls"],
                           external.estimate(settings, profile=greet)["probe_calls"]), (2, 3))
+
+    def test_start_refuses_a_call_budget_below_the_probe_and_one_turn_with_the_start_event(self):
+        """Direct Line with the start event: the probe is three calls (the start event and the two turns), and the first
+        turn of the run is two more (the start event of its session and the turn). So --start needs a call budget of
+        5, and it names the reason. Without the start event it needs 3, as before."""
+        greet = self.write_profile("directline", self.host.base_url, {"auth": "secret", "start_event": True},
+                                   "dl_budget_greet.yaml")
+        plain = self.write_profile("directline", self.host.base_url, {"auth": "secret"}, "dl_budget_plain.yaml")
+        first = len(self.host.requests)
+        rc, out, asked = self.pf("--start", "--sign-key", str(self.priv), profile=greet, mode="explore", max_calls=3)
+        self.assertEqual(rc, 2, out[-1500:])
+        self.assertEqual(asked, [])
+        self.assertIn("START REFUSED. No run starts. Fix these points first:\n", out)
+        self.assertEqual(out.split("START REFUSED. No run starts. Fix these points first:\n")[1].splitlines(),
+                         ["  - the call budget allows fewer than 5 calls (the two turns of the channel probe and one "
+                          "turn; the Direct Line start event is one more call in each session)"])
+        self.assertEqual(len(self.host.requests), first)          # refused before the probe: nothing was sent
+        for path, budget, refused in ((greet, 4, True), (greet, 5, False), (plain, 2, True), (plain, 3, False)):
+            with self.subTest(start_event=path == greet, budget=budget):
+                problems = preflight.external_start_problems(load_profile(path), self.settings(max_calls=budget))
+                self.assertEqual(any("the call budget allows" in p for p in problems), refused, problems)
 
     def test_check_fails_an_external_log_without_observed_session_state_or_with_a_changed_target(self):
         run = self.complete()

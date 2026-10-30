@@ -136,16 +136,20 @@ def attestation_problems(profile):
 def external_start_problems(profile, settings):
     """The reasons why an external run may not start (empty list if it may)."""
     from .adapters import registry
+    from .engine import external
     problems = attestation_problems(profile) + registry.problems(profile)
     if registry.is_external(profile.adapter):
         env = registry.key_env(profile)
         if env and not os.environ.get(env):
             problems.append(f"the environment variable {env} is not set")
-    if settings.procedure == SEC002 and settings.call_budget < 3:
-        problems.append("the call budget allows fewer than three calls (the two turns of the channel probe and one "
-                        "turn)")
-    elif settings.call_budget < 2:
-        problems.append("the call budget allows fewer than two calls (the channel probe and one item)")
+    # The probe and the first session of the run (one item, or the first turn of a sequence). With the Direct Line
+    # start event, each of the two sessions is one call more.
+    probe, item = external.probe_calls(settings, profile), external.calls_per_session(profile)
+    if settings.call_budget < probe + item:
+        what = ("the two turns of the channel probe and one turn" if settings.procedure == SEC002
+                else "the channel probe and one item")
+        start = "; the Direct Line start event is one more call in each session" if item > 1 else ""
+        problems.append(f"the call budget allows fewer than {probe + item} calls ({what}{start})")
     return problems
 
 
@@ -325,7 +329,9 @@ def external_settings_report(profile, settings, est):
         print(f"Calls in the run: at most {est['calls']} (plus the channel probe: {est['probe_calls']} calls, two turns "
               "in one session; retries are extra)")
     else:
-        print(f"Calls in the run: {est['calls']} (plus 1 channel probe; retries are extra)")
+        n = est["probe_calls"]
+        print(f"Calls in the run: {est['calls']} (plus the channel probe: {n} call{'' if n == 1 else 's'}; retries are "
+              "extra)")
     mc = f", max_calls {settings.max_calls}" if settings.max_calls is not None else ""
     print(f"Budget: cap USD {settings.cap_usd}; cost per call USD {settings.cost_per_call_usd} (the operator's "
           f"estimate){mc}; call budget {settings.call_budget}")
@@ -648,7 +654,7 @@ def sec002_baseline(settings, variant="standard", target=None):
 
     `target`: the target block of an external run (external.target_block). The baseline must then be a schema 5 log of
     an external TP-SEC-001 run. It is compared on the five declared fields of sec002_log.EXTERNAL_MATCH_FIELDS, and
-    the label says that the match is on declared fields."""
+    the label says that the comparison is on declared fields only."""
     from .engine import run_sec006, sec002, sec002_log, sec006_log
     if not settings.m4_baseline_log:
         return None, [BASELINE_REQUIRED], []

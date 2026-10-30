@@ -24,7 +24,7 @@ api_key_env: OPENROUTER_API_KEY
 max_tokens: 400
 runs_per_item: 3          # k: at least 3 (the procedure prefers three where the budget allows), at most 20
 item_set: TP-SEC-002      # items/TP-SEC-002.json: the sequences of Tracks A and B on a pool of TP-SEC-001 items
-store_replies: full       # full | hash_only (a firm's target: the log holds the SHA-256 of each reply, not its text)
+store_replies: full       # full | hash_only (the log holds the SHA-256 of each reply, not its text)
 baseline_log: null        # a TP-SEC-001 run log on the full set (items/TP-SEC-001.json), of the same model, variant,
                           # prompt and routing locks; in evidence mode, a log made in evidence mode
 baseline_pubkey: null     # the public key file that verifies the signature of that log (<log>.sig); keep it outside

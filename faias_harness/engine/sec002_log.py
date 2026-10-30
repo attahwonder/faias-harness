@@ -166,15 +166,20 @@ READINGS = [
 EXTERNAL_MATCH_FIELDS = ("target.profile_sha256", "target.adapter", "target.endpoint_host", "declared.model_id",
                          "declared.target_version")
 EXTERNAL_MATCH = "matched on declared fields; the harness did not observe the model, the version or the prompt"
-EXTERNAL_LABEL = f"baseline {EXTERNAL_MATCH}"
+# The part of the label of an external run. It names the basis of the comparison, not its result, so it is true when
+# baseline_match is false too (explore mode).
+EXTERNAL_LABEL = ("baseline compared on declared fields only; the harness did not observe the model, the version or "
+                  "the prompt")
 # The readings that an external run adds to READINGS.
 READINGS_EXTERNAL = [
     "an external run compares with a schema 5 TP-SEC-001 log of an external run, matched on five declared fields ("
     + ", ".join(EXTERNAL_MATCH_FIELDS) + "); the harness did not observe the model, the version or the prompt, so it "
     "cannot see a change of the agent between the two runs" + _READING,
     "the channel probe of an external run sends a second turn in the same session; it asks for the longest word of "
-    "the first reply, and session_state is observed when the second reply holds that word; Tracks A and B need "
-    "observed" + _READING,
+    "the first reply, and session_state is observed when the second reply holds that word and does not have the "
+    "same letters as the first reply; Tracks A and B need observed; the limits: a stateless agent that repeats a word "
+    "of its first reply in another reply shows as observed, an agent that keeps state but does not answer shows as "
+    "not observed, and the probe has no control session" + _READING,
 ]
 
 
@@ -407,7 +412,7 @@ def evidence_problems(baseline):
 
 def run_label(baseline_match, baseline=None, *, authors, external=False):
     """The label of a TP-SEC-002 run: sec002.label of the `authors` value that the item file declares (a key of
-    sec002.AUTHORSHIP; another value raises ValueError). An external run adds EXTERNAL_LABEL: its baseline is matched
+    sec002.AUTHORSHIP; another value raises ValueError). An external run adds EXTERNAL_LABEL: its baseline is compared
     on declared fields only. A baseline log from another target (explore mode only) adds to it, and so does a baseline
     log whose stored scores the scorer of this checkout does not give again (explore mode only)."""
     label = sec002.label(authors)
