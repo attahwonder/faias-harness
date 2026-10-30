@@ -38,7 +38,7 @@ texts. The redaction replaces SRD-1's staged placeholders. It runs before the re
 hashes. The removal also reads the pool texts from items/TP-SEC-001.json, an input from outside these files. The
 log binds them through corpus.cells and corpus.items_sha256, which the lock covers. A full log stores each reply
 after the redaction, so its rescore does not run the redaction. A rescore from a store runs the redaction of the
-checkout. With the repository, `check` fails a log whose redaction hash differs from sec006.py of the checkout.
+checkout. `rescore` says whether the redaction hash of the log equals that of sec006.py of the checkout.
 """
 import base64
 import binascii

@@ -34,8 +34,9 @@ text is a transformed string, which the procedure never records (line 20). A rec
 A or B, `turn` and `turns`. A cell record has the track C and its `family`. An isolation record has the track I. An
 `isolation_set` record, written before the isolation items are sent, names each of them with its sequence and its
 turn. The summary holds `sequence_outcomes`: the outcome of each run of each sequence (sec002.sequence_outcome).
-With the repository, `check` fails a log in which a string holds the encoded form of a pool text under any family. It
-also fails a log whose redaction hash differs from sec006.py of the checkout.
+With the repository, `check` fails a log in which a string holds the encoded form of a pool text under any family.
+As in schema 4, `check` does not compare a code hash with its file. So a later edit of the code does not fail an older
+log. `rescore` says whether the scorer hash and the redaction hash of the log equal those of the checkout.
 """
 from pathlib import Path
 
@@ -418,8 +419,8 @@ def _run_problems(r, rows, cells, classes, families, isolation, store, lock):
 
 def check(recs, repo=runlog.REPO, use_repo=True):
     """The problems in the form of a schema 9 log (empty if none). `use_repo` false reads nothing from the record, the
-    item sets, the pool texts or the redaction file of the checkout. So it does not search the log for the encoded
-    forms of the pool texts, and it does not compare the redaction hash with the file."""
+    item sets or the pool texts of the checkout. So it does not search the log for the encoded forms of the pool
+    texts."""
     problems = []
     h = recs[0]
     p = h.get("procedure") or {}
@@ -440,8 +441,6 @@ def check(recs, repo=runlog.REPO, use_repo=True):
             runlog.HEX64.fullmatch(str(code.get(k))) for k in hashes):
         problems.append("header: the code block does not name the TP-SEC-002 scorer, record, redaction, turn scorer "
                         "and families files with their hashes")
-    elif use_repo and code["redaction_sha256"] != runlog.sha256_hex((Path(repo) / REDACTION_FILE).read_bytes()):
-        problems.append(f"header: the redaction hash differs from {REDACTION_FILE} in the repository")
     if not (h.get("model") or {}).get("pinned_id"):
         problems.append("header: model ID is missing")
     if not h.get("settings_hash"):
@@ -663,8 +662,12 @@ def rescore(recs, repo=runlog.REPO, replies=None):
     h, runs = recs[0], [r for r in recs if r.get("type") == "run"]
     used = runlog.sha256_hex((Path(repo) / SCORER_FILE).read_bytes())
     logged = (h.get("code") or {}).get("scorer_sha256")
+    redaction = runlog.sha256_hex((Path(repo) / REDACTION_FILE).read_bytes())
+    redaction_logged = (h.get("code") or {}).get("redaction_sha256")
     lines = [f"scorer used: {SCORER_FILE} of this checkout, sha256 {used}",
-             f"scorer in the log: sha256 {logged} ({'equal to' if logged == used else 'differs from'} the scorer used)"]
+             f"scorer in the log: sha256 {logged} ({'equal to' if logged == used else 'differs from'} the scorer used)",
+             f"redaction file in the log: sha256 {redaction_logged} "
+             f"({'equal to' if redaction_logged == redaction else 'differs from'} {REDACTION_FILE} of this checkout)"]
     if (h.get("store_replies") or {}).get("mode") == "hash_only":
         if replies is None:
             return lines + [NO_STORE], None

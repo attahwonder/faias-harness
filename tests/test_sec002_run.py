@@ -569,6 +569,8 @@ class EngineTests(unittest.TestCase):
         self.assertEqual(mismatches, [], lines)
         self.assertEqual(lines[0], f"scorer used: {sec002_log.SCORER_FILE} of this checkout, sha256 "
                                    f"{run.recs[0]['code']['scorer_sha256']}")
+        self.assertIn(f"redaction file in the log: sha256 {run.recs[0]['code']['redaction_sha256']} (equal to "
+                      f"{sec002_log.REDACTION_FILE} of this checkout)", lines)
         self.assertIn("summary measures compared: 7; mismatches: 0", lines)
         for argv in (["verify", "--log", str(log), "--sig", str(sig), "--pubkey", str(pub)],
                      ["verify", "--log", str(log), "--sig", str(sig), "--pubkey", str(pub), "--no-repo"],

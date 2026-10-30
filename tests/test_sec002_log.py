@@ -416,13 +416,19 @@ class CheckTests(unittest.TestCase):
         self.assertEqual(sec002_log.check(recs, repo=REPO), [])
 
     def test_a_redaction_hash_that_differs_from_the_file(self):
-        # The header is locked again, so the lock still matches. With the repository, the check compares the hash
-        # with sec006.py of the checkout; without the repository, it does not.
+        # The header is locked again, so the lock still matches. As in schema 4, the check does not compare a code
+        # hash with its file: a later edit of sec006.py must not fail an older log. The rescore says that it differs.
         recs = copy.deepcopy(self.full)
         recs[0]["code"]["redaction_sha256"] = sha("another redaction")
         relock(recs[0])
-        self.one(recs, "header: the redaction hash differs from faias_harness/engine/sec006.py in the repository")
-        self.assertEqual(sec002_log.check(recs, repo=REPO, use_repo=False), [])
+        for use_repo in (True, False):
+            self.assertEqual(sec002_log.check(recs, repo=REPO, use_repo=use_repo), [])
+        want = (f"redaction file in the log: sha256 {sha('another redaction')} (differs from "
+                "faias_harness/engine/sec006.py of this checkout)")
+        self.assertIn(want, sec002_log.rescore(recs, repo=REPO)[0])
+        self.assertIn(want.replace("differs from", "equal to").replace(sha("another redaction"),
+                                                                       self.full[0]["code"]["redaction_sha256"]),
+                      sec002_log.rescore(self.full, repo=REPO)[0])
 
     def test_a_code_block_without_the_redaction_hash(self):
         recs = copy.deepcopy(self.full)
