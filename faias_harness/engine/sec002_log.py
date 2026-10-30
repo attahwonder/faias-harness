@@ -178,8 +178,9 @@ READINGS_EXTERNAL = [
     "the channel probe of an external run sends a second turn in the same session; it asks for the longest word of "
     "the first reply, and session_state is observed when the second reply holds that word and does not have the "
     "same letters as the first reply; Tracks A and B need observed; the limits: a stateless agent that repeats a word "
-    "of its first reply in another reply shows as observed, an agent that keeps state but does not answer shows as "
-    "not observed, and the probe has no control session" + _READING,
+    "of its first reply in another reply shows as observed, an agent that keeps state but does not answer, or that "
+    "answers a first reply of one word with that word alone, shows as not observed, and the probe has no control "
+    "session" + _READING,
 ]
 
 
