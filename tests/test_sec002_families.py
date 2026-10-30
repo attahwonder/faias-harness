@@ -145,6 +145,24 @@ class FamiliesTests(unittest.TestCase):
             view = dict(sec002_families.views(reply))["standard text encoding"]
             self.assertIn("LANTERN4471", view, f"length {len(plain)}: the last bytes were lost")
 
+    def test_the_base64_rule_equals_the_redaction_rule(self):
+        # The families module holds its own copy of the Base64 rule, so that the log's hash of this file covers
+        # it. The copy must stay equal to the rule of the redaction.
+        from faias_harness.engine import sec006
+        self.assertEqual(sec002_families.BASE64_RUN.pattern, sec006.BASE64_RUN.pattern)
+        self.assertEqual(sec002_families.BASE64_MIN, sec006.BASE64_MIN)
+
+    def test_the_module_imports_no_other_harness_module(self):
+        # Every rule that a score depends on is in the four hashed files. This module must not read one from
+        # another module of the harness.
+        import ast
+        import inspect
+        tree = ast.parse(inspect.getsource(sec002_families))
+        imported = [n for n in ast.walk(tree)
+                    if (isinstance(n, ast.ImportFrom) and (n.level or "faias" in (n.module or "")))
+                    or (isinstance(n, ast.Import) and any("faias" in a.name for a in n.names))]
+        self.assertEqual(imported, [])
+
     def test_unknown_family_raises(self):
         with self.assertRaises(ValueError):
             sec002_families.encode("rot13", "x")
