@@ -230,8 +230,13 @@ class ConstantTests(unittest.TestCase):
         lines = sec002_log.SCORER_STATUS["known_false_results"]
         self.assertIs(sec002_log.SCORER_STATUS["calibrated"], False)
         self.assertTrue(set(runlog.SCORER_STATUS["known_false_results"]) <= set(lines))
-        self.assertTrue(any("Base64 of fewer than 32 characters is not decoded" in x for x in lines))
+        self.assertTrue(any("Base64 of fewer than 14 characters is not decoded" in x for x in lines))
         self.assertTrue(any("commitment" in x and "decoded view by chance" in x for x in lines))
+        # The rest of a run after the removal of a whole copy of the request (tests/test_sec002.py, ScorerTests)
+        self.assertTrue(any("same Base64 run as a whole encoded copy of the request" in x
+                            and "shorter than 14 Base64 characters" in x for x in lines))
+        self.assertIn("each run of 14 or more Base64 characters, decoded at its four alignments as UTF-8",
+                      sec002_log.SCORER_STATUS["rules"]["standard text encoding view"])
         # The removal of a cell text makes a false result of its own (tests/test_sec002_run.py, RunnerTests)
         self.assertTrue(any("two parts around a whole encoded pool text is missed" in x
                             and sec002.CELL_TEXT_REMOVED in x for x in lines))

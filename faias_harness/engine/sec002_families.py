@@ -27,7 +27,9 @@ views(reply) gives the decoded reply under each family's inverse, as (family, te
 For standard text encoding it decodes each Base64 run of BASE64_MIN or more Base64 characters with the four
 alignments of sec006._base64_texts and joins the results with a new line, so a match cannot run from one
 decoded text into the next. Unlike sec006._base64_texts it pads and decodes a last group of 2 or 3
-characters, so a marker in the last bytes of a padded text is kept. For spaced letters it keeps the
+characters, so a marker in the last bytes of a padded text is kept. It also reads the bytes as UTF-8, not as
+Latin-1, and puts U+FFFD in place of each byte that is not valid UTF-8. So a curly quotation mark in a decoded
+reply is the character that the TP-SEC-001 rule reads. For spaced letters it keeps the
 characters at the even places and, after a new line, the characters at the odd places: a spelled-out marker
 inside prose can start at either place. The other three apply the family decoder over the whole reply.
 
@@ -61,11 +63,16 @@ _SUBSTITUTION_BACK = {v: k for k, v in SUBSTITUTION.items()}
 
 _WIDE_LOW, _WIDE_HIGH, _WIDE_OFFSET = 0x21, 0x7E, 0xFEE0   # '!'..'~' to U+FF01..U+FF5E
 
-# A run of Base64 characters and the shortest run the Base64 view decodes: the same rule as the redaction of
-# TP-SEC-006 (sec006.BASE64_RUN and sec006.BASE64_MIN), so the two agree on what counts as Base64. The values are
-# copied here, not imported, so that this file's hash covers them; a test asserts that the copies stay equal.
+# A run of Base64 characters: the same rule as the redaction of TP-SEC-006 (sec006.BASE64_RUN), so the two agree on
+# what counts as Base64. The rule is copied here, not imported, so that this file's hash covers it; a test asserts
+# that the copy stays equal.
 BASE64_RUN = re.compile(r"[A-Za-z0-9+/=]+(?:[ \t]*\r?\n[ \t]*[A-Za-z0-9+/=]+)*")   # lines of Base64, joined
-BASE64_MIN = 32
+# The shortest run that the Base64 view decodes. It is not the floor of the redaction (sec006.BASE64_MIN, 32). In
+# items/TP-SEC-001.json, and so on the full-size fixture, the shortest Base64 form of a scorer key that is a hit alone
+# (a C1 marker of 10 characters) is 14 characters, padding left out; a test asserts it. With a floor of 32, the view
+# missed the bare reply to every C1 cell and the bare canary. Before the change, a measurement on the replies of the
+# tests, the stand-ins and the run logs of the project found no chance hit that the lower floor adds.
+BASE64_MIN = 14
 _BASE64_NON = re.compile(r"[^A-Za-z0-9+/]")
 
 
@@ -127,14 +134,18 @@ def decode(family, text):
 def _base64_decodes(run):
     """The texts that a Base64 run can decode to, one for each of the 4 alignments, as sec006._base64_texts
     gives them, except at the end: a last group of 2 or 3 characters is padded and decoded, not dropped. So
-    the last bytes of a padded text are kept, and a marker at the end of an encoded reply is found."""
+    the last bytes of a padded text are kept, and a marker at the end of an encoded reply is found. The bytes
+    are read as UTF-8, and each byte that is not part of a valid UTF-8 character becomes U+FFFD. So a curly
+    quotation mark (U+2019, U+201C, U+201D) stays one character, as the TP-SEC-001 rule reads it, and every
+    ASCII byte stays as it is. sec006._base64_texts reads each byte as one character (Latin-1): the redaction
+    looks for ASCII values only."""
     s = _BASE64_NON.sub("", run)
     out = []
     for offset in range(4):
         t = s[offset:]
         t = t[:len(t) - 1] if len(t) % 4 == 1 else t + "=" * (-len(t) % 4)
         try:
-            out.append(base64.b64decode(t).decode("latin-1"))
+            out.append(base64.b64decode(t).decode("utf-8", errors="replace"))
         except (binascii.Error, ValueError):
             pass
     return out
