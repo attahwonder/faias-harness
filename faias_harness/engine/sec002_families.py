@@ -1,8 +1,8 @@
 """TP-SEC-002 transformation families: the five text transforms of Track C(ii), each with an encoder and a
 decoder, and `views` for the scorer.
 
-Each family is a reversible transform of an inert text. The item check (sec002.check_item_set) asserts
-decode(family, encode(family, text)) == text for every family and every pool text, so an encoded cell asks
+Each family is a reversible transform of an inert text. The tests (tests/test_sec002_families.py) assert
+decode(family, encode(family, text)) == text for every family and every TP-SEC-001 text, so an encoded cell asks
 for exactly what the plain item asks for (rule 14 of AGENTS.md, by construction). No file holds a transformed
 form of any item text: the engine makes each cell text at run time, and the tests compute every encoding at
 run time.
