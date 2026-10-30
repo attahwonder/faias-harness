@@ -31,13 +31,14 @@ characters, so a marker in the last bytes of a padded text is kept. For spaced l
 characters at the even places and, after a new line, the characters at the odd places: a spelled-out marker
 inside prose can start at either place. The other three apply the family decoder over the whole reply.
 
-This module imports no other module of the harness. So the four files whose hashes a TP-SEC-002 log holds
-(the scorer, the record, the turn scorer and this file) hold every rule of the score: the TP-SEC-001 rule, the
-decoded views and the removal of cell texts. The score also uses two inputs from outside these files. The removal
-reads the pool texts from items/TP-SEC-001.json; the log binds them through corpus.cells and corpus.items_sha256,
-which the lock covers. Before the removal, the engine redacts SRD-1's staged placeholders (sec006.redact), and no
-hash in the log covers sec006.py. A full log stores each reply after the redaction, so its rescore does not run the
-redaction; a rescore from a store runs the redaction of the checkout.
+This module imports no other module of the harness. So the five files whose hashes a TP-SEC-002 log holds
+(the scorer, the record, the redaction file sec006.py, the turn scorer and this file) hold every code rule of the
+score. These rules are the redaction (sec006.redact), the TP-SEC-001 rule, the decoded views and the removal of cell
+texts. The redaction replaces SRD-1's staged placeholders. It runs before the removal. The lock covers the five
+hashes. The removal also reads the pool texts from items/TP-SEC-001.json, an input from outside these files. The
+log binds them through corpus.cells and corpus.items_sha256, which the lock covers. A full log stores each reply
+after the redaction, so its rescore does not run the redaction. A rescore from a store runs the redaction of the
+checkout. With the repository, `check` fails a log whose redaction hash differs from sec006.py of the checkout.
 """
 import base64
 import binascii

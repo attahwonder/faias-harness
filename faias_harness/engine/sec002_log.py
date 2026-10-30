@@ -5,8 +5,9 @@ Schema 9 uses the evidence frame of schema 4 (runlog.py): the record, the star c
 their bases, the code block, the lock over the scorer and record hashes, the Ed25519 signature, `verify`, `verify
 --no-repo` and `rescore`. It adds what this procedure needs. The lock covers each of these parts:
 
-  code              four files, each with its SHA-256: the scorer (sec002.py), the record, the turn scorer (sec001.py,
-                    the TP-SEC-001 rule) and the encoders of the transformation families (sec002_families.py)
+  code              five files, each with its SHA-256: the scorer (sec002.py), the record, the redaction of SRD-1's
+                    staged placeholders (sec006.py, in the form of schema 4), the turn scorer (sec001.py, the
+                    TP-SEC-001 rule) and the encoders of the transformation families (sec002_families.py)
   corpus.cells      the cells table: for each pool objective and each family, the SHA-256 of the encoded text. It is
                     made from the pool text before the lock (cells_table). The text itself is not in the log
   baseline          the TP-SEC-001 run log that every track compares with (read_baseline): where it is, its SHA-256,
@@ -33,7 +34,8 @@ text is a transformed string, which the procedure never records (line 20). A rec
 A or B, `turn` and `turns`. A cell record has the track C and its `family`. An isolation record has the track I. An
 `isolation_set` record, written before the isolation items are sent, names each of them with its sequence and its
 turn. The summary holds `sequence_outcomes`: the outcome of each run of each sequence (sec002.sequence_outcome).
-With the repository, `check` fails a log in which a string holds the encoded form of a pool text under any family.
+With the repository, `check` fails a log in which a string holds the encoded form of a pool text under any family. It
+also fails a log whose redaction hash differs from sec006.py of the checkout.
 """
 from pathlib import Path
 
@@ -44,6 +46,7 @@ SCORER_FILE = "faias_harness/engine/sec002.py"
 RECORD_FILE = "records/TP-SEC-002.yaml"
 TURN_SCORER_FILE = "faias_harness/engine/sec001.py"         # the TP-SEC-001 rule that scores each reply
 FAMILIES_FILE = "faias_harness/engine/sec002_families.py"   # the encoders and the decoded views of the replies
+REDACTION_FILE = runlog.REDACTION_FILE      # the redaction of SRD-1's staged placeholders (sec006.py), before the score
 STORE_MODES = ("full", "hash_only")
 VARIANTS = ("standard",)
 FULL_SET = sec006_log.FULL_SET          # the item set of a baseline log: the pool names its items by ID
@@ -137,9 +140,9 @@ READINGS = [
 # ---------- the parts of the header ----------
 
 def code_facts(repo):
-    """The code block of a schema 9 header: the scorer and the record (runlog.code_facts), and the turn scorer and the
-    families file, each with its SHA-256."""
-    out = runlog.code_facts(repo, scorer_file=SCORER_FILE, record_file=RECORD_FILE)
+    """The code block of a schema 9 header: the scorer, the record and the redaction file (runlog.code_facts, in the
+    form of schema 4), and the turn scorer and the families file, each with its SHA-256."""
+    out = runlog.code_facts(repo, scorer_file=SCORER_FILE, record_file=RECORD_FILE, redaction_file=REDACTION_FILE)
     for part, f in (("turn_scorer", TURN_SCORER_FILE), ("families", FAMILIES_FILE)):
         out[f"{part}_file"], out[f"{part}_sha256"] = f, runlog.sha256_hex((Path(repo) / f).read_bytes())
     return out
@@ -415,8 +418,8 @@ def _run_problems(r, rows, cells, classes, families, isolation, store, lock):
 
 def check(recs, repo=runlog.REPO, use_repo=True):
     """The problems in the form of a schema 9 log (empty if none). `use_repo` false reads nothing from the record, the
-    item sets or the pool texts of the checkout. So it does not search the log for the encoded forms of the pool
-    texts."""
+    item sets, the pool texts or the redaction file of the checkout. So it does not search the log for the encoded
+    forms of the pool texts, and it does not compare the redaction hash with the file."""
     problems = []
     h = recs[0]
     p = h.get("procedure") or {}
@@ -430,11 +433,15 @@ def check(recs, repo=runlog.REPO, use_repo=True):
         problems.append("header: the procedure ID or the star label is missing")
     problems += runlog._code_problems(h)
     code = h.get("code") or {}
-    files = (code.get("scorer_file"), code.get("record_file"), code.get("turn_scorer_file"), code.get("families_file"))
-    if files != (SCORER_FILE, RECORD_FILE, TURN_SCORER_FILE, FAMILIES_FILE) or not all(
-            runlog.HEX64.fullmatch(str(code.get(k))) for k in ("turn_scorer_sha256", "families_sha256")):
-        problems.append("header: the code block does not name the TP-SEC-002 scorer, record, turn scorer and families "
-                        "files with their hashes")
+    files = (code.get("scorer_file"), code.get("record_file"), code.get("redaction_file"), code.get("turn_scorer_file"),
+             code.get("families_file"))
+    hashes = ("redaction_sha256", "turn_scorer_sha256", "families_sha256")
+    if files != (SCORER_FILE, RECORD_FILE, REDACTION_FILE, TURN_SCORER_FILE, FAMILIES_FILE) or not all(
+            runlog.HEX64.fullmatch(str(code.get(k))) for k in hashes):
+        problems.append("header: the code block does not name the TP-SEC-002 scorer, record, redaction, turn scorer "
+                        "and families files with their hashes")
+    elif use_repo and code["redaction_sha256"] != runlog.sha256_hex((Path(repo) / REDACTION_FILE).read_bytes()):
+        problems.append(f"header: the redaction hash differs from {REDACTION_FILE} in the repository")
     if not (h.get("model") or {}).get("pinned_id"):
         problems.append("header: model ID is missing")
     if not h.get("settings_hash"):

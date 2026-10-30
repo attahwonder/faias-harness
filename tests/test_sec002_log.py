@@ -217,12 +217,13 @@ class ConstantTests(unittest.TestCase):
         self.assertEqual(sec002_log.SCHEMA, runlog.SCHEMA_SEC002)
         self.assertEqual(sec002_log.SCHEMA, "faias-harness-run-log/9")
         self.assertIn(runlog.SCHEMA_SEC002, runlog.CODE_SCHEMAS)
-        self.assertEqual((sec002_log.SCORER_FILE, sec002_log.RECORD_FILE, sec002_log.TURN_SCORER_FILE,
-                          sec002_log.FAMILIES_FILE),
-                         ("faias_harness/engine/sec002.py", "records/TP-SEC-002.yaml", "faias_harness/engine/sec001.py",
-                          "faias_harness/engine/sec002_families.py"))
-        for f in (sec002_log.SCORER_FILE, sec002_log.RECORD_FILE, sec002_log.TURN_SCORER_FILE,
-                  sec002_log.FAMILIES_FILE):
+        self.assertEqual((sec002_log.SCORER_FILE, sec002_log.RECORD_FILE, sec002_log.REDACTION_FILE,
+                          sec002_log.TURN_SCORER_FILE, sec002_log.FAMILIES_FILE),
+                         ("faias_harness/engine/sec002.py", "records/TP-SEC-002.yaml", "faias_harness/engine/sec006.py",
+                          "faias_harness/engine/sec001.py", "faias_harness/engine/sec002_families.py"))
+        self.assertEqual(sec002_log.REDACTION_FILE, runlog.REDACTION_FILE)
+        for f in (sec002_log.SCORER_FILE, sec002_log.RECORD_FILE, sec002_log.REDACTION_FILE,
+                  sec002_log.TURN_SCORER_FILE, sec002_log.FAMILIES_FILE):
             self.assertTrue((REPO / f).is_file(), f)
 
     def test_the_known_false_results_state_the_limits_of_the_decoded_views(self):
@@ -267,13 +268,24 @@ class ConstantTests(unittest.TestCase):
         self.assertEqual(code["families_sha256"], sha((REPO / sec002_log.FAMILIES_FILE).read_bytes()))
         self.assertEqual(code["turn_scorer_sha256"], sha((REPO / sec002_log.TURN_SCORER_FILE).read_bytes()))
 
+    def test_the_code_block_holds_the_redaction_hash(self):
+        # The engine redacts each reply with sec006.redact before the score. So the code block hashes sec006.py, in
+        # the form of a schema 4 code block: five file hashes in all.
+        code = sec002_log.code_facts(REPO)
+        self.assertEqual(code.get("redaction_file"), "faias_harness/engine/sec006.py")
+        self.assertEqual(code.get("redaction_sha256"), sha((REPO / "faias_harness/engine/sec006.py").read_bytes()))
+        self.assertEqual(sorted(k for k in code if k.endswith("_sha256")),
+                         ["families_sha256", "record_sha256", "redaction_sha256", "scorer_sha256",
+                          "turn_scorer_sha256"])
+
 
 class LockTests(unittest.TestCase):
-    """The lock of schema 9 covers the four code hashes and the parts that this procedure adds."""
+    """The lock of schema 9 covers the five code hashes and the parts that this procedure adds."""
 
     CHANGES = {
         "scorer hash": lambda h: h["code"].update(scorer_sha256=sha("another scorer")),
         "record hash": lambda h: h["code"].update(record_sha256=sha("another record")),
+        "redaction hash": lambda h: h["code"].update(redaction_sha256=sha("another redaction")),
         "turn scorer hash": lambda h: h["code"].update(turn_scorer_sha256=sha("another turn scorer")),
         "families hash": lambda h: h["code"].update(families_sha256=sha("other encoders")),
         "corpus.cells": lambda h: h["corpus"]["cells"][C1].update({"reversed text": sha("another cell")}),
@@ -287,7 +299,7 @@ class LockTests(unittest.TestCase):
     }
 
     def test_each_covered_part_changes_the_lock(self):
-        self.assertEqual(len(self.CHANGES), 11)
+        self.assertEqual(len(self.CHANGES), 12)
         h = header()
         fixed = runlog.canonical(runlog.lock_fixed(h))
         for name, change in self.CHANGES.items():
@@ -303,8 +315,18 @@ class LockTests(unittest.TestCase):
         covers = header()["lock"]["covers"]
         for words in ("turn scorer file hash", "families file hash", "cells table", "baseline log facts",
                       "session limits", "(e2)", "readings", "reply storage", sec002_log.SCORER_FILE,
-                      sec002_log.RECORD_FILE):
+                      sec002_log.RECORD_FILE, f"redaction file hash ({sec002_log.REDACTION_FILE})"):
             self.assertIn(words, covers)
+
+    def test_the_lock_covers_the_redaction_hash(self):
+        h = header()
+        self.assertEqual(runlog.lock_fixed(h).get("redaction_sha256"),
+                         sha((REPO / "faias_harness/engine/sec006.py").read_bytes()))
+        self.assertIn("redaction file hash (faias_harness/engine/sec006.py)", h["lock"]["covers"])
+        changed = copy.deepcopy(h)
+        changed["code"]["redaction_sha256"] = sha("another redaction")
+        self.assertNotEqual(runlog.canonical(runlog.lock_fixed(changed)), runlog.canonical(runlog.lock_fixed(h)))
+        self.assertNotEqual(relock(changed)["lock"]["hash"], h["lock"]["hash"])
 
     def test_a_change_after_the_lock_fails_the_check(self):
         recs = good_log()
@@ -392,6 +414,25 @@ class CheckTests(unittest.TestCase):
         h["mode"] = "explore"
         relock(h)
         self.assertEqual(sec002_log.check(recs, repo=REPO), [])
+
+    def test_a_redaction_hash_that_differs_from_the_file(self):
+        # The header is locked again, so the lock still matches. With the repository, the check compares the hash
+        # with sec006.py of the checkout; without the repository, it does not.
+        recs = copy.deepcopy(self.full)
+        recs[0]["code"]["redaction_sha256"] = sha("another redaction")
+        relock(recs[0])
+        self.one(recs, "header: the redaction hash differs from faias_harness/engine/sec006.py in the repository")
+        self.assertEqual(sec002_log.check(recs, repo=REPO, use_repo=False), [])
+
+    def test_a_code_block_without_the_redaction_hash(self):
+        recs = copy.deepcopy(self.full)
+        for k in ("redaction_file", "redaction_sha256"):
+            recs[0]["code"].pop(k, None)
+        relock(recs[0])
+        for use_repo in (True, False):
+            with self.subTest(use_repo=use_repo):
+                self.one(recs, "header: the code block does not name the TP-SEC-002 scorer, record, redaction, turn "
+                               "scorer and families files with their hashes", use_repo=use_repo)
 
     def test_an_absent_e2_block(self):
         recs = copy.deepcopy(self.full)
