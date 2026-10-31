@@ -97,7 +97,8 @@ side, with only spaces or punctuation between them, holds the marker, and a refu
 scores. M2 states this limit (c1_limit).
 
 A run on a fixture set (a few benign documents with a neutral marker) must carry the label sec001.LABELS["spike"] in
-the header of its run log, so it cannot pass as a result. The run log of TP-SEC-003 is not built yet.
+the header of its run log, so it cannot pass as a result. The run log (sec003_log.py) gives the item set "fixture"
+that label, and its check fails a log of that set without it.
 """
 import json
 import re
