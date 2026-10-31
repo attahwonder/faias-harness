@@ -36,7 +36,8 @@ last record is the summary, with the measures and the teardown facts.
 As in schema 4, `check` does not compare a code hash with its file, so a later edit of the code does not fail an
 older log. runlog.py does not yet hand a schema 10 log to this module: SCHEMA is not in runlog.CODE_SCHEMAS, and
 lock_fixed, lock_header, check_log, rescore_log and verify --no-repo have no branch for it. Until they do, the lock
-hash covers the parts of runlog.LOCK_KEYS and the items hash only.
+hash covers the parts of runlog.LOCK_KEYS and the items hash only. So the engine must not write a schema 10 run log
+until runlog.py has that dispatch.
 """
 from collections import Counter
 from pathlib import Path
@@ -59,7 +60,12 @@ LINE_KEYS = {"retrieval": ("kind", "turn", "passed_to_model"), "turn": ("kind", 
 # The facts of sec003.score_run. Each run record holds them.
 FACTS = ("item", "class", "doc_id", "scored_turns", "no_reply_turns", "no_retrieval_turns", "marker", "marker_turns",
          "seeded_retrieved", "retrieved_turns", "hit", "hit_turns", "influencing", "reply_urls")
+# The frame of a run record: the keys that the engine writes beside FACTS. A record holds no other key.
+RECORD_KEYS = ("type", "item", "class", "activity", "arm", "run", "t_ns", "time", "request_sha256", "calls", "lines")
+# The context message of the pipeline path has the role "system", as the system prompt has (orchestrator.py,
+# Orchestrator._retrieve and Orchestrator.open_session), and nothing screens the passages before the model call.
 LIMITS = ("simplified retrieval stack of SRD-1 (one store, one ingestion path); no screen layer (C-10 not built); "
+          "retrieved passages reach the model in a system message, with no role separation and no screen; "
           "marker arm only (the pipeline build offers no tool, so P3, P4 and M1 are not in the run)")
 LABELS = {ITEM_SET: f"uncalibrated scorer, not a finding; {LIMITS}",
           FIXTURE_SET: f"{sec001.LABELS['spike']}; fixture set of benign documents with neutral markers; {LIMITS}"}
@@ -245,8 +251,8 @@ def build_header(settings, *, allow_hosts, items, item_set, authors, seed, retri
 
 def record_lines(trace_lines):
     """The lines of a run record: the trace lines of one session that the scorer reads, with only the keys that it
-    reads (LINE_KEYS). The customer's message and the other keys of a line are left out. The engine then redacts each
-    reply, and scores these lines."""
+    reads (LINE_KEYS). The customer's message and the other keys of a line are left out. The engine must redact each
+    reply (sec006.redact) before it scores these lines."""
     return [{k: (list(e.get(k) or []) if k == "passed_to_model" else e.get(k)) for k in LINE_KEYS[e["kind"]]}
             for e in trace_lines if e.get("kind") in LINE_KEYS]
 
@@ -407,6 +413,10 @@ def _header_problems(h, repo, use_repo):
         if not _row_ok(m):
             problems.append(f"header: the manifest row {m.get('id')} has no valid class, activity, doc_id, document "
                             "hash, turn hashes or retrieving turn")
+    tool_rows = [m["id"] for m in rows if _row_ok(m) and m["class"] not in sec003.MARKER_CLASSES]
+    if tool_rows and not h.get("tools"):        # the pipeline build of SRD-1 offers no tool (LIMITS)
+        problems.append(f"header: the manifest holds {', '.join(tool_rows)}, of a class that needs a tool (P3 or P4), "
+                        "and the header has no tools block")
     if corpus.get("items") != len(rows) or (corpus.get("per_class"), corpus.get("per_cell")) != by_class(rows):
         problems.append("header: the corpus by class does not match the manifest")
     if not _keys_ok(rows, keys):
@@ -451,6 +461,11 @@ def _run_problems(r, rows, lock, k):
         out.append(f"{where}: the record holds the request text (it holds request_sha256 only)")
     elif r.get("request_sha256") != m.get("turn_sha256"):
         out.append(f"{where}: request_sha256 does not match the turn hashes of the manifest")
+    # A key outside the frame and the facts could hold a turn text. The request has its own problem above.
+    extra = sorted(str(x) for x in r if x not in RECORD_KEYS and x not in FACTS and x != "request")
+    if extra:
+        out.append(f"{where}: the record holds a key that is not in the frame or the facts of score_run "
+                   f"({', '.join(extra)})")
     if not _lines_ok(r.get("lines"), m.get("turns") or 0):
         out.append(f"{where}: the lines are missing, or a line holds a kind or a key that the scorer does not read")
     missing = [f for f in FACTS if f not in r]
@@ -485,7 +500,29 @@ def check(recs, repo=runlog.REPO, use_repo=True):
         problems.append("the log holds a placeholder value")
     if recs[-1].get("type") != "summary":
         problems.append("the last record is not the summary (the run did not finish cleanly)")
+    else:
+        problems += _summary_problems(recs[-1], recs, by_id, k)
     return problems
+
+
+def _summary_problems(summary, recs, by_id, k):
+    """The summary holds the measures M1 to M7, and the teardown facts with store_written true or false. When its
+    status is complete, each item of the manifest has runs_per_item records in each arm: one problem for each arm
+    that has fewer, with the count."""
+    out = []
+    if not all(m in _block(summary, "measures") for m in ("M1", "M2", "M3", "M4", "M5", "M6", "M7")):
+        out.append("summary: a measure of M1 to M7 is missing")
+    if type(_block(summary, "teardown").get("store_written")) is not bool:
+        out.append("summary: the teardown facts are missing (store_written, true or false)")
+    if summary.get("status") == "complete" and type(k) is int and k >= 1:     # a bad runs_per_item has its problem
+        for a in ARMS:
+            got = {(r["item"], r["run"]) for r in recs if r.get("type") == "run" and r.get("arm") == a
+                   and isinstance(r.get("item"), str) and r["item"] in by_id and type(r.get("run")) is int
+                   and 1 <= r["run"] <= k}
+            if len(got) < len(by_id) * k:
+                out.append(f"summary: the status is complete, but the {a} arm has {len(got)} of {len(by_id) * k} "
+                           "records (runs_per_item for each item of the manifest)")
+    return out
 
 
 def _strings(node):

@@ -554,6 +554,9 @@ class MeasureTests(unittest.TestCase):
             self.assertEqual(runlog.measure_cell(m[key]), "rate 0; within_threshold false")
         clean_only = sec003.compute_measures([r for r in self.runs() if r["arm"] == "clean"])["M3"]
         self.assertEqual((clean_only["seeded"], clean_only["rate"], clean_only["within_threshold"]), (0, None, None))
+        # Two sessions of one item (runs_per_item 2) are one seeded payload: M3 counts the distinct doc_ids.
+        twice = [session(self.p1, "seeded", trace([(1, [self.p1.doc_id], "The branch opens at ten.")]))] * 2
+        self.assertEqual(sec003.compute_measures(twice)["M3"]["seeded"], 1)
 
     def test_m6_is_binary_for_each_affected_response_from_influencing(self):
         def row(item, cls, turn, doc=None):

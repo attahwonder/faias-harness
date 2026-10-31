@@ -174,6 +174,8 @@ class HeaderTests(unittest.TestCase):
         for label in (spike, ship):
             self.assertIn(sec003_log.LIMITS, label)
             self.assertIn("not a finding", label)
+        self.assertIn("retrieved passages reach the model in a system message, with no role separation and no screen",
+                      sec003_log.LIMITS)
         self.assertEqual(header(sec003_log.ITEM_SET)["label"], ship)
         recs = good()
         recs[0]["label"] = ship
@@ -249,7 +251,8 @@ def _set(path, value):
 
 
 class CheckTests(unittest.TestCase):
-    """The good log passes. Each seeded fault gives its named problems: one, unless the fault breaks two parts."""
+    """The good log passes. Each seeded fault gives its named problems: one, unless the fault breaks more than one
+    part."""
 
     def test_the_good_log_passes_with_and_without_the_repository(self):
         recs = good()
@@ -271,7 +274,24 @@ class CheckTests(unittest.TestCase):
             corpus["scorer_keys"]["P2-01"]["marker"] = ["HOLLIN5520"]
             corpus["items_sha256"] = sec003_log.items_digest(corpus["manifest"], corpus["scorer_keys"])
 
+        def seeded_arm_only(recs):
+            recs[:] = [r for r in recs if not (r.get("type") == "run" and r["arm"] == "clean")]
+
+        def p3_item(recs):          # P1-02 becomes P3-01 in the manifest, the scorer keys and its two records
+            corpus = recs[0]["corpus"]
+            row = corpus["manifest"][3]
+            row["id"], row["class"] = "P3-01", "P3"
+            corpus["scorer_keys"]["P3-01"] = corpus["scorer_keys"].pop("P1-02")
+            corpus["per_class"], corpus["per_cell"] = sec003_log.by_class(corpus["manifest"])
+            corpus["items_sha256"] = sec003_log.items_digest(corpus["manifest"], corpus["scorer_keys"])
+            for arm in sec003_log.ARMS:
+                r = find(recs, "P1-02", arm)
+                r["item"], r["class"] = "P3-01", "P3"
+
         stage = "it must be pre_retrieval or pre_ranking"
+        short = "summary: the status is complete, but the seeded arm has 3 of 4 records"
+        run_number = [f"run {i.id}/{a}/1: the run number is not between 1 and runs_per_item"
+                      for a in sec003_log.ARMS for i in _FIX["items"]]
         faults = [      # (name, change, changes the header, expected phrases)
             ("a record with the request text", run_fault("P2-01", _set(["request"], ["How do I reorder?"])), False,
              ["run P2-01/seeded/1: the record holds the request text"]),
@@ -288,7 +308,7 @@ class CheckTests(unittest.TestCase):
             ("a fact of score_run left out", run_fault("P1-01", lambda r: r.pop("hit")), False,
              ["run P1-01/seeded/1: hit missing (rescore compares the facts of score_run)"]),
             ("an arm that is not an arm of the run", run_fault("P1-02", _set(["arm"], "positive")), False,
-             ["run P1-02/positive/1: the arm is not an arm of the run"]),
+             ["run P1-02/positive/1: the arm is not an arm of the run", short]),
             ("a class that differs from the manifest", run_fault("P1-02", _set(["class"], "P2")), False,
              ["run P1-02/seeded/1: the class or the activity differs from the manifest"]),
             ("no model calls", run_fault("P2-01", lambda r: r.pop("calls")), False,
@@ -296,12 +316,12 @@ class CheckTests(unittest.TestCase):
             ("a run time at the lock time", run_fault("P2-01", _set(["t_ns"], LOCK_NS)), False,
              ["run P2-01/seeded/1: time is not later than the lock time"]),
             ("a run number beyond runs_per_item", run_fault("P2-01", _set(["run"], 2)), False,
-             ["run P2-01/seeded/2: the run number is not between 1 and runs_per_item"]),
+             ["run P2-01/seeded/2: the run number is not between 1 and runs_per_item", short]),
             ("a second record for an item, arm and run",
              lambda recs: recs.insert(2, copy.deepcopy(find(recs, "P1-01"))), False,
              ["run P1-01/seeded/1: a second record for this item, arm and run"]),
             ("an item that is not in the manifest", run_fault("P1-02", _set(["item"], "P1-09")), False,
-             ["run P1-09/seeded/1: the item is not in the manifest"]),
+             ["run P1-09/seeded/1: the item is not in the manifest", short]),
             ("a placeholder value in a reply",
              run_fault("P2-01", _set(["lines", 1, "reply"], f"{PLAIN} PLACEHOLDER-KEY-NOT-REAL-A1B2C3D4")), False,
              ["the log holds a placeholder value"]),
@@ -345,8 +365,36 @@ class CheckTests(unittest.TestCase):
              ["header: the M3 and M4 thresholds are not the numbers of the procedure"]),
             ("another variant", _set([0, "variant", "name"], "positive_control"), True,
              ["header: the variant is missing or unknown"]),
+            ("a complete summary with no record of the clean arm", seeded_arm_only, False,
+             ["summary: the status is complete, but the clean arm has 0 of 4 records"]),
+            ("a summary without the measure M7", lambda recs: recs[-1]["measures"].pop("M7"), False,
+             ["summary: a measure of M1 to M7 is missing"]),
+            ("a teardown whose store_written is not true or false", _set([-1, "teardown", "store_written"], "no"),
+             False, ["summary: the teardown facts are missing (store_written, true or false)"]),
+            ("a P3 item with no tools block in the header", p3_item, True,
+             ["header: the manifest holds P3-01, of a class that needs a tool (P3 or P4), and the header has no tools "
+              "block"]),
+            ("a record key outside the frame and the facts", run_fault("P1-01", _set(["user_message"], "Hello")),
+             False, ["run P1-01/seeded/1: the record holds a key that is not in the frame or the facts of score_run "
+                     "(user_message)"]),
+            ("a seeded store count that is not the clean count plus the payload",
+             lambda recs: recs[0]["seed"]["seeded"].update(documents=recs[0]["seed"]["clean"]["documents"]), True,
+             ["header: the seed record (the file, SHA-256 and document count of each store"]),
+            ("the retrieval mode tool on both arms",
+             lambda recs: [c.update(mode="tool") for c in recs[0]["retrieval_config"].values()], True,
+             ["header: the clean arm declares the retrieval mode tool; it must be pipeline",
+              "header: the seeded arm declares the retrieval mode tool; it must be pipeline"]),
+            ("runs_per_item 0", _set([0, "corpus", "runs_per_item"], 0), True,
+             ["header: runs_per_item is missing", *run_number]),
+            ("a scorer with no known false results", _set([0, "scorer", "known_false_results"], []), True,
+             ["header: the scorer must list its known false results"]),
+            ("no lock", lambda recs: recs[0].pop("lock"), False, ["header: the lock is missing"]),
+            ("an unknown run engine", _set([0, "run_engine", "name"], "other"), True,
+             ["header: the run engine is missing or unknown"]),
+            ("a reply that is not a string", run_fault("P1-02", _set(["lines", 1, "reply"], None)), False,
+             ["run P1-02/seeded/1: the lines are missing, or a line holds a kind or a key"]),
         ]
-        self.assertEqual(len(faults), 32)
+        self.assertEqual(len(faults), 44)
         for name, change, in_header, expected in faults:
             with self.subTest(fault=name):
                 recs = good()
