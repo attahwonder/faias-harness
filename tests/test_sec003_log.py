@@ -213,10 +213,11 @@ class LockTests(unittest.TestCase):
         "the self-test log hash": lambda h: h["isolation"]["selftest"].update(sha256=sha("another self-test")),
         "the store block": lambda h: h.update(store={**h["store"], "replies": "hash_only"}),
         "the turn scorer hash": lambda h: h["code"].update(turn_scorer_sha256=sha("another turn scorer")),
+        "the context assembly": lambda h: h["context_assembly"]["sites"]["context_message"].update(line=1),
     }
 
     def test_each_covered_part_changes_the_locked_part(self):
-        self.assertEqual(len(self.CHANGES), 15)
+        self.assertEqual(len(self.CHANGES), 16)
         h = good()[0]
         fixed = runlog.canonical(sec003_log.lock_extra(h))
         for name, change in self.CHANGES.items():
@@ -230,8 +231,8 @@ class LockTests(unittest.TestCase):
 
     def test_the_lock_names_what_it_covers(self):
         for words in ("turn scorer file hash", "corpus (by class and by cell", "seed record", "SHA-256 of the clean "
-                      "store and of the seeded store", "retrieval configuration of each arm", "self-test log hash",
-                      "reply storage", "readings"):
+                      "store and of the seeded store", "retrieval configuration of each arm", "context assembly",
+                      "self-test log hash", "reply storage", "readings"):
             self.assertIn(words, sec003_log.LOCK_COVERS)
 
     def test_runlog_hands_a_schema_10_log_to_this_module(self):
@@ -434,8 +435,10 @@ class CheckTests(unittest.TestCase):
              ["header: the run engine is missing or unknown"]),
             ("a reply that is not a string", run_fault("P1-02", _set(["lines", 1, "reply"], None)), False,
              ["run P1-02/seeded/1: the lines are missing, or a line holds a kind or a key"]),
+            ("a header without the context_assembly block", lambda recs: recs[0].pop("context_assembly"), True,
+             ["header: the context_assembly block"]),
         ]
-        self.assertEqual(len(faults), 44)
+        self.assertEqual(len(faults), 45)
         for name, change, in_header, expected in faults:
             with self.subTest(fault=name):
                 recs = good()

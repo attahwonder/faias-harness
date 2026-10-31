@@ -43,7 +43,7 @@ PROBES_FILE = "faias_harness/selftest/probes.py"
 ATTESTATION_FILE = "docs/HARNESS_ATTESTATION.md"
 DRAFT_MARK = "draft; for the maintainer's approval"
 LOG_NAME = "selftest_log.jsonl"
-GATED = ("TP-AGT-012", "TP-DAT-009")      # procedures that may not start without a passing, matching self-test log
+GATED = ("TP-AGT-012", "TP-DAT-009", "TP-SEC-003")    # may not start without a passing, matching self-test log
 PLAYBOOK = "PLAYBOOK_AGT_014.md"
 LOCK_COVERS = ("procedure, thresholds with bases, scope (probe plan and declared sites), code manifest, attestation "
                "hash, probes file hash, record file hash")
@@ -420,10 +420,10 @@ def preflight_line(status):
 
 
 def gate_problems(procedure, status, mode=None):
-    """Why a run of `procedure` may not start (empty if it may). TP-AGT-012 and TP-DAT-009 need a verified,
-    passing self-test log whose code manifest matches the checkout. In evidence mode the signature must also verify
-    against a pinned public key (--selftest-pubkey, or selftest_pubkey in the settings). Other procedures are not
-    gated."""
+    """Why a run of `procedure` may not start (empty if it may). TP-AGT-012, TP-DAT-009 and TP-SEC-003 (GATED) need a
+    verified, passing self-test log whose code manifest matches the checkout. In evidence mode the signature must also
+    verify against a pinned public key (--selftest-pubkey, or selftest_pubkey in the settings). Other procedures are
+    not gated."""
     if procedure not in GATED:
         return []
     if status is None:

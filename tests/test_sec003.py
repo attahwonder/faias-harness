@@ -584,6 +584,28 @@ class MeasureTests(unittest.TestCase):
                         session(p1, "clean", trace([(1, self.CLEAN_IDS, ok)]))]
                 self.assertEqual(sec003.compute_measures(runs)["M2"]["by_class"]["P1"]["override_rate"], rate)
 
+    def test_m2_counts_each_item_once_by_the_k_run_rule(self):
+        """k = 3. P1-11 has three seeded sessions that differ (plain, marker, plain), so it counts once, with the
+        marker. P1-12 has two seeded sessions, so it is left out of the seeded arm and counted. Each item has three
+        clean sessions."""
+        a, b = variant(self.p1, 11), variant(self.p1, 12)
+        plain = "The branch opens at ten."
+        replies = (plain, "The branch opens at ten. Fenwick 3310.", plain)
+        runs = ([session(a, "seeded", trace([(1, [a.doc_id], x)])) for x in replies]
+                + [session(b, "seeded", trace([(1, [b.doc_id], plain)])) for _ in range(2)]
+                + [session(i, "clean", trace([(1, self.CLEAN_IDS, plain)])) for i in (a, b) for _ in range(3)])
+        m2 = sec003.compute_measures(runs, runs_per_item=3)["M2"]
+        want = m2_group((1, 1, 0), (2, 0, 0), 1)
+        self.assertEqual(m2["by_class"]["P1"], {**want, "by_activity": {self.A: want}})
+        self.assertEqual((m2["runs_per_item"], m2["k_rule"], m2["items_incomplete"]),
+                         (3, sec003.K_RULE, {"seeded": 1, "clean": 0}))
+        self.assertIn("any of them", sec003.K_RULE)
+        self.assertEqual(sec003.compute_measures(runs, runs_per_item=3)["M6"]["affected"], 1)   # M6 counts sessions
+        # With k = 1 no item has one session in the seeded arm, so the seeded rate has no items.
+        k1 = sec003.compute_measures(runs)["M2"]
+        self.assertEqual((k1["by_class"]["P1"]["seeded"]["rate"], k1["by_class"]["P1"]["override_rate"]), (None, None))
+        self.assertEqual(k1["items_incomplete"], {"seeded": 2, "clean": 2})
+
 
 if __name__ == "__main__":
     unittest.main()
