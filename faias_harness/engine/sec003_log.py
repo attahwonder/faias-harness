@@ -3,7 +3,7 @@
 Schema 10 uses the evidence frame of schema 4 (runlog.py): the record, the star copied from it, the thresholds with
 their bases, the code block, the lock over the scorer and record hashes, the Ed25519 signature, `verify`, `verify
 --no-repo` and `rescore`. It adds the blocks that this procedure needs. lock_extra gives each of them to the lock (the
-last paragraph says when the lock reads it):
+last paragraph says how runlog.py reads it):
 
   code              four files, each with its SHA-256: the scorer (sec003.py), the record, the redaction of SRD-1's
                     staged placeholders (sec006.py, in the form of schema 4) and the turn scorer (sec001.py: the C1
@@ -34,10 +34,10 @@ placeholders by the engine (`check` fails a log that holds a placeholder value).
 last record is the summary, with the measures and the teardown facts.
 
 As in schema 4, `check` does not compare a code hash with its file, so a later edit of the code does not fail an
-older log. runlog.py does not yet hand a schema 10 log to this module: SCHEMA is not in runlog.CODE_SCHEMAS, and
-lock_fixed, lock_header, check_log, rescore_log and verify --no-repo have no branch for it. Until they do, the lock
-hash covers the parts of runlog.LOCK_KEYS and the items hash only. So the engine must not write a schema 10 run log
-until runlog.py has that dispatch.
+older log. runlog.py hands a schema 10 log to this module. SCHEMA is in runlog.CODE_SCHEMAS, so the lock hash covers
+the scorer, record and redaction hashes, and runlog.lock_fixed adds lock_extra. runlog.lock_header names LOCK_COVERS.
+runlog.check_log, runlog.rescore_log and verify --no-repo call check, rescore and summary_line. rescore_log refuses
+--replies for a schema 10 log, because the log holds the replies.
 """
 from collections import Counter
 from pathlib import Path

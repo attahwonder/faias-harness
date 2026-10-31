@@ -40,6 +40,7 @@ log to engine/sec006_log.py.
 
 Schema 7 (version 0.7) is the log of a TP-AGT-012 run (engine/agt012_log.py). Schema 8 (version 0.7) is the log of a
 TP-DAT-009 run (engine/dat009_log.py). Schema 9 (version 0.8) is the log of a TP-SEC-002 run (engine/sec002_log.py).
+Schema 10 (version 0.8) is the log of a TP-SEC-003 run (engine/sec003_log.py).
 Each has the frame of schema 4, and `check_log`, `rescore` and `verify --no-repo` hand it to its module. `results`
 gives a schema 9 log its sequences and cells as the items, and the uplift of each sequence track as M1. A schema 9 log
 of an external run (variant external) also holds the blocks target, model, budget and pacing of schema 5
@@ -97,10 +98,11 @@ SCHEMA_SEC006 = "faias-harness-run-log/6"   # 6 (version 0.6): TP-SEC-006 on SRD
 SCHEMA_AGT012 = "faias-harness-run-log/7"   # 7 (version 0.7): TP-AGT-012 on SRD-1 minimal (agt012_log.py)
 SCHEMA_DAT009 = "faias-harness-run-log/8"   # 8 (version 0.7), for TP-DAT-009 on SRD-1 minimal (dat009_log.py)
 SCHEMA_SEC002 = "faias-harness-run-log/9"   # 9 (version 0.8), for TP-SEC-002 on SRD-1 minimal (sec002_log.py)
+SCHEMA_SEC003 = "faias-harness-run-log/10"  # 10 (version 0.8), for TP-SEC-003 on SRD-1 minimal (sec003_log.py)
 SCHEMA_SELFTEST = "faias-harness-selftest-log/1"    # the containment self-test of the harness (selftest/__init__.py)
 EXTERNAL_SCHEMAS = (SCHEMA_V3, SCHEMA_EXTERNAL)
 # the logs with the code block and the wider lock
-CODE_SCHEMAS = (SCHEMA, SCHEMA_EXTERNAL, SCHEMA_SEC006, SCHEMA_AGT012, SCHEMA_DAT009, SCHEMA_SEC002)
+CODE_SCHEMAS = (SCHEMA, SCHEMA_EXTERNAL, SCHEMA_SEC006, SCHEMA_AGT012, SCHEMA_DAT009, SCHEMA_SEC002, SCHEMA_SEC003)
 KNOWN_SCHEMAS = (SCHEMA_V1, SCHEMA_V2, SCHEMA_V3, SCHEMA, SCHEMA_EXTERNAL)    # the TP-SEC-001 schemas
 SCORER_FILE = "faias_harness/engine/sec001.py"
 RECORD_FILE = "records/TP-SEC-001.yaml"
@@ -374,6 +376,9 @@ def lock_fixed(header):
     if schema == SCHEMA_SEC002:
         from . import sec002_log
         fixed.update(sec002_log.lock_extra(header))
+    if schema == SCHEMA_SEC003:
+        from . import sec003_log
+        fixed.update(sec003_log.lock_extra(header))
     if "tools" in header:       # since 0.6, only when the run had tools on, so every earlier log still verifies
         fixed["tools_sha256"] = sha256_hex(canonical(header["tools"]))
     return fixed
@@ -398,6 +403,9 @@ def lock_header(header, clock_ns=None):
     if header.get("schema") == SCHEMA_SEC002:
         from . import sec002_log
         covers = sec002_log.lock_covers(header)     # by the variant: SRD-1 minimal or an external target
+    if header.get("schema") == SCHEMA_SEC003:
+        from . import sec003_log
+        covers = sec003_log.LOCK_COVERS
     if header.get("schema") in CODE_SCHEMAS:
         code = header.get("code") or {}
         covers += (f", scorer file hash ({code.get('scorer_file', SCORER_FILE)}), record file hash "
@@ -562,6 +570,9 @@ def check_log(path, repo=REPO, use_repo=True):
     if h.get("schema") == SCHEMA_SEC002:
         from . import sec002_log
         return sec002_log.check(recs, repo=repo, use_repo=use_repo)
+    if h.get("schema") == SCHEMA_SEC003:
+        from . import sec003_log
+        return sec003_log.check(recs, repo=repo, use_repo=use_repo)
     if h.get("schema") == SCHEMA_SELFTEST:
         from .. import selftest
         return selftest.check(path, recs, repo=repo, use_repo=use_repo)
@@ -743,6 +754,9 @@ def _no_repo_lines(log_path):
         elif recs[0].get("schema") == SCHEMA_SEC002:
             from . import sec002_log
             items_line = sec002_log.summary_line(recs)
+        elif recs[0].get("schema") == SCHEMA_SEC003:
+            from . import sec003_log
+            items_line = sec003_log.summary_line(recs)
         elif recs[0].get("schema") == SCHEMA_SELFTEST:
             items_line = f"probe records: {sum(1 for r in recs if r.get('type') == 'probe')} (a self-test log has no item set)"
         else:
@@ -780,6 +794,9 @@ def rescore_log(log_path, repo=REPO, replies=None):
     if recs[0].get("schema") == SCHEMA_DAT009:
         from . import dat009_log
         return dat009_log.rescore(recs, repo=repo)
+    if recs[0].get("schema") == SCHEMA_SEC003:
+        from . import sec003_log
+        return sec003_log.rescore(recs, repo=repo)
     if recs[0].get("schema") == SCHEMA_SELFTEST:
         return ["a self-test log has no replies to score; run `python -m faias_harness.selftest rerun --log <log>`"], None
     h, runs = recs[0], [r for r in recs if r.get("type") == "run"]

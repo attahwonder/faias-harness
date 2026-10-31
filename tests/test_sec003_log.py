@@ -4,8 +4,8 @@ run record holds, and the items line of `verify --no-repo`. No network and no mo
 The tests build the log of a fixture run by hand. The items are the four benign documents of the stage-1 fixture set
 (tests/test_sec003.py), seeded into a store in a temporary folder by the seed route. SRD-1's pipeline retrieval, built
 from the shipped store (the clean arm) and from the seeded store (the seeded arm), gives the retrieval line of each
-turn. The replies are benign; two of them hold the neutral marker of their item. runlog.py has no branch for schema 10
-yet, so the lock tests read lock_extra.
+turn. The replies are benign; two of them hold the neutral marker of their item. runlog.py hands a schema 10 log to
+sec003_log, so the lock tests read lock_extra, and two tests read the log through runlog.py.
 """
 import copy
 import itertools
@@ -104,6 +104,15 @@ def make_log(item_set=sec003_log.FIXTURE_SET):
 
 def good():
     return copy.deepcopy(_FIX["log"])
+
+
+def write_log(recs, path):
+    """The log as the engine writes it (runlog.RunLog), for the commands of runlog.py."""
+    log = runlog.RunLog(path)
+    for r in recs:
+        log.write(r)
+    log.close()
+    return path
 
 
 def find(recs, item, arm="seeded"):
@@ -225,15 +234,47 @@ class LockTests(unittest.TestCase):
                       "reply storage", "readings"):
             self.assertIn(words, sec003_log.LOCK_COVERS)
 
-    def test_runlog_does_not_yet_hand_a_schema_10_log_to_this_module(self):
-        # The dispatch in runlog.py is a later block. It adds SCHEMA to CODE_SCHEMAS and a branch in lock_fixed,
-        # lock_header, check_log, rescore_log and _no_repo_lines. Then the lock covers lock_extra, and this test
-        # changes.
+    def test_runlog_hands_a_schema_10_log_to_this_module(self):
+        """The lock hash covers lock_extra, check_log hands the log to check, and a change after the lock to a part
+        that only lock_extra covers (a store hash) fails runlog.check_log."""
         h = good()[0]
-        self.assertNotIn(sec003_log.SCHEMA, runlog.CODE_SCHEMAS)
-        self.assertNotIn("seed", runlog.lock_fixed(h))
-        self.assertIn("runlog.py does not yet hand a schema 10 log to this module",
-                      " ".join(sec003_log.__doc__.split()))
+        self.assertEqual(runlog.SCHEMA_SEC003, sec003_log.SCHEMA)
+        self.assertIn(sec003_log.SCHEMA, runlog.CODE_SCHEMAS)
+        fixed = runlog.lock_fixed(h)
+        self.assertEqual({k: fixed[k] for k in sec003_log.lock_extra(h)}, sec003_log.lock_extra(h))
+        self.assertEqual(fixed["redaction_sha256"], h["code"]["redaction_sha256"])
+        self.assertTrue(h["lock"]["covers"].startswith(sec003_log.LOCK_COVERS + ", scorer file hash "
+                                                       f"({sec003_log.SCORER_FILE})"), h["lock"]["covers"])
+        with tempfile.TemporaryDirectory() as tmp:
+            path = write_log(good(), Path(tmp) / "run_log.jsonl")
+            with mock.patch.object(sec003_log, "check", wraps=sec003_log.check) as check:
+                self.assertEqual(runlog.check_log(path, repo=REPO), [])
+                self.assertEqual(runlog.check_log(path, repo=REPO, use_repo=False), [])
+            self.assertEqual(check.call_count, 2)
+            lines, mismatches = runlog.rescore_log(path, repo=REPO)
+            self.assertEqual(mismatches, [], lines)
+            self.assertIn("runs rescored: 8 of 8; mismatches: 0", lines)
+            self.assertTrue(runlog._no_repo_lines(path).startswith(
+                "items hash: matches (the manifest and the scorer keys in the log)"))
+            recs = good()       # both arms keep a store that matches the seed record, so only the lock differs
+            recs[0]["seed"]["seeded"]["sha256"] = sha("another seeded store")
+            recs[0]["retrieval_config"]["seeded"]["documents_sha256"] = sha("another seeded store")
+            relocked = copy.deepcopy(recs)
+            relock(relocked[0])
+            self.assertEqual(sec003_log.check(relocked), [])         # relocked, the changed header has no problem
+            changed = write_log(recs, Path(tmp) / "changed.jsonl")
+            for use_repo in (True, False):
+                self.assertEqual(runlog.check_log(changed, repo=REPO, use_repo=use_repo),
+                                 ["header: the lock hash does not match the fixed parts of the header"])
+        self.assertIn("runlog.py hands a schema 10 log to this module", " ".join(sec003_log.__doc__.split()))
+
+    def test_rescore_log_refuses_replies_for_a_schema_10_log(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = write_log(good(), Path(tmp) / "run_log.jsonl")
+            lines, mismatches = runlog.rescore_log(path, repo=REPO, replies=str(Path(tmp) / "replies.jsonl"))
+        self.assertIsNone(mismatches)
+        self.assertEqual(lines, ["not rescored: --replies is for a TP-SEC-006 or TP-SEC-002 log with store_replies "
+                                 f"hash_only, and this log is of schema {sec003_log.SCHEMA}"])
 
     def test_a_change_after_the_lock_fails_the_check(self):
         recs = good()
