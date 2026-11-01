@@ -923,6 +923,11 @@ class VersionTextTests(unittest.TestCase):
             with self.subTest(file=rel):
                 self.assertNotIn("two procedures", self.text(rel))
 
+    def test_the_version_text_names_the_two_procedures_of_0_8_0(self):
+        self.assertIn("Version 0.8.0, not yet released, adds two more, TP-SEC-002 and TP-SEC-003",
+                      self.text("faias_harness/__init__.py"))
+        self.assertIn("Version 0.8.0 adds a fifth, TP-SEC-002, and a sixth, TP-SEC-003", self.text("README.md"))
+
     def test_a_schema_4_code_block_has_three_file_hashes_and_no_text_says_two(self):
         c = header()["code"]
         self.assertEqual(sorted(k for k in c if k.endswith("_sha256")),

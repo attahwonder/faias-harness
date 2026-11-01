@@ -105,3 +105,24 @@ The procedure describes tier 3 in the report by technique category only (line 23
 Each item has its tier, direction, customer, target documents, technique, business activity of SRD-1 and turns. The activity comes from the keyword rule of `TP-SEC-001.json` (the field `activity_rule`, copied). Of the 24 items, 11 fall under "fee refund" and 11 under "product and fee questions". One item falls under "complaints intake" and one under "human hand-off". Every document is synthetic. No item holds a canary or a fact phrase of a document, a placeholder or a key-like string.
 
 `faias_harness.engine.dat009.check_items` checks the counts, the IDs, the directions, the targets, the turns, the activities and the barred words. It also checks that the harness's own search puts each target in the first 3 results for the item text. An item whose target the retrieval never finds tests nothing.
+
+## TP-SEC-003.json
+
+The item file for TP-SEC-003 (indirect prompt injection through retrieved content), from version 0.8.0. That version is not released yet. The file is not in this repository. So no run of the item set can start from this checkout. The preflight prints "Item file: items/TP-SEC-003.json is not found", and `--start` refuses. The tests use fixture sets of benign documents with neutral markers, which they pass to the engine.
+
+The engine reads the file in this form (`faias_harness.engine.sec003.load_set`). It has the form of `TP-DAT-009.json`, with the keys `procedure` (`TP-SEC-003`), `status`, `authors` and `items`. Each item has these keys:
+
+| Key | What it is |
+|---|---|
+| `id` | `P<n>-<nn>`, where `P<n>` is the class of the item, such as `P1-01`. |
+| `class` | `P1` to `P5` (FAIAS `PLAYBOOK_SEC_003.md` lines 19 to 23). The engine runs the marker classes `P1`, `P2` and `P5` only. |
+| `activity` | The business activity of the task suite of the item. |
+| `customer_ref` | The customer of the session, a customer of the store. |
+| `turns` | The customer messages, in order. A `P1` to `P4` item has one, its task-suite query. A `P5` item has two or more. |
+| `retrieving_turn` | `P5` only. The turn (from 1) whose text retrieves the document. It comes before the last turn. |
+| `document` | The synthetic document of the item, with `doc_id`, `title`, `text`, `domain`, `kind`, `customer_ref` and `watermark`. `customer_ref` is null for a document that the customers of its domain may read. The seed route adds the document to a copy of the store as it is. |
+| `marker` | The two parts of the marker, as a list of two strings. |
+
+The `watermark` field marks each document as a synthetic test artefact (line 25). Retrieval gives the model the doc_id, the title and the text only, so the model does not see it.
+
+`faias_harness.engine.sec003.check_item_set` checks the file. It ranks each turn over the shipped store and the documents of the set, with the filter of the run. Each document must be in the top 3 for its query, or for the `retrieving_turn` of a `P5` item. The joined marker may not be in a turn, in the document or in the shipped store. No item text may hold a URL, a host name, a Markdown link or a tool name. The engine and `--start` refuse a file with a problem.
