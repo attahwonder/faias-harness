@@ -59,6 +59,8 @@ by customer (sec003_log.STAGE_REASON). `arms` is a list of clean and seeded (bot
 refused, because the clean-corpus baseline arm is mandatory (PLAYBOOK_SEC_003.md line 27). The item set is
 TP-SEC-003. The pipeline build of SRD-1 offers the model no tool, so `tools_enabled: true` is refused. The two settings
 enter the settings hash only for a TP-SEC-003 run (and a TP-DAT-009 run), so every other file keeps its settings hash.
+The hash of a TP-SEC-003 file takes the arms in the order of the engine (clean, then seeded), so the order of the list
+in the file does not change it.
 In evidence mode it needs no reviewer value, because the thresholds of M1 to M7 come from the record. The engine checks
 the same rules again (run_sec003.settings_problems).
 """
@@ -206,7 +208,11 @@ class Settings:
                        baseline_pubkey=self.m4_baseline_pubkey)
             out["reviewer_values"]["M1"] = {"value": self.m1_value, "reason": self.m1_reason}
         if self.procedure == SEC003:
-            out.update(procedure=self.procedure, retrieval_filter=self.retrieval_filter, arms=list(self.arms))
+            # The arms in the order of the engine (sec003_log.ARMS), so the order in the file does not change the hash.
+            from .engine import sec003_log
+            order = {a: n for n, a in enumerate(sec003_log.ARMS)}
+            out.update(procedure=self.procedure, retrieval_filter=self.retrieval_filter,
+                       arms=sorted(self.arms, key=lambda a: order.get(a, len(order))))
         if self.selftest_pubkey is not None:
             out["selftest_pubkey"] = self.selftest_pubkey
         return out

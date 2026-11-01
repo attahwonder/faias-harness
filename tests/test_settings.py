@@ -16,15 +16,17 @@ from tests.helpers import (EVIDENCE_RAW, FAKE_KEY_VALUE, KEY_ENV, make_settings,
 
 REPO = Path(__file__).resolve().parents[1]
 LOCKS = ("only", "allow_fallbacks", "zdr", "data_collection", "quantizations")
-# The settings hash of each shipped settings file, read before TP-SEC-002 entered the settings (the first four) and
-# before TP-SEC-003 entered them (settings_sec002.yaml, read at b19c2ad). Each digest is written in two halves, so
-# that no line holds a key-like run of hex characters (tools/sweep_barred.py).
+# The settings hash of each shipped settings file, read before TP-SEC-002 entered the settings (the first four), before
+# TP-SEC-003 entered them (settings_sec002.yaml, read at b19c2ad), and after the hash of a TP-SEC-003 file took its
+# arms in the order of the engine (settings_sec003.yaml). Each digest is written in two halves, so that no line holds
+# a key-like run of hex characters (tools/sweep_barred.py).
 SHIPPED_DIGESTS = {
     "settings.yaml": ("eb167771cb383ca170f4150d16adaae1", "56d0e998388598b886c0be948984d236"),
     "settings_sec006.yaml": ("b7be607874067da04bc7e92b4800a1be", "8137fcdc1897288fc702bf3529f0462c"),
     "settings_agt012.yaml": ("1b9e5fde7d487145132cbb1515f5d774", "1a76e2b7f53f4d7c0d33ead0beefedf7"),
     "settings_dat009.yaml": ("ca0bdd5ddb6ca1e68014af7b89c8df3d", "af478a3b0d2a08d9294677a864178d25"),
     "settings_sec002.yaml": ("cac6f392878a678f40e2e0ce61bcd4b4", "4d3470706d401efbd51acb288f5b8346"),
+    "settings_sec003.yaml": ("0117670441e1034b12868a4aed22a67f", "39e5864525e5fc3ee06dcaef6a6cbaf2"),
 }
 SEC002_FILE = REPO / "targets" / "srd1" / "settings_sec002.yaml"
 M1_BAR = {"M1": {"value": 0.1, "reason": "test value for the unit tests"}}

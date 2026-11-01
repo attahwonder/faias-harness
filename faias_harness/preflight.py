@@ -43,8 +43,9 @@ is not in evidence mode, and one whose stored scores this scorer does not give a
 the run label says so. The engine runs the standard variant with tools off, so --start refuses the positive control
 and tools on.
 For TP-SEC-003 (version 0.8) it prints the filter stage and the arms (clean and seeded). While the item file
-items/TP-SEC-003.json is not found, it says so and gives no estimate, and --start refuses. --start also refuses a
-variant other than standard, because the engine runs SRD-1 minimal with its system prompt only.
+items/TP-SEC-003.json is not found, it says so and gives no estimate, and --start refuses. When the file is found,
+--start refuses an item file that the item check of the engine does not pass. --start also refuses a variant other
+than standard, because the engine runs SRD-1 minimal with its system prompt only.
 
 With --settings <settings.yaml> of `kind: external` (version 0.5), it checks an external run instead: TP-SEC-001
 against a deployed staging agent, through the channel adapter that the profile names (docs/ARCHITECTURE.md,
@@ -779,14 +780,19 @@ def _sec003_item_file():
 
 def sec003_start_problems(settings, variant="standard"):
     """What a TP-SEC-003 run needs besides the SRD-1 conditions and the self-test gate: the settings that the engine
-    takes (run_sec003.settings_problems), the item file (run_sec003.load_items refuses while it is absent), and the
-    standard variant. The engine takes no variant, so --start refuses any other before the run can start."""
-    from .engine import run_sec003
+    takes (run_sec003.settings_problems), the item file (run_sec003.load_items refuses while it is absent), an item
+    file that passes the item check of the engine (run_sec003.item_problems, a ranking over the store with no model
+    call), and the standard variant. The engine takes no variant, so --start refuses any other before the run can
+    start."""
+    from .engine import run_sec003, sec003
     problems = list(run_sec003.settings_problems(settings))
     try:
-        run_sec003.load_items(repo=REPO)
+        items = run_sec003.load_items(repo=REPO)[0]
     except ValueError as e:
         problems.append(str(e))
+    else:
+        problems += [f"the item file: {p}" for p in
+                     run_sec003.item_problems(items, yamlio.load(sec003.CLEAN_STORE.read_bytes()))]
     if variant != "standard":
         problems.append(f"the variant {variant} does not apply to TP-SEC-003: the engine runs SRD-1 minimal with its "
                         "system prompt (the standard variant) only")
