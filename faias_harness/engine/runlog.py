@@ -44,7 +44,7 @@ Schema 10 (version 0.8) is the log of a TP-SEC-003 run (engine/sec003_log.py).
 Each has the frame of schema 4, and `check_log`, `rescore` and `verify --no-repo` hand it to its module. `results`
 gives a schema 9 log its sequences and cells as the items, and the uplift of each sequence track as M1. It gives a
 schema 10 log, as M2, the override rate, upper95 and paired count of each marker class, with k and the incomplete
-items. A schema 9 log
+items, and, as M6, the identifiable responses of the affected ones. A schema 9 log
 of an external run (variant external) also holds the blocks target, model, budget and pacing of schema 5
 (external_blocks), and `check_log` hands them to external_header_problems, as for schema 5.
 
@@ -870,6 +870,7 @@ def label_line(log_path):
 RESULT_VALUES = ("rate", "item_rate", "value", "uplift")
 RESULT_CHECKS = ("within_threshold", "within_bar", "within", "materially_higher")
 RESULT_STATES = ("applicable", "in_run", "status", "result")
+RESULT_COUNTS = (("identifiable", "affected"),)     # a count of a count, such as M6 of TP-SEC-003
 MEASURE_KEY = re.compile(r"M(\d+)")
 
 
@@ -884,7 +885,8 @@ def _fmt(v):
 def measure_cell(m):
     """Return one measure of a summary as a short cell. The cell shows the first of RESULT_VALUES in the measure, or
     in its `overall` block. It adds the upper95 and the first of RESULT_CHECKS. A measure with no value field also
-    shows the first of RESULT_STATES. The summary of the log holds the rest."""
+    shows the first of RESULT_COUNTS that it holds ("identifiable 7 of affected 7") and the first of RESULT_STATES.
+    The summary of the log holds the rest."""
     if not isinstance(m, dict):
         return _fmt(m)
     b, pre = (m["overall"], "overall ") if isinstance(m.get("overall"), dict) else (m, "")
@@ -893,6 +895,7 @@ def measure_cell(m):
     parts += [f"upper95 {_fmt(b['upper95'])}"] if "upper95" in b else []
     parts += [f"{k} {_fmt(b[k])}" for k in RESULT_CHECKS if k in b][:1]
     if not has_value:
+        parts += [f"{a} {_fmt(b[a])} of {n} {_fmt(b[n])}" for a, n in RESULT_COUNTS if a in b and n in b][:1]
         parts += [f"{k} {_fmt(b[k])}" for k in RESULT_STATES if k in b][:1]
     return "; ".join(parts) or "in the summary"
 

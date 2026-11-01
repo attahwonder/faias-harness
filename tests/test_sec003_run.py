@@ -11,7 +11,8 @@ it gives a plain benign reply. So the seeded arm shows the markers and the clean
 document at turn 1 and its marker at turn 2, through the earlier reply, as on SRD-1 (sec003.score_run). P1-01 gets its
 marker in its first seeded session only, so its three sessions differ (k = 3). P2-01 never gets its marker, and each
 of its replies holds a staged placeholder of SRD-1's system prompt, so the redaction shows in the log. With `fill`, the
-stand-in pads each reply with its plain sentence up to the output limit, for the test of the estimate.
+stand-in pads each reply with its plain sentence up to the output limit, for the test of the estimate. With `fail`, it
+answers each turn of the named items with HTTP 400, which SRD-1's gateway does not retry, for the test of a send error.
 
 The settings of a run come from a settings file (faias_harness/settings.py). SettingsTests and PreflightTests check
 the TP-SEC-003 settings, the shipped file targets/srd1/settings_sec003.yaml and the preflight. They make no model call.
@@ -32,10 +33,12 @@ from unittest import mock
 import yaml
 
 from faias_harness import preflight, selftest, settings as sm
+from faias_harness.adapters.srd1_http import Srd1ChatError, Srd1ChatTarget
 from faias_harness.engine import run_sec003, runlog, sec001, sec003, sec003_log, sec006, spike
 from tests.helpers import (FAKE_KEY_VALUE, KEY_ENV, StandInModelHost, make_settings, no_outside_network, raw_settings,
                            shared_selftest)
 from tests.test_sec003 import CLEAN_FILE, FIXTURE_ITEMS, fixture_set
+from tests.test_sec003_log import assert_each_fault_gives_its_problems, seeded_faults
 
 REPO = Path(__file__).resolve().parents[1]
 ENV = {KEY_ENV: FAKE_KEY_VALUE}
@@ -70,12 +73,14 @@ def tearDownModule():
 class Responder:
     """The stand-in model (the module text). It knows each item by the text of the customer's last message."""
 
-    def __init__(self, items, placeholder=None, fill=None):
+    def __init__(self, items, placeholder=None, fill=None, fail=()):
         self.by_turn = {t: i for i in items for t in i.turns}
-        self.placeholder, self.shown, self.fill = placeholder, Counter(), fill
+        self.placeholder, self.shown, self.fill, self.fail = placeholder, Counter(), fill, tuple(fail)
 
     def __call__(self, user, nth, messages):
         item = self.by_turn[user]
+        if item.id in self.fail:        # an error response of the stand-in host (tests/helpers.StandInModelHost)
+            return {"status": 400, "body": {"error": {"code": 400, "message": "a test error"}}}
         a, b = item.marker
         earlier = [m.get("content") or "" for m in messages[:-1] if m["role"] in ("system", "assistant")]
         reply = PLAIN
@@ -92,8 +97,8 @@ class Responder:
         return reply
 
 
-def host(items=None, fill=None, **kw):
-    return StandInModelHost(respond=Responder(items or _FIXTURE["items"], _FIXTURE["placeholder"][1], fill),
+def host(items=None, fill=None, fail=(), **kw):
+    return StandInModelHost(respond=Responder(items or _FIXTURE["items"], _FIXTURE["placeholder"][1], fill, fail),
                             with_messages=True, **kw)
 
 
@@ -312,6 +317,13 @@ class StandardRunTests(unittest.TestCase):
             _, mismatches = runlog.rescore_log(write(changed, Path(tmp) / "b.jsonl"), repo=REPO)
         self.assertEqual([m.split(":")[0] for m in mismatches], [where])
 
+    def test_each_seeded_fault_gives_its_problems_in_a_log_that_the_engine_wrote(self):
+        """The seeded faults of tests/test_sec003_log.py (seeded_faults), each on a copy of the log of the fixture run
+        (k = 3, 12 records in each arm), one subTest each: each gives its problems, as on the hand-made log."""
+        self.assertEqual(sec003_log.check(self.recs, repo=REPO), [])
+        self.assertEqual((self.recs[0]["corpus"]["runs_per_item"], len(seeded_faults(self.recs))), (3, 45))
+        assert_each_fault_gives_its_problems(self, self.recs)
+
     def test_a_record_holds_the_turn_hashes_the_calls_and_the_redacted_lines_only(self):
         items = {i.id: i for i in _FIXTURE["items"]}
         data = self.res.log_path.read_bytes().decode("utf-8")
@@ -469,6 +481,18 @@ class StandardRunTests(unittest.TestCase):
         self.assertEqual(refused, [])
         self.assertIn(f"| {want} |", lines[4])
 
+    def test_the_results_table_shows_m6_as_identifiable_of_affected(self):
+        """M6 has no value field: its cell gives the identifiable responses of the affected ones (runlog.measure_cell,
+        RESULT_COUNTS), not "in the summary"."""
+        m6 = self.recs[-1]["measures"]["M6"]
+        self.assertEqual((m6["affected"], m6["identifiable"]), (7, 7))
+        self.assertEqual(runlog.measure_cell(m6), "identifiable 7 of affected 7")
+        self.assertEqual(runlog.measure_cell({**m6, "identifiable": 5}), "identifiable 5 of affected 7")
+        self.assertEqual(runlog.result_row(self.recs, "x")["M6"], "identifiable 7 of affected 7")
+        lines, refused = runlog.results([self.res.log_path], _FIXTURE["pub"], repo=REPO)
+        self.assertEqual(refused, [])
+        self.assertIn("| identifiable 7 of affected 7 |", lines[4])
+
     def test_a_turn_sends_its_passages_with_its_own_model_call_only(self):
         """The limit in the label is true at orchestrator.py (Orchestrator.handle): the P5 document went to the model at
         turn 1, and the requests of turn 2 hold no text of it, only the earlier reply."""
@@ -511,6 +535,79 @@ class StandardRunTests(unittest.TestCase):
 
 
 class StopTests(unittest.TestCase):
+    def ended(self, res, status, error=None):
+        """The summary states how the run ended (status, error, measures_complete). The log passes check_log with and
+        without the repository and rescore_log, and its signature verifies. Returns the records."""
+        recs = records(res)
+        s = recs[-1]
+        self.assertEqual((res.status, s["type"], s["status"], s["error"], s["measures_complete"]),
+                         (status, "summary", status, error, status == "complete"))
+        for use_repo in (True, False):
+            self.assertEqual(runlog.check_log(res.log_path, repo=REPO, use_repo=use_repo), [])
+            ok, msg = runlog.verify_log(res.log_path, res.sig_path, _FIXTURE["pub"], repo=REPO, use_repo=use_repo)
+            self.assertTrue(ok, msg)
+        lines, mismatches = runlog.rescore_log(res.log_path, repo=REPO)
+        self.assertEqual(mismatches, [], lines)
+        return recs
+
+    def test_a_cap_reached_after_the_first_session_stops_the_run(self):
+        """Each model call of the stand-in costs the whole cap (150,000 input tokens at USD 1 a million), so the
+        second session meets the cap before its first call. The log holds the record of the first session, a
+        run_stopped record and the summary. The item of the first session has 1 of its 3 sessions, so M2 leaves it
+        out and counts it."""
+        res, h = run("cap", stand_in=host(usage=(150_000, 0)), settings=sec_settings(cap_usd=0.15))
+        recs = self.ended(res, "stopped_at_cap")
+        self.assertEqual([r["type"] for r in recs], ["header", "run", "run_stopped", "summary"])
+        self.assertEqual((recs[2]["reason"], recs[2]["arm"], recs[2]["error"]), ("stopped_at_cap", "clean", None))
+        self.assertEqual((len(h.requests), recs[-1]["model_calls"], recs[-1]["cost_usd"]), (1, 1, 0.15))
+        m2 = recs[-1]["measures"]["M2"]
+        self.assertEqual(m2["items_incomplete"], {"seeded": 0, "clean": 1})
+        self.assertEqual(m2["by_class"]["P1"]["clean"]["items"], 0)
+
+    def test_a_send_error_gives_a_record_with_the_lines_so_far_and_the_run_goes_on(self):
+        """The stand-in answers each turn of P2-01 with HTTP 400. SRD-1 writes a turn_error line, and the send fails.
+        The engine writes the record of the session with the lines so far (the retrieval line, no turn line), so the
+        session has no result, and the run goes on to the end."""
+        res, h = run("send_error", stand_in=host(fail=("P2-01",)))
+        recs = self.ended(res, "complete")
+        runs = [r for r in recs if r.get("type") == "run"]
+        self.assertEqual((len(runs), len(h.requests)), (24, 30))
+        failed = [r for r in runs if r["item"] == "P2-01"]
+        self.assertEqual(len(failed), 6)                # three sessions on each arm
+        for r in failed:
+            with self.subTest(arm=r["arm"], run=r["run"]):
+                self.assertEqual([(x["kind"], x["turn"]) for x in r["lines"]], [("retrieval", 1)])
+                self.assertEqual((r["no_reply_turns"], r["marker"], r["calls"]), ([1], False, []))
+        for arm in sec003_log.ARMS:
+            entries = [json.loads(x) for x in (res.run_dir / "target" / f"srd1_trace_{arm}.jsonl")
+                       .read_text(encoding="utf-8").splitlines() if x.strip()]
+            errors = [e for e in entries if e.get("kind") == "turn_error"]
+            self.assertEqual([(e["error"], e["cap_reached"]) for e in errors], [("GatewayError", False)] * 3)
+        p2 = recs[-1]["measures"]["M2"]["by_class"]["P2"]
+        self.assertEqual((p2["seeded"]["items"], p2["seeded"]["items_without_result"],
+                          p2["clean"]["items_without_result"], p2["override_rate"]), (0, 1, 1, None))
+        self.assertEqual(recs[-1]["measures"]["M2"]["by_class"]["P1"]["override_rate"], 1.0)    # the others go on
+
+    def test_an_engine_error_stops_the_run_with_the_error_class_only(self):
+        """SRD-1 refuses to open the second session (an Srd1ChatError, as for an HTTP 500 of SRD-1). The run stops: a
+        run_stopped record and the summary name the error class, never its message."""
+        real, opened = Srd1ChatTarget.open_session, []
+
+        def open_session(target, customer_ref=None):
+            opened.append(customer_ref)
+            if len(opened) == 2:
+                raise Srd1ChatError("SRD-1 returned HTTP 500 (a test error)")
+            return real(target, customer_ref)
+        with mock.patch.object(Srd1ChatTarget, "open_session", open_session):
+            res, h = run("engine_error")
+        recs = self.ended(res, "stopped_error", "Srd1ChatError")
+        self.assertEqual([r["type"] for r in recs], ["header", "run", "run_stopped", "summary"])
+        self.assertEqual((recs[2]["reason"], recs[2]["arm"], recs[2]["error"]),
+                         ("stopped_error", "clean", "Srd1ChatError"))
+        self.assertNotIn(b"a test error", res.log_path.read_bytes())
+        self.assertEqual((len(h.requests), recs[-1]["model_calls"]), (1, 1))
+        self.assertEqual(recs[-1]["measures"]["M2"]["items_incomplete"], {"seeded": 0, "clean": 1})
+
     def test_in_evidence_mode_a_host_mismatch_stops_the_run(self):
         res, _ = run("host", items=_FIXTURE["items"][:1], stand_in=host(provider="OtherHost"))
         self.assertEqual(res.status, "stopped_host_mismatch")
@@ -523,6 +620,37 @@ class StopTests(unittest.TestCase):
         self.assertEqual(runlog.check_log(res.log_path, repo=REPO), [])
         _, mismatches = runlog.rescore_log(res.log_path, repo=REPO)
         self.assertEqual(mismatches, [])
+
+
+class EngineTests(unittest.TestCase):
+    def test_the_inspect_engine_gives_the_facts_of_the_direct_engine(self):
+        """The Inspect path (engine "inspect"): Inspect drives the runs with the item views of run_sec003._Sample. The
+        facts of each item and arm are those of the direct engine; the run numbers may come in another order."""
+        if not spike.inspect_available():       # run_all needs a plain OK, so this test says so and does not skip
+            print("[test note] engines: inspect_ai is not installed here, so the TP-SEC-003 Inspect test checks "
+                  "nothing. The harness installs nothing; a checkout with inspect_ai compares the two engines.",
+                  flush=True)
+            return
+
+        def facts(res):
+            return sorted(runlog.canonical({f: r[f] for f in ("arm", *sec003_log.FACTS)})
+                          for r in records(res) if r.get("type") == "run")
+        a, _ = run("engine_direct", engine="direct")
+        b, _ = run("engine_inspect", engine="inspect")
+        self.assertEqual((a.status, b.status), ("complete", "complete"))
+        self.assertEqual(facts(a), facts(b))
+        self.assertEqual((records(a)[0]["run_engine"]["name"], records(b)[0]["run_engine"]["name"]),
+                         ("direct", "inspect_ai"))
+        self.assertEqual(records(a)[-1]["measures"]["M2"], records(b)[-1]["measures"]["M2"])
+        self.assertEqual(runlog.check_log(b.log_path, repo=REPO), [])
+        self.assertEqual(runlog.rescore_log(b.log_path, repo=REPO)[1], [])
+        # The Inspect log of each arm holds the SHA-256 of each turn (_Sample), never a turn text or a document text.
+        texts = [t for i in FIXTURE_ITEMS for t in i["turns"]] + [i["document"]["text"] for i in FIXTURE_ITEMS]
+        for arm in sec003_log.ARMS:
+            engine = records(b)[-1]["arms"][arm]["run_engine"]
+            self.assertEqual(engine["name"], "inspect_ai")
+            data = (b.run_dir / engine["log_file"]).read_text(encoding="utf-8")
+            self.assertTrue(all(t not in data for t in texts), arm)
 
 
 class SettingsTests(unittest.TestCase):
