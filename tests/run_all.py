@@ -28,7 +28,9 @@ Steps:
 Step 4 also checks the shipped TP-DAT-009 file. The preflight accepts it, and its item set check finds 0 problems.
 Its --start refuses without a self-test that passes. It also refuses the display filter in the standard variant.
 It checks the shipped TP-SEC-002 file too. The preflight accepts it and prints BASELINE REQUIRED. Its --start refuses
-without a baseline log.
+without a baseline log. It checks the shipped TP-SEC-003 file too. The preflight accepts it and prints the stage, the
+arms and that the item file is not found, with no estimate. Its --start refuses without the item file and without a
+self-test that passes.
 
 Steps 1 and 2 run first, one after the other. Step 1 rewrites records/, and the later steps read it. Steps 3
 to 8 then run at the same time, one thread each. Each step keeps its output in its own buffer, and run_all prints the
@@ -152,6 +154,7 @@ def settings_checks(tmp, att):
           "refused; --start refuses without the key variable; TP-AGT-012 --start refuses without a self-test that passes")
     dat009_checks(tmp, base, env_no_runs)
     sec002_checks(base)
+    sec003_checks(base, env_no_runs)
 
 
 def sec002_checks(base):
@@ -168,6 +171,26 @@ def sec002_checks(base):
     expect(p.returncode == 2 and "START REFUSED" in p.stdout and "  - BASELINE REQUIRED" in p.stdout,
            f"TP-SEC-002 --start without a baseline was not refused: exit {p.returncode}, {p.stdout[-400:]}")
     print("   TP-SEC-002: explore file accepted with BASELINE REQUIRED; --start refuses without a baseline")
+
+
+def sec003_checks(base, env_no_runs):
+    """The checks of the shipped TP-SEC-003 settings. The preflight accepts them, prints the stage, the arms and that
+    the item file is not found, gives no estimate, and exits 0. Then --start refuses: the item file is not found, and
+    no self-test log passes (FAIAS_HARNESS_RUNS is emptied). No model call, no key."""
+    shipped = "targets/srd1/settings_sec003.yaml"
+    rc, out = preflight(base, "--settings", shipped)
+    expect(rc == 0 and "Engine run: TP-SEC-003 on SRD-1 minimal, item set TP-SEC-003" in out
+           and "Retrieval: filter stage pre_retrieval; arms clean, seeded" in out
+           and "Item file: items/TP-SEC-003.json is not found" in out and "Worst-case estimate: not available" in out,
+           f"the shipped TP-SEC-003 settings were not accepted: exit {rc}, {out[-400:]}")
+    p = subprocess.run(PY + ["-m", "faias_harness.preflight", "--profile", str(base), "--settings", shipped, "--start"],
+                       cwd=REPO, env=env_no_runs, capture_output=True, text=True, encoding="utf-8", input="")
+    expect(p.returncode == 2 and "START REFUSED" in p.stdout and "the item file items/TP-SEC-003.json is not found"
+           in p.stdout and "isolation self-test log" in p.stdout,
+           f"TP-SEC-003 --start without the item file and a self-test was not refused: exit {p.returncode}, "
+           f"{p.stdout[-400:]}")
+    print("   TP-SEC-003: explore file accepted; the item file is not found, so no estimate; --start refuses without "
+          "the item file and without a passing self-test")
 
 
 def dat009_checks(tmp, base, env_no_runs):

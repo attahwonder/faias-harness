@@ -11,21 +11,29 @@ it gives a plain benign reply. So the seeded arm shows the markers and the clean
 document at turn 1 and its marker at turn 2, through the earlier reply, as on SRD-1 (sec003.score_run). P1-01 gets its
 marker in its first seeded session only, so its three sessions differ (k = 3). P2-01 never gets its marker, and each
 of its replies holds a staged placeholder of SRD-1's system prompt, so the redaction shows in the log.
+
+The settings of a run come from a settings file (faias_harness/settings.py). SettingsTests and PreflightTests check
+the TP-SEC-003 settings, the shipped file targets/srd1/settings_sec003.yaml and the preflight. They make no model call.
 """
 import contextlib
 import copy
 import dataclasses
+import inspect
 import io
 import json
 import tempfile
 import unittest
 from collections import Counter
 from pathlib import Path
+from types import SimpleNamespace
 from unittest import mock
 
-from faias_harness import selftest
+import yaml
+
+from faias_harness import preflight, selftest, settings as sm
 from faias_harness.engine import run_sec003, runlog, sec001, sec003, sec003_log, sec006, spike
-from tests.helpers import FAKE_KEY_VALUE, KEY_ENV, StandInModelHost, make_settings, no_outside_network, shared_selftest
+from tests.helpers import (FAKE_KEY_VALUE, KEY_ENV, StandInModelHost, make_settings, no_outside_network, raw_settings,
+                           shared_selftest)
 from tests.test_sec003 import CLEAN_FILE, FIXTURE_ITEMS, fixture_set
 
 REPO = Path(__file__).resolve().parents[1]
@@ -84,10 +92,18 @@ def host(items=None, **kw):
                             with_messages=True, **kw)
 
 
+SEC = {"procedure": sec003.TP, "item_set": sec003.TP, "retrieval_filter": "pre_retrieval", "arms": ["clean", "seeded"]}
+SHIPPED = REPO / "targets" / "srd1" / "settings_sec003.yaml"
+
+
 def sec_settings(**kw):
-    """Settings for a TP-SEC-003 run. The settings file does not take TP-SEC-003 yet, so the fields are set here."""
-    base = {"procedure": sec003.TP, "retrieval_filter": "pre_retrieval", "arms": ("clean", "seeded")}
-    return dataclasses.replace(make_settings(runs_per_item=3, cap_usd=20.0), **{**base, **kw})
+    """Settings for a TP-SEC-003 run, loaded from a settings file (the evidence form of tests/helpers.raw_settings).
+    A refusal test changes a field after the load, because the loader refuses the faulty values too
+    (SettingsTests.test_the_loader_and_the_engine_refuse_the_same_faulty_files)."""
+    path = Path(_FIXTURE["tmp"].name) / "settings_sec003.yaml"
+    path.write_text(yaml.safe_dump(raw_settings(**SEC, runs_per_item=3, cap_usd=20.0)), encoding="utf-8")
+    s = sm.load_settings(path)
+    return dataclasses.replace(s, **kw) if kw else s
 
 
 def run(name, items=FIXTURE, *, stand_in=None, settings=None, **kw):
@@ -200,6 +216,20 @@ class RefusalTests(unittest.TestCase):
             items, item_set, authors = run_sec003.load_items(repo=REPO)
         self.assertEqual(([i.id for i in items], item_set, authors),
                          ([i["id"] for i in FIXTURE_ITEMS], sec003_log.ITEM_SET, "a test fixture"))
+
+    def test_a_context_assembly_site_that_is_not_found_refuses_the_run(self):
+        """A copy of the orchestrator file whose request line has other text: context_assembly raises ValueError, so
+        the engine writes no run log."""
+        text = (REPO / sec003_log.ORCHESTRATOR_FILE).read_text(encoding="utf-8")
+        site = sec003_log.ASSEMBLY_SITES[2][2]
+        self.assertEqual(text.count(site), 1)
+        moved = Path(_FIXTURE["tmp"].name) / "orchestrator_moved.py"
+        moved.write_text(text.replace(site, site.replace("history[at:]", "history[at :]")), encoding="utf-8")
+        with mock.patch.object(sec003_log, "ORCHESTRATOR_FILE", str(moved)):
+            with self.assertRaises(ValueError) as cm:
+                sec003_log.context_assembly({a: {} for a in sec003_log.ARMS}, REPO)
+            self.assertIn("no one line of Orchestrator.handle holds", str(cm.exception))
+            self.refused("no_site", ValueError, ["the context assembly of SRD-1 is not where the harness reads it"])
 
 
 class StandardRunTests(unittest.TestCase):
@@ -359,6 +389,55 @@ class StandardRunTests(unittest.TestCase):
         self.assertTrue(h["label"].startswith(sec001.LABELS["spike"]))
         self.assertEqual(self.recs[-1]["label"], h["label"])
 
+    def main(self, *argv):
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out):
+            code = runlog.main(list(argv))
+        return code, out.getvalue()
+
+    def test_verify_and_rescore_pass_through_the_command_line_and_rescore_refuses_replies(self):
+        log, sig = str(self.res.log_path), str(self.res.sig_path)
+        code, text = self.main("verify", "--log", log, "--sig", sig, "--pubkey", str(_FIXTURE["pub"]))
+        self.assertEqual(code, 0, text)
+        code, text = self.main("verify", "--log", log, "--sig", sig, "--no-repo")
+        self.assertEqual(code, 0, text)
+        self.assertIn("items hash: matches (the manifest and the scorer keys in the log)", text)
+        code, text = self.main("rescore", "--log", log)
+        self.assertEqual(code, 0, text)
+        self.assertIn("runs rescored: 24 of 24; mismatches: 0", text)
+        code, text = self.main("rescore", "--log", log, "--replies", str(self.res.run_dir / "no_store.jsonl"))
+        self.assertEqual(code, 2, text)
+        self.assertIn("not rescored: --replies is for a TP-SEC-006 or TP-SEC-002 log", text)
+
+    def test_the_results_table_shows_m2_for_each_marker_class(self):
+        """The override rate, upper95 and the paired count of each marker class, with k and the incomplete items."""
+        by_class = self.recs[-1]["measures"]["M2"]["by_class"]
+        want = "; ".join([f"P1: override_rate 1, upper95 {runlog._fmt(by_class['P1']['upper95'])}, seeded_retrieved 2",
+                          f"P2: override_rate 0, upper95 {runlog._fmt(by_class['P2']['upper95'])}, seeded_retrieved 1",
+                          f"P5: override_rate 1, upper95 {runlog._fmt(by_class['P5']['upper95'])}, seeded_retrieved 1",
+                          "runs_per_item 3", "items_incomplete seeded 0, clean 0"])
+        self.assertEqual(runlog.result_row(self.recs, "x")["M2"], want)
+        lines, refused = runlog.results([self.res.log_path], _FIXTURE["pub"], repo=REPO)
+        self.assertEqual(refused, [])
+        self.assertIn(f"| {want} |", lines[4])
+
+    def test_a_turn_sends_its_passages_with_its_own_model_call_only(self):
+        """The limit in the label is true at orchestrator.py (Orchestrator.handle): the P5 document went to the model at
+        turn 1, and the requests of turn 2 hold no text of it, only the earlier reply."""
+        self.assertIn("keeps them out of the session history, so a delayed trigger (P5) acts at a later turn only "
+                      "through the model's own earlier reply", self.recs[0]["label"])
+        p5 = next(i for i in _FIXTURE["items"] if i.cls == sec003.DELAYED)
+        doc = p5.document["text"]
+
+        def turn(req):
+            return p5.turns.index(req["body"]["messages"][-1]["content"]) + 1 \
+                if req["body"]["messages"][-1]["content"] in p5.turns else None
+        sent = {n: [r["body"]["messages"] for r in self.host.requests if turn(r) == n] for n in (1, 2)}
+        self.assertEqual((len(sent[1]), len(sent[2])), (6, 6))         # three sessions on each arm
+        self.assertEqual(sum(any(doc in (m.get("content") or "") for m in msgs) for msgs in sent[1]), 3)   # seeded
+        self.assertFalse(any(doc in (m.get("content") or "") for msgs in sent[2] for m in msgs))
+        self.assertTrue(all([m["role"] for m in msgs].count("assistant") == 1 for msgs in sent[2]))
+
 
 class StopTests(unittest.TestCase):
     def test_in_evidence_mode_a_host_mismatch_stops_the_run(self):
@@ -372,6 +451,185 @@ class StopTests(unittest.TestCase):
         self.assertEqual(runlog.check_log(res.log_path, repo=REPO), [])
         _, mismatches = runlog.rescore_log(res.log_path, repo=REPO)
         self.assertEqual(mismatches, [])
+
+
+class SettingsTests(unittest.TestCase):
+    """The TP-SEC-003 settings (faias_harness/settings.py) and the shipped file."""
+
+    def test_the_shipped_file_loads_with_the_defaults(self):
+        s = sm.load_settings(SHIPPED)
+        self.assertEqual((s.procedure, s.item_set, s.mode, s.retrieval_filter, s.arms, s.tools_enabled),
+                         ("TP-SEC-003", "TP-SEC-003", "explore", "pre_retrieval", ("clean", "seeded"), False))
+        self.assertEqual(run_sec003.settings_problems(s), [])
+        raw = raw_settings(procedure="TP-SEC-003")          # no item_set, stage or arms: the defaults of the procedure
+        raw.pop("item_set")
+        self.assertEqual(sm.validate(raw), [])
+        self.assertEqual((sm.from_raw(raw).item_set, sm.from_raw(raw).arms), ("TP-SEC-003", ("clean", "seeded")))
+        self.assertEqual(sm.validate(raw_settings(**{**SEC, "retrieval_filter": "pre_ranking"})), [])
+
+    def test_the_loader_and_the_engine_refuse_the_same_faulty_files(self):
+        """Each faulty file is refused by the settings loader and, read as it is, by run_sec003.settings_problems.
+        The shipped file passes both."""
+        cases = [({"retrieval_filter": "post_generation"}, sec003_log.STAGE_REASON),
+                 ({"arms": ["seeded"]}, "line 27"), ({"arms": ["clean"]}, "clean and seeded"),
+                 ({"arms": ["clean", "seeded", "tool"]}, "clean and seeded"),
+                 ({"arms": ["pipeline", "tool"]}, "line 27"),
+                 ({"tools_enabled": True, "tool_key_env": "FAIAS_TOOL_KEY"}, "no tool"),
+                 ({"item_set": "spike"}, "item"), ({"item_set": "TP-DAT-009"}, "item")]
+        with tempfile.TemporaryDirectory() as tmp:
+            for n, (change, words) in enumerate(cases):
+                with self.subTest(change=change):
+                    path = Path(tmp) / f"faulty_{n}.yaml"
+                    path.write_text(yaml.safe_dump(raw_settings(**{**SEC, **change})), encoding="utf-8")
+                    with self.assertRaises(sm.SettingsError) as cm:
+                        sm.load_settings(path)
+                    self.assertTrue(any(words in p for p in cm.exception.problems), cm.exception.problems)
+                    engine = run_sec003.settings_problems(sm.from_raw(yaml.safe_load(path.read_text(encoding="utf-8"))))
+                    self.assertTrue(any(words in p for p in engine), engine)
+        self.assertEqual(run_sec003.settings_problems(sm.load_settings(SHIPPED)), [])
+
+    def test_the_two_keys_enter_the_hash_of_a_sec003_file_only(self):
+        a = make_settings(**SEC)
+        self.assertEqual({k: a.canonical()[k] for k in ("procedure", "retrieval_filter", "arms")},
+                         {"procedure": "TP-SEC-003", "retrieval_filter": "pre_retrieval", "arms": ["clean", "seeded"]})
+        self.assertNotEqual(make_settings(**{**SEC, "retrieval_filter": "pre_ranking"}).digest(), a.digest())
+        self.assertEqual(make_settings(**{k: v for k, v in SEC.items() if k != "arms"}).digest(), a.digest())
+        for s in (make_settings(), make_settings(procedure="TP-SEC-002", item_set="TP-SEC-002", mode="explore",
+                                                 reviewer_values=None)):
+            for k in ("retrieval_filter", "arms"):
+                self.assertNotIn(k, s.canonical())
+
+    def test_the_tp_sec_003_keys_are_refused_for_other_procedures_and_the_others_for_it(self):
+        others = {"TP-SEC-001": {}, "TP-SEC-006": {"item_set": "TP-SEC-006"}, "TP-AGT-012": {"item_set": "TP-AGT-012"},
+                  "TP-SEC-002": {"item_set": "TP-SEC-002"}}
+        for proc, extra in others.items():
+            for k, v in (("retrieval_filter", "pre_retrieval"), ("arms", ["clean", "seeded"])):
+                with self.subTest(procedure=proc, key=k):
+                    self.assertIn(f"{k} applies to the procedures TP-DAT-009 and TP-SEC-003 only",
+                                  sm.validate(raw_settings(procedure=proc, **extra, **{k: v})))
+        for k, v in (("delegation_credential", "user"), ("halt_on_crossing", False), ("store_replies", "full"),
+                     ("m4_baseline_log", "x"), ("containment", {"runs": 3})):
+            with self.subTest(key=k):
+                self.assertTrue(any(k in p and "only" in p for p in sm.validate(raw_settings(**SEC, **{k: v}))))
+        dat = {"procedure": "TP-DAT-009", "item_set": "TP-DAT-009", "tools_enabled": True,
+               "tool_key_env": "FAIAS_TOOL_KEY"}
+        self.assertIn("arms must be a non-empty list of pipeline and tool, each once",
+                      sm.validate(raw_settings(**dat, arms=["clean", "seeded"])))
+
+    def test_evidence_mode_needs_no_reviewer_value_for_sec003(self):
+        raw = raw_settings(**SEC)
+        raw.pop("reviewer_values")
+        self.assertEqual(sm.validate(raw), [])
+
+    def test_an_external_settings_file_with_tp_sec_003_is_refused(self):
+        raw = yaml.safe_load((REPO / "targets" / "examples" / "external_settings.yaml").read_text(encoding="utf-8"))
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "external_sec003.yaml"
+            path.write_text(yaml.safe_dump({**raw, "procedure": "TP-SEC-003"}), encoding="utf-8")
+            with self.assertRaises(sm.SettingsError) as cm:
+                sm.load_settings(path)
+        self.assertIn("procedure must be one of TP-SEC-001, TP-SEC-002 for an external run", cm.exception.problems)
+
+
+class PreflightTests(unittest.TestCase):
+    """The preflight with a TP-SEC-003 settings file. No model call: the probes and the executor are stand-ins."""
+
+    def setUp(self):
+        self.dir = Path(tempfile.mkdtemp(dir=_FIXTURE["tmp"].name))
+        att = self.dir / "attestation.txt"
+        att.write_text("Test system, synthetic data only.\n", encoding="utf-8")
+        doc = yaml.safe_load((REPO / "targets" / "srd1" / "profile.yaml").read_text(encoding="utf-8"))
+        doc["attestation_file"] = str(att)
+        self.profile = self.dir / "profile.yaml"
+        self.profile.write_text(yaml.safe_dump(doc), encoding="utf-8")
+        self.settings = self.dir / "settings.yaml"
+        self.settings.write_text(yaml.safe_dump(raw_settings(**SEC)), encoding="utf-8")
+        self.empty = self.dir / "no_selftest"
+        self.empty.mkdir()
+        self.key = runlog.make_key(self.dir / "keys", repo=REPO)[0]
+        self.selftest = ["--selftest-log", str(_FIXTURE["log"]), "--selftest-pubkey", str(_FIXTURE["pub"])]
+
+    def main(self, *argv, calls=None):
+        class G:
+            class cap:
+                spent_usd = 0.0
+
+        def executor(**kw):
+            calls.append(kw)
+            return SimpleNamespace(status="complete", log_path="log", sig_path="sig",
+                                   summary={"label": "x", "model_calls": 0, "cost_usd": 0})
+
+        probes = {"judge_family": "not applicable", "tool_call": {"ok": True}, "reasoning_text": {"present": False},
+                  "cost_usd": 0.0}
+        out = io.StringIO()
+        with no_outside_network(), mock.patch.dict("os.environ", {KEY_ENV: FAKE_KEY_VALUE}), \
+                mock.patch.object(spike, "run_probes", lambda g: probes), contextlib.redirect_stdout(out):
+            rc = preflight.main(["--profile", str(self.profile), "--settings", str(self.settings), *argv],
+                                input_fn=lambda p: "yes", gateway_factory=lambda s: G(), executor=executor,
+                                inspect_check=lambda: None)
+        return rc, out.getvalue()
+
+    def test_the_report_prints_the_sec003_lines_and_no_estimate_while_the_item_file_is_absent(self):
+        rc, out = self.main(*self.selftest)
+        self.assertEqual(rc, 0, out)
+        for text in ("Engine run: TP-SEC-003 on SRD-1 minimal, item set TP-SEC-003",
+                     "M1 to M7: from records/TP-SEC-003.yaml, not from the settings",
+                     "Retrieval: filter stage pre_retrieval; arms clean, seeded",
+                     "Item file: items/TP-SEC-003.json is not found",
+                     "Worst-case estimate: not available (the item file is not found); cap: USD 1.0",
+                     "Isolation self-test: PASS at", "Probes: not run"):
+            self.assertIn(text, out)
+        self.assertNotIn(FAKE_KEY_VALUE, out)
+
+    def test_start_refuses_without_the_item_file_and_without_a_passing_self_test(self):
+        calls = []
+        rc, out = self.main("--start", "--sign-key", str(self.key), "--selftest-log", str(self.empty), calls=calls)
+        self.assertEqual((rc, calls), (2, []), out)
+        refused = out.split("START REFUSED. No run starts. Fix these points first:\n")[1].splitlines()
+        self.assertIn("  - TP-SEC-003: the item file items/TP-SEC-003.json is not found, so no run of the shipped set "
+                      "can start", refused)
+        self.assertIn("  - TP-SEC-003 needs a passing isolation self-test log; none found (run faias_harness.selftest)",
+                      refused)
+        self.assertEqual(preflight.sec003_start_problems(sm.load_settings(self.settings)),
+                         ["TP-SEC-003: the item file items/TP-SEC-003.json is not found, so no run of the shipped set "
+                          "can start"])
+        # With a passing self-test, the item file alone refuses the run.
+        rc, out = self.main("--start", "--sign-key", str(self.key), *self.selftest, calls=calls)
+        self.assertEqual((rc, calls), (2, []), out)
+        self.assertEqual(out.split("Fix these points first:\n")[1].splitlines(),
+                         ["  - TP-SEC-003: the item file items/TP-SEC-003.json is not found, so no run of the shipped "
+                          "set can start"])
+
+    def test_with_the_item_file_the_run_starts_with_its_engine_and_no_variant(self):
+        """With an item file (the fixture file in its place), the preflight gives an estimate and the start line, and
+        hands the run to the executor without `variant`, with the self-test log and key. Each keyword is one that
+        run_sec003.execute takes, so no TypeError can reach the run. Any other variant is refused."""
+        calls = []
+        with mock.patch.object(sec003, "ITEM_FILE", str(_FIXTURE["file"])):
+            rc, out = self.main("--start", "--sign-key", str(self.key), *self.selftest, calls=calls)
+            self.assertEqual(rc, 0, out)
+            for text in ("Worst-case estimate for the whole run: USD",
+                         "opens 24 sessions on 2 arms and sends at most 30 model calls (3 runs per item)",
+                         f"The result is labelled '{sec003_log.LABELS[sec003_log.ITEM_SET]}'."):
+                self.assertIn(text, out)
+            self.assertEqual(len(calls), 1)
+            self.assertNotIn("variant", calls[0])
+            self.assertEqual((calls[0]["selftest_log"], calls[0]["selftest_pubkey"]),
+                             (str(_FIXTURE["log"]), str(_FIXTURE["pub"])))
+            inspect.signature(run_sec003.execute).bind(**calls[0])
+            for extra in (("--positive-control",), ("--variant", "positive_control")):
+                with self.subTest(extra=extra):
+                    more = []
+                    rc, out = self.main("--start", "--sign-key", str(self.key), *self.selftest, *extra, calls=more)
+                    self.assertEqual((rc, more), (2, []), out)
+                    self.assertIn("  - the variant positive_control does not apply to TP-SEC-003", out)
+            s = sm.load_settings(self.settings)
+            self.assertGreater(run_sec003.estimate(s), 0)
+            self.assertIsNone(run_sec003.estimate(dataclasses.replace(s, price_in_per_m=None)))
+
+    def test_the_preflight_executor_runs_the_sec003_engine(self):
+        with mock.patch.object(run_sec003, "execute", lambda **kw: ("sec003", kw["settings"].procedure)):
+            self.assertEqual(preflight._default_executor(settings=sm.load_settings(SHIPPED)), ("sec003", "TP-SEC-003"))
 
 
 if __name__ == "__main__":

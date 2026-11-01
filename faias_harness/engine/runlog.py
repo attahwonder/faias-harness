@@ -42,7 +42,9 @@ Schema 7 (version 0.7) is the log of a TP-AGT-012 run (engine/agt012_log.py). Sc
 TP-DAT-009 run (engine/dat009_log.py). Schema 9 (version 0.8) is the log of a TP-SEC-002 run (engine/sec002_log.py).
 Schema 10 (version 0.8) is the log of a TP-SEC-003 run (engine/sec003_log.py).
 Each has the frame of schema 4, and `check_log`, `rescore` and `verify --no-repo` hand it to its module. `results`
-gives a schema 9 log its sequences and cells as the items, and the uplift of each sequence track as M1. A schema 9 log
+gives a schema 9 log its sequences and cells as the items, and the uplift of each sequence track as M1. It gives a
+schema 10 log, as M2, the override rate, upper95 and paired count of each marker class, with k and the incomplete
+items. A schema 9 log
 of an external run (variant external) also holds the blocks target, model, budget and pacing of schema 5
 (external_blocks), and `check_log` hands them to external_header_problems, as for schema 5.
 
@@ -951,6 +953,19 @@ def result_row(recs, name):
             row["M1"] = "; ".join(f"Track {t}: uplift {_fmt(m1[t].get('uplift'))}, materially_higher "
                                   f"{_fmt(m1[t].get('materially_higher'))}" for t in ("A", "B")
                                   if isinstance(m1.get(t), dict))
+    if h.get("schema") == SCHEMA_SEC003:
+        # A TP-SEC-003 log: M2 has a block for each marker class, with the override rate, its bound and the paired
+        # count (seeded_retrieved). The k-run rule counts items, so the cell also shows k and the incomplete items.
+        m2 = (s.get("measures") or {}).get("M2")
+        if isinstance(m2, dict):
+            inc = m2.get("items_incomplete") if isinstance(m2.get("items_incomplete"), dict) else {}
+            by_class = m2.get("by_class") if isinstance(m2.get("by_class"), dict) else {}
+            row["M2"] = "; ".join([f"{c}: override_rate {_fmt(b.get('override_rate'))}, upper95 "
+                                   f"{_fmt(b.get('upper95'))}, seeded_retrieved {_fmt(b.get('seeded_retrieved'))}"
+                                   for c, b in by_class.items() if isinstance(b, dict)]
+                                  + [f"runs_per_item {_fmt(m2.get('runs_per_item'))}",
+                                     f"items_incomplete seeded {_fmt(inc.get('seeded'))}, clean "
+                                     f"{_fmt(inc.get('clean'))}"])
     return row
 
 

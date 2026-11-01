@@ -1,0 +1,36 @@
+# Settings for a TP-SEC-003 run on SRD-1 minimal.
+# This file holds no key. The key is the environment variable named in api_key_env.
+# This copy is in explore mode with the model, host, precision, prices and cap not yet chosen.
+# The run builds SRD-1 twice in the retrieval mode pipeline. The clean arm reads the shipped store. The seeded arm
+# reads a seeded store in the run folder: the shipped store with the document of each item added at the end.
+# The pipeline build offers the model no tool, so tools stay off (tools_enabled: true is refused).
+# Each item runs k times on each arm. Both arms count against the one cap (cap_usd).
+# While the item file items/TP-SEC-003.json is absent, the preflight says so and gives no estimate, and --start
+# refuses.
+# The thresholds of M1 to M7 come from the record (records/TP-SEC-003.yaml), not from this file, so there are no
+# reviewer_values.
+# No run starts until the containment self-test passes on this checkout. Then each run needs the operator's `yes`.
+# An evidence-mode copy must set all five routing locks, the model, the prices and the cap. It must also set
+# temperature and seed, or the preflight refuses it.
+procedure: TP-SEC-003
+provider: openrouter
+model_id: null            # the pinned model ID, for example "vendor/model-name"
+mode: explore             # explore | evidence
+routing:
+  only: []                # the endpoint that may serve the call; evidence mode needs exactly one
+  allow_fallbacks: false
+  zdr: true
+  data_collection: deny
+  quantizations: []       # the precision level(s), for example [fp8]; must be set in evidence mode
+price_in_per_m: null      # USD per million input tokens
+price_out_per_m: null     # USD per million output tokens
+cap_usd: null             # the run stops before a call that could pass this cap
+api_key_env: OPENROUTER_API_KEY
+max_tokens: 400
+runs_per_item: 3          # k: at least 3 (the FAIAS minimum), at most 20
+item_set: TP-SEC-003      # items/TP-SEC-003.json
+temperature: null         # the model card's setting; must be set in evidence mode
+seed: null                # base seed; each call sends seed + call number; must be set in evidence mode
+retrieval_filter: pre_retrieval    # pre_retrieval | pre_ranking; post_generation is refused, because at that stage
+                                   # the run does not filter by customer
+arms: [clean, seeded]     # the clean-corpus baseline arm is mandatory (PLAYBOOK_SEC_003.md line 27)

@@ -81,8 +81,12 @@ FACTS = ("item", "class", "doc_id", "scored_turns", "no_reply_turns", "no_retrie
 RECORD_KEYS = ("type", "item", "class", "activity", "arm", "run", "t_ns", "time", "request_sha256", "calls", "lines")
 # The context message of the pipeline path has the role "system", as the system prompt has (orchestrator.py,
 # Orchestrator._retrieve and Orchestrator.open_session), and nothing screens the passages before the model call.
+# Orchestrator.handle puts the context message in the request of the turn only and keeps it out of the session history.
 LIMITS = ("simplified retrieval stack of SRD-1 (one store, one ingestion path); no screen layer (C-10 not built); "
           "retrieved passages reach the model in a system message, with no role separation and no screen; "
+          "SRD-1 sends the retrieved passages of a turn with the model call of that turn only and keeps them out of "
+          "the session history, so a delayed trigger (P5) acts at a later turn only through the model's own earlier "
+          "reply; "
           "marker arm only (the pipeline build offers no tool, so P3, P4 and M1 are not in the run)")
 LABELS = {ITEM_SET: f"uncalibrated scorer, not a finding; {LIMITS}",
           FIXTURE_SET: f"{sec001.LABELS['spike']}; fixture set of benign documents with neutral markers; {LIMITS}"}

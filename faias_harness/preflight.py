@@ -26,8 +26,8 @@ With a settings file of SRD-1 it also prints one line on the containment self-te
 time and commit of the newest self-test log (--selftest-log, or the folders of FAIAS_HARNESS_RUNS, or runs/), and
 whether its code manifest matches this checkout. The signature verifies against the public key that
 --selftest-pubkey or the setting `selftest_pubkey` names; with neither, the line says "(key not pinned)". For
-TP-AGT-012 and TP-DAT-009, --start refuses without a verified, passing log of this code. In evidence mode it also
-refuses them without a pinned key. For other procedures the line is information only.
+TP-AGT-012, TP-DAT-009 and TP-SEC-003, --start refuses without a verified, passing log of this code. In evidence mode
+it also refuses them without a pinned key. For other procedures the line is information only.
 For TP-DAT-009 (version 0.7) it also prints the filter stage, the delegation credential, the arms and the halt
 setting. The positive control (--positive-control) uses the display filter and the service credential. So --start
 refuses the standard variant with either of them. The refund gate is not read, because the tool arm serves
@@ -42,6 +42,9 @@ and --start refuse a baseline log of another target (each field that differs is 
 is not in evidence mode, and one whose stored scores this scorer does not give again. Explore mode allows these, and
 the run label says so. The engine runs the standard variant with tools off, so --start refuses the positive control
 and tools on.
+For TP-SEC-003 (version 0.8) it prints the filter stage and the arms (clean and seeded). While the item file
+items/TP-SEC-003.json is not found, it says so and gives no estimate, and --start refuses. --start also refuses a
+variant other than standard, because the engine runs SRD-1 minimal with its system prompt only.
 
 With --settings <settings.yaml> of `kind: external` (version 0.5), it checks an external run instead: TP-SEC-001
 against a deployed staging agent, through the channel adapter that the profile names (docs/ARCHITECTURE.md,
@@ -71,7 +74,7 @@ from pathlib import Path
 
 from . import yamlio
 from .profile import REPO, ProfileError, load_profile
-from .settings import AGT012, DAT009, SEC002, SEC006, SettingsError, load_settings
+from .settings import AGT012, DAT009, SEC002, SEC003, SEC006, SettingsError, load_settings
 
 NEEDS_FILE = REPO / "records" / "capability_needs.yaml"
 RECORDS_DIR = REPO / "records"
@@ -277,13 +280,19 @@ def settings_report(settings, estimate_usd):
         print(f"Baseline (a TP-SEC-001 run log on the full set): {settings.m4_baseline_log or 'not named'}")
         print(f"Baseline public key: {settings.m4_baseline_pubkey or 'not named'}")
         print(f"Replies in the log: {settings.store_replies}")
+    elif settings.procedure == SEC003:
+        from .engine import sec003
+        print("M1 to M7: from records/TP-SEC-003.yaml, not from the settings")
+        print(f"Retrieval: filter stage {settings.retrieval_filter}; arms {', '.join(settings.arms)}")
+        if not _sec003_item_file():
+            print(f"Item file: {sec003.ITEM_FILE} is not found")
     else:
         print(f"M4 bar: {m4}; reason: {settings.m4_reason or 'not set'}")
     pin, pout = settings.price_in_per_m, settings.price_out_per_m
     print(f"Prices (USD per million tokens): in {pin if pin is not None else 'not set'}, "
           f"out {pout if pout is not None else 'not set'}")
     cap = f"USD {settings.cap_usd}" if settings.cap_usd is not None else "not set"
-    if estimate_usd is None:      # with the prices set, only a TP-SEC-002 run without its item file has no estimate
+    if estimate_usd is None:      # prices set: only TP-SEC-002 or TP-SEC-003 without its item file has no estimate
         why = "prices not set" if pin is None or pout is None else "the item file is not found"
         print(f"Worst-case estimate: not available ({why}); cap: {cap}")
     else:
@@ -531,6 +540,9 @@ def _default_executor(**kw):
     if proc == SEC002:
         from .engine import run_sec002
         return run_sec002.execute(**kw)
+    if proc == SEC003:
+        from .engine import run_sec003
+        return run_sec003.execute(**kw)
     from .engine import spike
     return spike.execute(**kw)
 
@@ -759,6 +771,35 @@ def sec002_start_problems(settings, variant="standard", target=None):
     return problems + e2 + sec002_baseline(settings, variant, target)[2]
 
 
+def _sec003_item_file():
+    """True when the item file of TP-SEC-003 (sec003.ITEM_FILE) is found."""
+    from .engine import sec003
+    return (REPO / sec003.ITEM_FILE).is_file()
+
+
+def sec003_start_problems(settings, variant="standard"):
+    """What a TP-SEC-003 run needs besides the SRD-1 conditions and the self-test gate: the settings that the engine
+    takes (run_sec003.settings_problems), the item file (run_sec003.load_items refuses while it is absent), and the
+    standard variant. The engine takes no variant, so --start refuses any other before the run can start."""
+    from .engine import run_sec003
+    problems = list(run_sec003.settings_problems(settings))
+    try:
+        run_sec003.load_items(repo=REPO)
+    except ValueError as e:
+        problems.append(str(e))
+    if variant != "standard":
+        problems.append(f"the variant {variant} does not apply to TP-SEC-003: the engine runs SRD-1 minimal with its "
+                        "system prompt (the standard variant) only")
+    return problems
+
+
+def sec003_sends(settings):
+    """The count part of the start line of a TP-SEC-003 run (run_sec003.plan gives both counts)."""
+    from .engine import run_sec003
+    sessions, calls = run_sec003.plan(settings, run_sec003.load_items(repo=REPO)[0])
+    return f"opens {sessions} sessions on {len(settings.arms)} arms and sends at most {calls} model calls"
+
+
 def _inspect_missing():
     from .engine import spike
     return None if spike.inspect_available() else "the run engine inspect_ai is not installed"
@@ -822,7 +863,7 @@ def main(argv=None, *, input_fn=input, gateway_factory=_default_gateway, executo
     if settings is not None:
         print()
         from . import selftest
-        from .engine import run_agt012, run_dat009, run_sec002, run_sec006, spike
+        from .engine import run_agt012, run_dat009, run_sec002, run_sec003, run_sec006, spike
         if settings.procedure == SEC006:
             est = run_sec006.estimate(settings)
         elif settings.procedure == AGT012:
@@ -831,6 +872,8 @@ def main(argv=None, *, input_fn=input, gateway_factory=_default_gateway, executo
             est = run_dat009.estimate(settings)
         elif settings.procedure == SEC002:
             est = run_sec002.estimate(settings) if _sec002_items() is not None else None
+        elif settings.procedure == SEC003:
+            est = run_sec003.estimate(settings) if _sec003_item_file() else None
         else:
             est = spike.estimate(settings)
         settings_report(settings, est)
@@ -875,8 +918,11 @@ def main(argv=None, *, input_fn=input, gateway_factory=_default_gateway, executo
             problems += dat009_start_problems(settings, variant)
         if settings.procedure == SEC002:
             problems += sec002_start_problems(settings, variant)
+        if settings.procedure == SEC003:
+            problems += sec003_start_problems(settings, variant)
         from . import selftest
-        problems += selftest.gate_problems(settings.procedure, isolation, settings.mode)   # TP-AGT-012, TP-DAT-009
+        # TP-AGT-012, TP-DAT-009 and TP-SEC-003 (selftest.GATED)
+        problems += selftest.gate_problems(settings.procedure, isolation, settings.mode)
     if a.probes and not a.start:
         problems = [p for p in problems if "attestation" not in p and "signing" not in p]
     if problems:
@@ -910,6 +956,9 @@ def main(argv=None, *, input_fn=input, gateway_factory=_default_gateway, executo
     elif settings.procedure == SEC002:
         from .engine import run_sec002
         sends, label = f"sends at most {run_sec002.planned_calls(settings)} model calls", sec002_label
+    elif settings.procedure == SEC003:
+        from .engine import sec003_log
+        sends, label = sec003_sends(settings), sec003_log.LABELS[sec003_log.ITEM_SET]
     else:
         sends = f"sends {len(spike.run_items(settings)) * settings.runs_per_item} model calls"
         label = spike.sec001.LABELS[settings.item_set]
@@ -936,6 +985,9 @@ def main(argv=None, *, input_fn=input, gateway_factory=_default_gateway, executo
         exec_kwargs.update(selftest_log=a.selftest_log, selftest_pubkey=a.selftest_pubkey,
                            delays_ms=settings.containment_plan()[0])
     if settings.procedure == DAT009:
+        exec_kwargs.update(selftest_log=a.selftest_log, selftest_pubkey=a.selftest_pubkey)
+    if settings.procedure == SEC003:        # the engine takes no variant (sec003_start_problems refuses the others)
+        del exec_kwargs["variant"]
         exec_kwargs.update(selftest_log=a.selftest_log, selftest_pubkey=a.selftest_pubkey)
     result = executor(**exec_kwargs)
     s = result.summary

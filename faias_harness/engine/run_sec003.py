@@ -2,12 +2,13 @@
 retrieved content.
 
 The steps, in order:
-  1. The settings and the self-test gate (settings_problems). The settings must name TP-SEC-003. The filter stage
-     (retrieval_filter) must be pre_retrieval or pre_ranking: post_generation is refused (sec003_log.STAGE_REASON).
-     The arms must be exactly clean and seeded, and a list without the clean arm is refused, because the
-     clean-corpus baseline arm is mandatory (PLAYBOOK_SEC_003.md line 27). A run needs a containment self-test log
-     that passes, and whose code manifest matches the checkout (selftest.gate_problems, the rule of TP-DAT-009). In
-     evidence mode the log's signature must verify against a pinned public key (selftest_pubkey).
+  1. The settings and the self-test gate (settings_problems). The settings must name TP-SEC-003 and its item set,
+     with tools off. The filter stage (retrieval_filter) must be pre_retrieval or pre_ranking: post_generation is
+     refused (sec003_log.STAGE_REASON). The arms must be exactly clean and seeded, and a list without the clean arm
+     is refused, because the clean-corpus baseline arm is mandatory (PLAYBOOK_SEC_003.md line 27). The settings
+     loader refuses the same files (settings.validate). A run needs a containment self-test log that passes, and
+     whose code manifest matches the checkout (selftest.gate_problems, the rule of TP-DAT-009). In evidence mode the
+     log's signature must verify against a pinned public key (selftest_pubkey).
   2. The items (load_items, item_problems). Items passed to execute are a fixture set: the log names the item set
      "fixture", and its label starts with the spike label, so the run cannot pass as a result. With no items, the
      engine reads items/TP-SEC-003.json, and it refuses the run while that file is absent. The item check
@@ -37,6 +38,8 @@ A run record holds the SHA-256 of each turn (request_sha256), never the turn tex
 trace store keeps each reply as the model gave it, in the folder target/ of the run folder. The run returns the item
 ID to the Inspect solver, so the Inspect log holds no reply. The Inspect sample of an item shows its ID and the
 SHA-256 of its turns (_Sample).
+
+The preflight reads plan (the sessions and the model calls of a run) and estimate (its worst-case cost).
 
 No live call has used this engine. The tests use the stand-in host and a fixture set of benign documents. No run
 starts until the containment self-test passes.
@@ -83,6 +86,11 @@ def settings_problems(settings):
     out = []
     if settings.procedure != sec003.TP:
         out.append("the settings do not name the procedure TP-SEC-003")
+    if settings.item_set != sec003_log.ITEM_SET:
+        out.append(f"the settings name the item set {settings.item_set}; a TP-SEC-003 run names {sec003_log.ITEM_SET}")
+    if settings.tools_enabled:
+        out.append("tools are on; the pipeline build of SRD-1 offers the model no tool, so TP-SEC-003 runs with tools "
+                   "off")
     if settings.retrieval_filter not in sec003_log.ACCEPTED_STAGES:
         out.append(f"the stage {settings.retrieval_filter} is refused; it must be pre_retrieval or pre_ranking "
                    f"({sec003_log.STAGE_REASON})")
@@ -106,6 +114,40 @@ def load_items(items=None, repo=REPO):
         raise ValueError(f"{sec003.TP}: the item file {sec003.ITEM_FILE} is not found, so no run of the shipped set "
                          "can start")
     return sec003.load_set(path), sec003_log.ITEM_SET, json.loads(path.read_text(encoding="utf-8")).get("authors")
+
+
+def plan(settings, items):
+    """(sessions, model calls) of a run on `items`. Each item runs k times on each of the two arms. Each turn makes one
+    model call, because the pipeline build offers no tool."""
+    n = settings.runs_per_item * len(sec003_log.ARMS)
+    return len(items) * n, sum(len(i.turns) for i in items) * n
+
+
+def estimate(settings, repo=REPO, items=None):
+    """The worst-case cost of a run in USD, or None if the prices are not set. It reads the items as load_items does,
+    so it raises ValueError while items/TP-SEC-003.json is absent. Each call of plan() counts at the full output limit.
+    Its input is the system prompt, a context message of the three longest documents of the seeded store, and the
+    turns of the session so far, with each earlier reply at the output limit. The cap still stops the run."""
+    if settings.price_in_per_m is None or settings.price_out_per_m is None:
+        return None
+    items = load_items(items, repo)[0]
+    _, gw, orch, _ = spike._srd1()
+    from targets.srd1.app import retrieval as rt
+    docs = yamlio.load(sec003.CLEAN_STORE.read_bytes())["documents"] + sec003.pool(items)
+    longest = sorted(docs, key=lambda d: len(str(d.get("title") or "")) + len(str(d.get("text") or "")),
+                     reverse=True)[:rt.TOP_K]
+    context = {"role": "system", "content": rt.context_message(
+        [{k: str(d.get(k) or "") for k in ("doc_id", "title", "text")} for d in longest])}
+    system = {"role": "system", "content": orch.load_system_prompt()}
+    in_tokens = 0
+    for i in items:
+        users = []
+        for j, text in enumerate(i.turns):
+            users.append({"role": "user", "content": text})
+            in_tokens += gw.estimate_tokens([system, context] + users) + j * settings.max_tokens
+    _, calls = plan(settings, items)
+    in_tokens *= settings.runs_per_item * len(sec003_log.ARMS)
+    return (in_tokens * settings.price_in_per_m + calls * settings.max_tokens * settings.price_out_per_m) / 1_000_000
 
 
 def item_problems(items, store):
