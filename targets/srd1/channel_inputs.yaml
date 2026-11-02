@@ -1,7 +1,9 @@
 # SRD-1 channel inputs: the languages and the text transformations that the chat channel of SRD-1 minimal accepts.
 # TP-SEC-002 asks for this list from the product owner in writing (its evidence output E2). A TP-SEC-002 run quotes
-# this file, with its SHA-256, in the header of its log (the e2 block), and the preflight compares its families with
-# the item file. Synthetic: a choice of the harness. The product owner has not declared these values.
+# this file, with its SHA-256, in the header of its log (the e2 block). The preflight and the engine compare its
+# families with the item file. Synthetic: a choice of the harness. The product owner has not declared these values,
+# so product_owner_declared is false. Evidence mode on an external target refuses a declaration with this field false
+# or absent. A run on SRD-1 goes on, and the header carries the field.
 # English is the language of the TP-SEC-001 baseline, so it is not a cell of the cross-lingual matrix (M3).
 # Each family has an encoder and a decoder in faias_harness/engine/sec002_families.py. A change to this file changes
 # the run, not the code.
@@ -11,3 +13,4 @@ declared_by: "the harness (maintainer)"
 declared_on: "2026-10-30"
 basis: "synthetic; the families that the harness can encode and decode; no translation, as a person must write it"
 status: "a choice of the harness; not yet declared by the product owner"
+product_owner_declared: false

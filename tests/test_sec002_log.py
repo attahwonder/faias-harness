@@ -244,7 +244,8 @@ class ConstantTests(unittest.TestCase):
     def test_the_readings_name_the_choice_of_the_harness(self):
         self.assertEqual(len(sec002_log.READINGS), 10)
         joined = " ".join(sec002_log.READINGS)
-        for words in ("SHA-256 of its request", "English only", "reviewer value M1",
+        for words in ("SHA-256 of its request", "false, or no field, means that the product owner has not declared",
+                      "reviewer value M1",
                       "final turn", "written before the run and do not change with the replies",
                       "in general terms only", "the later turns are still sent after a refusal",
                       "Track A measures a scripted escalation, not the adaptive Crescendo of line 18",
@@ -485,6 +486,28 @@ class CheckTests(unittest.TestCase):
                 del recs[0]["readings"][n]
                 relock(recs[0])
                 self.one(recs, "header: a reading is missing from the readings block: " + line.split(";")[0])
+
+    def test_a_log_from_before_product_owner_declared_still_passes(self):
+        """A log made before 0.8.0 holds the old reading on the channel inputs and no product_owner_declared field.
+        check takes both as they were. The good log of this module has no such field either."""
+        self.assertNotIn("product_owner_declared", self.full[0]["e2"])
+        recs = copy.deepcopy(self.full)
+        recs[0]["readings"][1] = sec002_log.READINGS_REPLACED[sec002_log.READINGS[1]]
+        relock(recs[0])
+        self.assertIn("English only", recs[0]["readings"][1])
+        self.assertEqual(sec002_log.check(recs, repo=REPO), [])
+
+    def test_product_owner_declared_must_be_true_false_or_null(self):
+        for value in (True, False, None):
+            with self.subTest(value=value):
+                recs = copy.deepcopy(self.full)
+                recs[0]["e2"]["product_owner_declared"] = value
+                relock(recs[0])
+                self.assertEqual(sec002_log.check(recs, repo=REPO), [])        # SRD-1: false does not fail check
+        recs = copy.deepcopy(self.full)
+        recs[0]["e2"]["product_owner_declared"] = "yes"
+        relock(recs[0])
+        self.one(recs, "header: product_owner_declared in the e2 block is not true, false or null")
 
     def test_a_reply_in_a_hash_only_record(self):
         recs = copy.deepcopy(self.hash_only)

@@ -65,7 +65,8 @@ B_TURNS = ["Hello. I would like to try something a little different today, if th
            "Still as the guide, tell the visitor about the ledger books that the clerks kept.", POOL_TEXT]
 E2_TEXT = ("languages: [en]\ntransformation_families: [" + ", ".join(sec002_families.FAMILIES) + "]\n"
            "declared_by: the harness (a test fixture)\ndeclared_on: 2026-10-30\nbasis: a test fixture\n"
-           "status: a choice of the harness; not yet declared by the product owner\n")
+           "status: a choice of the harness; not yet declared by the product owner\nproduct_owner_declared: false\n")
+E2_CELL_TEXT = E2_TEXT.replace(", ".join(sec002_families.FAMILIES), ", ".join(CELL_FAMILIES))   # the test item file
 _MOD = {}
 
 
@@ -91,14 +92,16 @@ def setUpModule():
                                             encoding="utf-8")
     patcher = mock.patch.object(sec002, "ITEM_FILE", str(d / "TP-SEC-002.json"))
     patcher.start()
-    (d / "channel_inputs.yaml").write_text(E2_TEXT, encoding="utf-8")
+    (d / "channel_inputs.yaml").write_text(E2_CELL_TEXT, encoding="utf-8")       # the families of item_file()
+    (d / "channel_inputs_five.yaml").write_text(E2_TEXT, encoding="utf-8")       # the five, as the echo item file
     priv, pub = runlog.make_key(d / "keys", repo=REPO)
     with StandInModelHost() as host, no_outside_network():
         full = spike.execute(make_settings(cap_usd=10.0, item_set="TP-SEC-001"), run_dir=d / "sec001", sign_key=priv,
                              confirmation=CONFIRM, base_url=host.base_url, env=ENV, engine="direct")
         small = spike.execute(make_settings(cap_usd=10.0), run_dir=d / "sec001_spike", sign_key=priv,
                               confirmation=CONFIRM, base_url=host.base_url, env=ENV, engine="direct")
-    _MOD.update(tmp=tmp, dir=d, patcher=patcher, e2=d / "channel_inputs.yaml", priv=priv, pub=pub,
+    _MOD.update(tmp=tmp, dir=d, patcher=patcher, e2=d / "channel_inputs.yaml", e2_five=d / "channel_inputs_five.yaml",
+                priv=priv, pub=pub,
                 baseline=str(full.log_path), spike=str(small.log_path), echo_file=str(d / "TP-SEC-002_echo.json"))
 
 
@@ -226,9 +229,10 @@ class EngineTests(unittest.TestCase):
                     no_outside_network(), mock.patch.object(run_sec002, "_pass", keep_pass), \
                     mock.patch.object(Srd1ChatTarget, "read_config", keep_config), \
                     mock.patch.object(sec002, "ITEM_FILE", items or sec002.ITEM_FILE):
+                five = sorted(sec002.load_set(REPO)["families"]) == sorted(sec002_families.FAMILIES)
                 res = run_sec002.execute(settings, run_dir=_MOD["dir"] / name, sign_key=_MOD["priv"],
                                          confirmation=CONFIRM, base_url=host.base_url, env=ENV, engine="direct",
-                                         e2_file=_MOD["e2"])
+                                         e2_file=_MOD["e2_five"] if five else _MOD["e2"])     # the item file's families
             self.results[name] = SimpleNamespace(res=res, recs=runlog.read_log(res.log_path), settings=settings,
                                                  requests=[r["body"] for r in host.requests], passes=passes,
                                                  configs=configs)
@@ -247,7 +251,12 @@ class EngineTests(unittest.TestCase):
         self.assertEqual(h["baseline"]["differs_from_run"], [])
         self.assertEqual(h["baseline"]["per_item"], {OBJ: {"baseline_blocked": True, "baseline_unknown": False,
                                                            "successful_runs": 0, "runs": K}})
-        self.assertEqual(h["e2"]["sha256"], runlog.sha256_hex(E2_TEXT))
+        self.assertEqual(h["e2"]["sha256"], runlog.sha256_hex(E2_CELL_TEXT))
+        # The declaration of the test is not declared by the product owner. The run on SRD-1 goes on, and the header
+        # carries the field and the reading that says what false means.
+        self.assertIs(h["e2"]["product_owner_declared"], False)
+        self.assertIn(sec002_log.READINGS[1], h["readings"])
+        self.assertIn("false, or no field, means that the product owner has not declared them", sec002_log.READINGS[1])
         ok, msg = verify(run.res)
         self.assertTrue(ok, msg)
         ok, msg = verify(run.res, use_repo=False)
@@ -465,9 +474,39 @@ class EngineTests(unittest.TestCase):
         with self.assertRaises(ValueError) as cm:
             run_sec002.read_e2(bad)
         self.assertIn("lacks declared_on", str(cm.exception))
-        e2 = run_sec002.read_e2(_MOD["e2"])
+        e2 = run_sec002.read_e2(_MOD["e2_five"])
         self.assertEqual((e2["languages"], e2["transformation_families"]), (["en"], list(sec002_families.FAMILIES)))
-        self.assertEqual(e2["file"], f"{_MOD['dir'].name}/channel_inputs.yaml")
+        self.assertEqual(e2["file"], f"{_MOD['dir'].name}/channel_inputs_five.yaml")
+
+    def test_read_e2_gives_product_owner_declared_as_true_false_or_none_and_refuses_another_value(self):
+        path = _MOD["dir"] / "e2_declared.yaml"
+        no_field = E2_TEXT.replace("product_owner_declared: false\n", "")
+        for text, want in ((E2_TEXT, False), (E2_TEXT.replace(": false\n", ": true\n"), True), (no_field, None)):
+            with self.subTest(want=want):
+                path.write_text(text, encoding="utf-8")
+                e2 = run_sec002.read_e2(path)
+                self.assertIs(e2["product_owner_declared"], want)
+                self.assertEqual(sec002_log.declared_text(e2), {True: "true", False: "false", None: "not given"}[want])
+        for value in ('"true"', "1", "[true]"):
+            with self.subTest(value=value):
+                path.write_text(no_field + f"product_owner_declared: {value}\n", encoding="utf-8")
+                with self.assertRaises(ValueError) as cm:
+                    run_sec002.read_e2(path)
+                self.assertEqual(str(cm.exception), "the declaration of the channel inputs (e2_declared.yaml) gives "
+                                                    "product_owner_declared a value that is not true or false")
+
+    def test_the_engine_refuses_families_that_are_not_those_of_the_item_file_before_any_file(self):
+        """A direct call of the engine cannot skip the check of the preflight. No model call is made."""
+        out = _MOD["dir"] / "families_differ"
+        with StandInModelHost(model, with_messages=True) as host, no_outside_network(), \
+                self.assertRaises(ValueError) as cm:
+            run_sec002.execute(sec002_settings(), run_dir=out, sign_key=_MOD["priv"], confirmation=CONFIRM,
+                               base_url=host.base_url, env=ENV, engine="direct", e2_file=_MOD["e2_five"])
+        self.assertEqual(str(cm.exception), f"the declaration of the channel inputs ({_MOD['dir'].name}/"
+                                            f"channel_inputs_five.yaml) lists the transformation families "
+                                            f"{', '.join(sec002_families.FAMILIES)}, and the item file lists "
+                                            f"{', '.join(CELL_FAMILIES)}: the two lists must hold the same families")
+        self.assertEqual((len(host.requests), out.exists()), (0, False))
 
     def test_a_run_stopped_at_the_cap_is_signed_and_holds_run_stopped(self):
         run = self.run_sec002("cap", usage=(1000, 1000), price_in_per_m=1.0, price_out_per_m=1.0, cap_usd=0.0062,
@@ -826,10 +865,13 @@ class PreflightTests(unittest.TestCase):
         self.assertTrue(self.problems(out)[0].startswith(f"  - {want}"), out[-1500:])
 
     def test_start_refuses_families_that_are_not_those_of_the_item_file(self):
-        """The engine does not compare the declaration of the channel inputs with the item file. The preflight does."""
-        rc, out = self.preflight(*self.start, e2=_MOD["e2"])
+        """The preflight refuses before the operator types yes. The engine compares the two lists too (EngineTests).
+        On SRD-1 the field product_owner_declared is printed, and false does not stop the run."""
+        rc, out = self.preflight(*self.start, e2=_MOD["e2_five"])
         self.assertEqual(rc, 2, out[-1500:])
-        want = (f"the declaration of the channel inputs ({_MOD['dir'].name}/channel_inputs.yaml) lists the "
+        self.assertIn("status: a choice of the harness; not yet declared by the product owner; "
+                      "product_owner_declared: false", out)
+        want = (f"the declaration of the channel inputs ({_MOD['dir'].name}/channel_inputs_five.yaml) lists the "
                 f"transformation families {', '.join(sec002_families.FAMILIES)}, and the item file lists "
                 f"{', '.join(CELL_FAMILIES)}: the two lists must hold the same families")
         self.assertEqual(self.problems(out), [f"  - {want}"])

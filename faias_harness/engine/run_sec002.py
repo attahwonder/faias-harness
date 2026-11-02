@@ -99,7 +99,9 @@ def estimate(settings, repo=REPO):
 def read_e2(path=E2_FILE, repo=REPO):
     """The e2 block of the header: the declaration of the channel inputs (evidence output E2, line 52), quoted with its
     SHA-256, who declared it and when, its status, and the languages and the transformation families that it lists.
-    Raises ValueError when the file cannot be read or lacks one of E2_FIELDS."""
+    It also holds product_owner_declared (sec002_log.E2_DECLARED, since 0.8): true or false as the file gives it, or
+    None when the file has no such field. Raises ValueError when the file cannot be read, lacks one of E2_FIELDS, or
+    gives product_owner_declared a value that is not true or false."""
     p = Path(path) if Path(path).is_absolute() else Path(repo) / path
     try:
         text = p.read_text(encoding="utf-8")
@@ -112,10 +114,15 @@ def read_e2(path=E2_FILE, repo=REPO):
                or (k in ("languages", "transformation_families")) != isinstance(data.get(k), list)]
     if missing:
         raise ValueError(f"the declaration of the channel inputs ({p.name}) lacks {', '.join(missing)}")
+    declared = data.get(sec002_log.E2_DECLARED)
+    if declared is not None and not isinstance(declared, bool):
+        raise ValueError(f"the declaration of the channel inputs ({p.name}) gives {sec002_log.E2_DECLARED} a value "
+                         "that is not true or false")
     return {"file": sec006_log._where(p, repo)[0], "quoted": text, "sha256": runlog.sha256_hex(text),
             "declared_by": str(data["declared_by"]), "declared_on": str(data["declared_on"]),
             "status": str(data["status"]), "languages": [str(x) for x in data["languages"]],
-            "transformation_families": [str(x) for x in data["transformation_families"]]}
+            "transformation_families": [str(x) for x in data["transformation_families"]],
+            sec002_log.E2_DECLARED: declared}
 
 
 def procedure_block(repo=REPO):
@@ -333,7 +340,8 @@ def execute(settings, *, run_dir, sign_key, confirmation, probes=None, base_url=
     `variant` is "standard" (the only one for this procedure). `engine` is "inspect" (the default) or "direct" (a
     plain loop, for tests without Inspect). `e2_file` is the declaration of the channel inputs, in place of
     targets/srd1/channel_inputs.yaml (for tests). The baseline log is the settings' baseline_log, checked against
-    baseline_pubkey; the run refuses to start without it."""
+    baseline_pubkey; the run refuses to start without it. It also refuses, before it writes a file, a declaration of the
+    channel inputs whose families are not those of the item file (sec002_log.e2_family_problems)."""
     build, gw, orch_mod, trace_mod = spike._srd1()
     if settings.procedure != sec002.TP:
         raise ValueError("the settings do not name the procedure TP-SEC-002")
@@ -351,6 +359,9 @@ def execute(settings, *, run_dir, sign_key, confirmation, probes=None, base_url=
     seqs, cells, pool = sec002.load_items(repo)
     baseline = sec002_log.read_baseline(settings.m4_baseline_log, list(pool), repo, pubkey=settings.m4_baseline_pubkey)
     e2 = read_e2(e2_file or E2_FILE, repo)
+    refused = sec002_log.e2_family_problems(e2, sec002.load_set(repo)["families"])
+    if refused:         # the preflight checks this too; a direct call may not skip it
+        raise ValueError("; ".join(refused))
     prompt_file = orch_mod.PROMPT_VARIANTS[variant]
     base_url = base_url or gw.OPENROUTER_BASE
     run_dir = Path(run_dir)

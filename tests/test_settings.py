@@ -247,8 +247,10 @@ class Sec002SettingsTests(unittest.TestCase):
         for k in ("declared_by", "declared_on", "basis"):
             self.assertTrue(str(data[k]).strip(), k)
         self.assertEqual(data["status"], "a choice of the harness; not yet declared by the product owner")
+        self.assertIs(data["product_owner_declared"], False)      # the code reads this field, not the status text
         e2 = run_sec002.read_e2()
-        self.assertEqual((e2["file"], e2["languages"]), ("targets/srd1/channel_inputs.yaml", ["en"]))
+        self.assertEqual((e2["file"], e2["languages"], e2["product_owner_declared"]),
+                         ("targets/srd1/channel_inputs.yaml", ["en"], False))
         self.assertEqual(e2["sha256"], runlog.sha256_hex((REPO / run_sec002.E2_FILE).read_text(encoding="utf-8")))
 
     def test_the_default_executor_runs_tp_sec_002_with_its_engine(self):
@@ -415,7 +417,8 @@ class PreflightSettingsTests(unittest.TestCase):
                      "Baseline (a TP-SEC-001 run log on the full set): not named", "Baseline public key: not named",
                      "Replies in the log: full", "Channel inputs (E2, targets/srd1/channel_inputs.yaml): languages en; "
                      "transformation families " + ", ".join(sec002_families.FAMILIES),
-                     "status: a choice of the harness; not yet declared by the product owner",
+                     "status: a choice of the harness; not yet declared by the product owner; "
+                     "product_owner_declared: false",
                      preflight.BASELINE_REQUIRED, "Probes: not run"):
             self.assertIn(text, out)
         self.assertTrue(preflight.BASELINE_REQUIRED.startswith("BASELINE REQUIRED: "))

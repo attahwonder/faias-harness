@@ -33,8 +33,9 @@ setting. The positive control (--positive-control) uses the display filter and t
 refuses the standard variant with either of them. The refund gate is not read, because the tool arm serves
 document_search only.
 For TP-SEC-002 (version 0.8) it prints the M1 bar with its reason, the baseline log and its public key, and the
-declaration of the channel inputs (targets/srd1/channel_inputs.yaml): the languages and the transformation families.
---start refuses families that are not those of the item file. With no baseline log named, it prints BASELINE
+declaration of the channel inputs (targets/srd1/channel_inputs.yaml): the languages, the transformation families and
+the field product_owner_declared. --start refuses families that are not those of the item file. On SRD-1 the field
+is printed only, and the run goes on. With no baseline log named, it prints BASELINE
 REQUIRED, and --probes and --start refuse. A named baseline log is read as the engine reads it: a TP-SEC-001 log on
 the full set, its signature checked against `baseline_pubkey`, and its stored scores scored again with this scorer.
 The run-to-run variance of the baseline (its M4 value) is printed next to the M1 bar. In evidence mode the preflight
@@ -55,12 +56,14 @@ model and version, the calls against the call budget, and whether the key variab
 reply, and starts the run only after the operator types `yes`.
 An external settings file with `procedure: TP-SEC-002` (version 0.8) runs TP-SEC-002 through the channel. The
 preflight then prints the M1 bar, the baseline log and its key, and the declaration of the channel inputs that the
-setting `channel_inputs` names. The baseline must be a schema 5 log of an external TP-SEC-001 run. In evidence mode
-it must match the run on five declared fields (sec002_log.EXTERNAL_MATCH_FIELDS), and each field that differs is
-named with both values. The probe is a recall test: one session gives the agent two words and asks for them back, and
-a fresh control session sends a plain first turn and asks the same question at its second turn. It is four calls, or
-six with the Direct Line start event. When the probe does not observe session state, the run sends Track C(ii)
-only. --start then prints that narrower scope and its calls before the operator types `yes`. The probe's requests go to an egress log of their own, and its summary
+setting `channel_inputs` names. In evidence mode, --start refuses that declaration when its product_owner_declared is
+false or absent. In explore mode the run goes on, and the header carries the field. The baseline must be a schema 5
+log of an external TP-SEC-001 run. In evidence mode it must match the run on five declared fields
+(sec002_log.EXTERNAL_MATCH_FIELDS), and each field that differs is named with both values. The probe is a recall
+test: one session gives the agent two words and asks for them back, and a fresh control session sends a plain first
+turn and asks the same question at its second turn. It is four calls, or six with the Direct Line start event. When
+the probe does not observe session state, the run sends Track C(ii) only. --start then prints that narrower scope and
+its calls before the operator types `yes`. The probe's requests go to an egress log of their own, and its summary
 goes into the probe block of the header.
 
 Exit codes: 0 table printed, or a run finished; 2 start refused or profile or settings invalid; 3 start
@@ -436,7 +439,7 @@ def run_external(a, profile, settings, *, input_fn, executor, inspect_check):
     label, base_problems, target = external.sec001.LABELS.get(settings.item_set), [], None
     if sec002:          # the declaration of the channel inputs and the baseline, as for a run on SRD-1 minimal
         target = external.target_block(profile, settings)
-        lines = sec002_channel_inputs(settings.channel_inputs)[0]
+        lines = sec002_channel_inputs(settings.channel_inputs, evidence=settings.mode == "evidence")[0]
         label, more, base_problems = sec002_baseline(settings, target=target)
         for line in lines + more:
             print(line)
@@ -670,12 +673,15 @@ def _sec002_items():
     return sec002.load_set() if (REPO / sec002.ITEM_FILE).is_file() else None
 
 
-def sec002_channel_inputs(path=None):
+def sec002_channel_inputs(path=None, evidence=False):
     """The declaration of the channel inputs of a TP-SEC-002 run (run_sec002.read_e2): (lines to print, problems). The
     transformation families that it lists must be those of the item file, because the run makes its cells from the
-    item file and its header quotes the declaration. The engine does not compare the two. `path`: the declaration of
-    an external run (its setting channel_inputs); without it, the declaration of SRD-1 (run_sec002.E2_FILE)."""
-    from .engine import run_sec002, sec002
+    item file and its header quotes the declaration. The engines compare the two as well
+    (sec002_log.e2_family_problems), so a direct call cannot skip the check. `path`: the declaration of an external run
+    (its setting channel_inputs); without it, the declaration of SRD-1 (run_sec002.E2_FILE). `evidence`: true for an
+    external run in evidence mode, which needs product_owner_declared true (sec002_log.e2_evidence_problems); SRD-1 and
+    explore mode print the field only."""
+    from .engine import run_sec002, sec002, sec002_log
     try:
         e2 = run_sec002.read_e2(path or run_sec002.E2_FILE)
     except ValueError as e:
@@ -683,17 +689,16 @@ def sec002_channel_inputs(path=None):
     declared = e2["transformation_families"]
     lines = [f"Channel inputs (E2, {e2['file']}): languages {', '.join(e2['languages']) or 'none'}; transformation "
              f"families {', '.join(declared) or 'none'}",
-             f"  declared by {e2['declared_by']} on {e2['declared_on']}; status: {e2['status']}"]
+             f"  declared by {e2['declared_by']} on {e2['declared_on']}; status: {e2['status']}; "
+             f"{sec002_log.E2_DECLARED}: {sec002_log.declared_text(e2)}"]
+    problems = sec002_log.e2_evidence_problems(e2) if evidence else []
     data = _sec002_items()
     if data is None:
-        missing = f"the item file {sec002.ITEM_FILE} is not found"
-        return lines + [f"Item file: {sec002.ITEM_FILE} is not found"], [missing]
-    families = list(data["families"])
-    if sorted(families) != sorted(declared):
-        p = (f"the declaration of the channel inputs ({e2['file']}) lists the transformation families "
-             f"{', '.join(declared) or 'none'}, and the item file lists {', '.join(families) or 'none'}: the two "
-             "lists must hold the same families")
-        return lines + [f"  - {p}"], [p]
+        lines += [f"  - {p}" for p in problems] + [f"Item file: {sec002.ITEM_FILE} is not found"]
+        return lines, problems + [f"the item file {sec002.ITEM_FILE} is not found"]
+    problems +=sec002_log.e2_family_problems(e2, list(data["families"]))
+    if problems:
+        return lines + [f"  - {p}" for p in problems], problems
     return lines + ["  The item file has the same transformation families."], []
 
 
@@ -775,7 +780,8 @@ def sec002_start_problems(settings, variant="standard", target=None):
     baseline log that sec002_baseline accepts. The engine runs the standard variant with tools off and raises on
     anything else, so the preflight refuses the positive control and tools on first. `target`: the target block of an
     external run, which has no variant and no tools of SRD-1 (run_external refuses --positive-control itself), and
-    whose declaration of the channel inputs is the setting channel_inputs."""
+    whose declaration of the channel inputs is the setting channel_inputs. In evidence mode, that declaration needs
+    product_owner_declared true."""
     from .engine import sec002
     problems = []
     if settings.m1_value is None or not settings.m1_reason:
@@ -789,7 +795,8 @@ def sec002_start_problems(settings, variant="standard", target=None):
     if getattr(settings, "tools_enabled", False):
         problems.append("TP-SEC-002 runs with tools off (SRD-1 sends no tool definition to the model): set "
                         "tools_enabled to false")
-    e2 = sec002_channel_inputs(settings.channel_inputs if target is not None else None)[1]
+    e2 = (sec002_channel_inputs(settings.channel_inputs, evidence=settings.mode == "evidence")[1] if target is not None
+          else sec002_channel_inputs()[1])
     return problems + e2 + sec002_baseline(settings, variant, target)[2]
 
 

@@ -18,7 +18,8 @@ their bases, the code block, the lock over the scorer and record hashes, the Ed2
                     from another target")
   session_limits    what config_read("session") returned: the turn limit and the message limit of one session
   e2                the declaration of the channel inputs (evidence output E2, PLAYBOOK_SEC_002.md line 52): the
-                    file, quoted, with its SHA-256, who declared it, when, and its status
+                    file, quoted, with its SHA-256, who declared it, when, its status, and (since 0.8)
+                    product_owner_declared: true, false, or null when the file has no such field
   readings          the readings that this harness took where the owner has not ruled (READINGS)
   store_replies     "full": each run record holds the reply, redacted, with the mark sec002.CELL_TEXT_REMOVED in place
                     of each copy of an encoded pool text. "hash_only": it holds the SHA-256 of the reply as received;
@@ -175,8 +176,9 @@ READINGS = [
     "the item texts are public in items/TP-SEC-002.json; each run record holds the SHA-256 of its request, never the "
     "text, for every track and in both store modes; the manifest holds the SHA-256 of each turn, and the cells table "
     "the SHA-256 of each cell text" + _READING,
-    "the channel takes English only and the five transformation families, as the declaration in the e2 block lists "
-    "them; the product owner has not declared them" + _READING,
+    "the channel takes the languages and the transformation families that the declaration in the e2 block lists; its "
+    "field product_owner_declared is true only when the product owner declared them; false, or no field, means that "
+    "the product owner has not declared them" + _READING,
     "the bar of M1 (a material uplift) is the reviewer value M1, with its reason, in the settings file; the harness "
     "derives no bar" + _READING,
     "the final turn of each Track A and Track B sequence is the TP-SEC-001 text of its objective, unchanged, so the "
@@ -198,6 +200,45 @@ READINGS = [
     "because line 40 sets it on a control effective in English (line 41: the same threshold); M4 shows the cells of "
     "the other objectives and lists those objectives (objectives_not_counted)" + _READING,
 ]
+# A reading that 0.8.0 replaced. A log made before 0.8.0 holds the old words, and check takes them in place of the new
+# ones.
+READINGS_REPLACED = {READINGS[1]: "the channel takes English only and the five transformation families, as the "
+                                  "declaration in the e2 block lists them; the product owner has not declared them"
+                                  + _READING}
+# The field of the declaration of the channel inputs (evidence output E2) that says, in a form that code reads, whether
+# the product owner declared it (since 0.8): true or false. A declaration with no such field is not declared.
+E2_DECLARED = "product_owner_declared"
+
+
+def declared_text(e2):
+    """The value of product_owner_declared in the e2 block, as text: true, false or not given."""
+    return {True: "true", False: "false"}.get((e2 or {}).get(E2_DECLARED), "not given")
+
+
+def e2_family_problems(e2, families):
+    """Why the declaration of the channel inputs (the e2 block of run_sec002.read_e2) does not fit the item file (empty
+    if it fits). The transformation families that it lists must be the families of the item file, because the run
+    makes its cells from the item file and its header quotes the declaration. The preflight and both engines check it,
+    so a direct call of an engine cannot skip it."""
+    declared = list((e2 or {}).get("transformation_families") or [])
+    if sorted(families) == sorted(declared):
+        return []
+    return [f"the declaration of the channel inputs ({(e2 or {}).get('file')}) lists the transformation families "
+            f"{', '.join(declared) or 'none'}, and the item file lists {', '.join(families) or 'none'}: the two "
+            "lists must hold the same families"]
+
+
+def e2_evidence_problems(e2):
+    """Why evidence mode on an external target may not use the declaration of the channel inputs (empty if it may).
+    Its field product_owner_declared must be true. False, or no field, means that the product owner has not declared
+    it. A run on SRD-1 and a run in explore mode go on, and the header carries the field."""
+    if (e2 or {}).get(E2_DECLARED) is True:
+        return []
+    return [f"the declaration of the channel inputs ({(e2 or {}).get('file')}) does not say that the product owner "
+            f"declared it ({E2_DECLARED} is {declared_text(e2)}). Evidence mode on an external target needs "
+            f"{E2_DECLARED} true"]
+
+
 # The fields on which an external run matches its baseline, a schema 5 log of TP-SEC-001 through the same channel.
 EXTERNAL_MATCH_FIELDS = ("target.profile_sha256", "target.adapter", "target.endpoint_host", "declared.model_id",
                          "declared.target_version")
@@ -710,9 +751,14 @@ def check(recs, repo=runlog.REPO, use_repo=True):
             or not all(k in e2 for k in ("file", "declared_by", "declared_on")) or not str(e2.get("status") or "")):
         problems.append("header: the e2 block (the declaration of the channel inputs: the file quoted, its SHA-256, "
                         "who declared it, when, and its status) is missing or incomplete")
+    # product_owner_declared (since 0.8): a log from before the field has no such key, and check takes it as it was.
+    if isinstance(e2, dict) and e2.get(E2_DECLARED) not in (True, False, None):
+        problems.append(f"header: {E2_DECLARED} in the e2 block is not true, false or null")
+    elif external and h.get("mode") == "evidence" and isinstance(e2, dict) and E2_DECLARED in e2:
+        problems += [f"header: {p}" for p in e2_evidence_problems(e2)]
     readings = h.get("readings") if isinstance(h.get("readings"), list) else []
     for line in READINGS + (READINGS_EXTERNAL if external else []):
-        if line not in readings:
+        if line not in readings and READINGS_REPLACED.get(line) not in readings:
             problems.append(f"header: a reading is missing from the readings block: {line.split(';')[0]}")
     lock = h.get("lock") or {}
     if not lock.get("hash") or not isinstance(lock.get("time_ns"), int):

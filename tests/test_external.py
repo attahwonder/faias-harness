@@ -643,9 +643,19 @@ class ExternalSec002Tests(unittest.TestCase):
         (d / "TP-SEC-002.json").write_text(json.dumps(item_file()), encoding="utf-8")
         cls.patcher = mock.patch.object(sec002, "ITEM_FILE", str(d / "TP-SEC-002.json"))
         cls.patcher.start()
-        cls.e2 = d / "channel_inputs.yaml"
-        cls.e2.write_text(E2_TEXT.replace(", ".join(sec002_families.FAMILIES), ", ".join(CELL_FAMILIES)),
-                          encoding="utf-8")
+        # The declaration of the runs: the two families of the test item file, declared by the product owner, as
+        # evidence mode needs. The other files: not declared (false), no field, and the five families.
+        cells = E2_TEXT.replace(", ".join(sec002_families.FAMILIES), ", ".join(CELL_FAMILIES))
+        declared = (cells.replace("status: a choice of the harness; not yet declared by the product owner\n",
+                                  "status: declared by the product owner (a test fixture)\n")
+                    .replace("product_owner_declared: false\n", "product_owner_declared: true\n"))
+        cls.e2, cls.e2_false, cls.e2_absent, cls.e2_five = (d / f"channel_inputs{s}.yaml"
+                                                            for s in ("", "_false", "_absent", "_five"))
+        for path, text in ((cls.e2, declared), (cls.e2_false, cells),
+                           (cls.e2_absent, cells.replace("product_owner_declared: false\n", "")),
+                           (cls.e2_five, E2_TEXT.replace("product_owner_declared: false\n",
+                                                         "product_owner_declared: true\n"))):
+            path.write_text(text, encoding="utf-8")
         cls.behaviour = [keeps_state]
         cls.host = StandInModelHost(lambda t, n, m: cls.behaviour[0](t, n, m), with_messages=True).__enter__()
         cls.profile_path = cls.write_profile("generic-http", cls.host.base_url, {"model": "example-model"}, "gh.yaml")
@@ -972,6 +982,50 @@ class ExternalSec002Tests(unittest.TestCase):
         self.assertIn(f"the baseline of an external run must be a log of an external TP-SEC-001 run, schema "
                       f"{runlog.SCHEMA_EXTERNAL}; this log is of schema '{runlog.SCHEMA}'", out)
 
+    def test_evidence_mode_refuses_a_declaration_that_the_product_owner_has_not_declared(self):
+        """product_owner_declared false, or no such field: --start refuses before the probe, and a direct call of the
+        engine refuses before any file. No call reaches the channel."""
+        probes = {"channel": {"session_state": "observed"}}
+        for path, text in ((self.e2_false, "false"), (self.e2_absent, "not given")):
+            want = (f"the declaration of the channel inputs ({self.dir.name}/{path.name}) does not say that the "
+                    "product owner declared "
+                    f"it (product_owner_declared is {text}). Evidence mode on an external target needs "
+                    "product_owner_declared true")
+            with self.subTest(declared=text):
+                first = len(self.host.requests)
+                rc, out, asked = self.pf("--start", "--sign-key", str(self.priv), channel_inputs=str(path))
+                self.assertEqual((rc, asked), (2, []), out[-1500:])
+                self.assertIn(f"product_owner_declared: {text}", out)
+                self.assertIn(f"  - {want}", out.split("START REFUSED. No run starts. Fix these points first:\n")[1])
+                run_dir = self.dir / f"undeclared_{path.stem}"
+                with no_outside_network(), self.assertRaises(ValueError) as cm:
+                    external.execute(self.settings(channel_inputs=str(path)), load_profile(self.profile_path),
+                                     run_dir=run_dir, sign_key=self.priv, confirmation=CONFIRM, probes=probes,
+                                     engine="direct", env=ENV)
+                self.assertEqual(str(cm.exception), want)
+                self.assertEqual((run_dir.exists(), len(self.host.requests)), (False, first))
+
+    def test_explore_mode_goes_on_with_a_declaration_that_is_not_declared_and_the_header_carries_it(self):
+        run = self.run_sec002("explore_undeclared", mode="explore", channel_inputs=str(self.e2_false), **FULL)
+        h = run.recs[0]
+        self.assertEqual((run.res.status, h["mode"], h["e2"]["product_owner_declared"]), ("complete", "explore", False))
+        self.assertIn(sec002_log.READINGS[1], h["readings"])
+        self.assertTrue(runlog.verify_log(run.res.log_path, run.res.sig_path, self.pub, repo=REPO)[0])
+        self.assertIs(self.complete().recs[0]["e2"]["product_owner_declared"], True)       # evidence mode, declared
+
+    def test_the_engine_refuses_families_that_are_not_those_of_the_item_file(self):
+        """The preflight compares the two lists. The engine does too, so a direct call cannot skip the check."""
+        run_dir = self.dir / "families_differ"
+        with no_outside_network(), self.assertRaises(ValueError) as cm:
+            external.execute(self.settings(channel_inputs=str(self.e2_five)), load_profile(self.profile_path),
+                             run_dir=run_dir, sign_key=self.priv, confirmation=CONFIRM,
+                             probes={"channel": {"session_state": "observed"}}, engine="direct", env=ENV)
+        self.assertEqual(str(cm.exception), f"the declaration of the channel inputs ({self.dir.name}/"
+                                            f"{self.e2_five.name}) lists the transformation families "
+                                            f"{', '.join(sec002_families.FAMILIES)}, and the item file lists "
+                                            f"{', '.join(CELL_FAMILIES)}: the two lists must hold the same families")
+        self.assertFalse(run_dir.exists())
+
     def test_start_reaches_the_typed_yes_with_the_label_and_runs(self):
         rc, out, asked = self.pf("--start", "--sign-key", str(self.priv))
         self.assertEqual(rc, 4, out[-1500:])
@@ -1147,6 +1201,11 @@ class ExternalSec002Tests(unittest.TestCase):
         self.assertIn("the session limits of an external run must say that they were not read", msg)
         msg = edited("pinned", lambda h: h["model"].update(pinned=True))
         self.assertIn("an external run must state that the model is not pinned", msg)
+        msg = edited("undeclared", lambda h: h["e2"].update(product_owner_declared=False))      # evidence mode
+        self.assertIn("(product_owner_declared is false). Evidence mode on an external target needs "
+                      "product_owner_declared true", msg)
+        msg = edited("not_bool", lambda h: h["e2"].update(product_owner_declared="yes"))
+        self.assertIn("header: product_owner_declared in the e2 block is not true, false or null", msg)
 
     def test_a_json_http_probe_records_a_session_path_that_the_first_response_did_not_hold(self):
         """json-http with session_path: when the first response does not hold it, the later turns send no session ID.

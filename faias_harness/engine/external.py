@@ -31,8 +31,9 @@ Each run of a sequence is one adapter session, and each turn has its own run rec
 the run ends the session: the record of that turn has the outcome no_result, and the later turns are not sent. The
 channel probe is a recall test in two sessions, with a control session (session_probe). Tracks A and B need
 `session_state: observed`. When the probe does not observe it, the run sends Track C(ii) only. Tracks A and B and the
-isolation arm are not run, and the header names them with the reason (sec002_log.track_selection). The baseline is a schema 5 log of an external TP-SEC-001 run, matched on five declared
-fields (sec002_log.EXTERNAL_MATCH_FIELDS). The log is schema 9 with the variant external and the blocks target, model,
+isolation arm are not run, and the header names them with the reason (sec002_log.track_selection). The baseline is a
+schema 5 log of an external TP-SEC-001 run, matched on five declared fields (sec002_log.EXTERNAL_MATCH_FIELDS). In
+evidence mode the declaration of the channel inputs needs product_owner_declared true. The log is schema 9 with the variant external and the blocks target, model,
 budget and pacing of schema 5. The encoders, the scorer, the measures, the log, the lock and the signature run on the
 operator's machine. Only the text of each turn and each cell leaves, through the channel of the profile and the egress
 allow-list. The run records the SHA-256 of each request, never its text. The redaction of SRD-1's placeholders does not
@@ -767,9 +768,11 @@ def _execute_sec002(settings, profile, *, run_dir, sign_key, confirmation, probe
     """Run TP-SEC-002 against the external target of the profile (see the module docstring). It refuses, before it
     writes any file: a run with no baseline log, no channel probe with a session state, a baseline that is not a
     schema 5 log of an external TP-SEC-001 run on the full set, a declaration of the channel inputs that cannot be
-    read, and, in evidence mode, a baseline that evidence mode does not allow (sec002_log.evidence_problems, on the
-    five declared fields). When the probe did not observe session state, the run sends the cells of Track C(ii) only,
-    and the header holds the block track_selection (sec002_log.track_selection)."""
+    read or whose families are not those of the item file (sec002_log.e2_family_problems), and, in evidence mode, a
+    declaration whose product_owner_declared is not true (sec002_log.e2_evidence_problems) and a baseline that evidence
+    mode does not allow (sec002_log.evidence_problems, on the five declared fields). When the probe did not observe
+    session state, the run sends the cells of Track C(ii) only, and the header holds the block track_selection
+    (sec002_log.track_selection)."""
     refused = sec002_start_problems(settings, probes)
     if refused:
         raise ValueError("; ".join(refused))
@@ -777,6 +780,11 @@ def _execute_sec002(settings, profile, *, run_dir, sign_key, confirmation, probe
     baseline = sec002_log.read_baseline(settings.m4_baseline_log, list(pool), repo, pubkey=settings.m4_baseline_pubkey,
                                         external=True)
     e2 = run_sec002.read_e2(settings.channel_inputs, repo)
+    refused = sec002_log.e2_family_problems(e2, sec002.load_set(repo)["families"])
+    if settings.mode == "evidence":
+        refused += sec002_log.e2_evidence_problems(e2)
+    if refused:         # the preflight checks these too; a direct call may not skip them
+        raise ValueError("; ".join(refused))
     if settings.mode == "evidence":
         differs = sec002_log.external_differences(baseline, sec002_log.external_run_facts(target_block(profile, settings)))
         refused = sec002_log.evidence_problems({**baseline, "differs_from_run": differs})
