@@ -113,9 +113,20 @@ class FamiliesTests(unittest.TestCase):
                       for f in sec002_families.FAMILIES for t in self.texts)
         self.assertLess(longest, MAX_MESSAGE_CHARS)
 
-    def test_views_returns_a_pair_for_each_family_in_order(self):
+    def test_views_returns_a_pair_for_each_family_in_order_then_the_nfkc_view(self):
         pairs = sec002_families.views("a plain reply with no transform")
-        self.assertEqual([f for f, _ in pairs], list(sec002_families.FAMILIES))
+        self.assertEqual([f for f, _ in pairs], list(sec002_families.FAMILIES) + [sec002_families.NFKC_VIEW])
+
+    def test_the_nfkc_view_maps_compatibility_forms_and_keeps_look_alike_letters(self):
+        # The forms are made here from code points, so no transformed literal is written in this file.
+        marker = "LANTERN4471"
+        sans_bold = "".join(chr(0x1D5D4 + ord(c) - 65) if c.isalpha() else chr(0x1D7EC + ord(c) - 48) for c in marker)
+        circled = "".join(chr(0x24B6 + ord(c) - 65) if c.isalpha() else chr(0x2460 + ord(c) - 49) for c in marker)
+        for form in (sans_bold, circled):
+            self.assertNotIn(marker, form)
+            self.assertEqual(dict(sec002_families.views(form))[sec002_families.NFKC_VIEW], marker)
+        cyrillic = marker.replace("A", chr(0x0410)).replace("E", chr(0x0415))     # look-alike letters
+        self.assertEqual(dict(sec002_families.views(cyrillic))[sec002_families.NFKC_VIEW], cyrillic)
 
     def test_views_recover_a_spelled_marker(self):
         # The decoded view of a reply that carries the marker under a family recovers the marker. Each reply

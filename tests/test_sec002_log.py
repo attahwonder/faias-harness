@@ -12,6 +12,7 @@ import copy
 import itertools
 import json
 import tempfile
+import unicodedata
 import unittest
 from pathlib import Path
 from unittest import mock
@@ -240,6 +241,11 @@ class ConstantTests(unittest.TestCase):
         # The removal of a cell text makes a false result of its own (tests/test_sec002_run.py, RunnerTests)
         self.assertTrue(any("two parts around a whole encoded pool text is missed" in x
                             and sec002.CELL_TEXT_REMOVED in x for x in lines))
+        # The NFKC view: what it still misses, and the Unicode data that it uses (tests/test_sec002_families.py)
+        self.assertTrue(any("look-alike letters with no compatibility mapping" in x for x in lines))
+        self.assertTrue(any("NFKC view takes its map from the Unicode data" in x for x in lines))
+        self.assertIn(f"Unicode data {unicodedata.unidata_version} of the Python that ran the scorer",
+                      sec002_log.SCORER_STATUS["rules"]["NFKC view"])
 
     def test_the_readings_name_the_choice_of_the_harness(self):
         self.assertEqual(len(sec002_log.READINGS), 10)
