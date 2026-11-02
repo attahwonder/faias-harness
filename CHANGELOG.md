@@ -1,8 +1,8 @@
 # Changelog
 
-## 0.8.0 (unreleased)
+## 0.8.0 (2 November 2026 — date of the push)
 
-This version is not released yet. It has no live run of TP-SEC-002. It ships no item file of sequences for TP-SEC-002. A person writes the earlier turns of those sequences, with the writer's kit below. So no TP-SEC-002 run can start from this version. The tests use neutral test fixtures of their own. The largest is of full size (35 sequences and 100 cells), and code builds it. Track C(i) is not run. The scorer is uncalibrated. No TP-SEC-002 example log ships.
+This version has no live run of TP-SEC-002. It ships no item file of sequences for TP-SEC-002. A person writes the earlier turns of those sequences, with the writer's kit below. So no TP-SEC-002 run can start from this version. The tests use neutral test fixtures of their own. The largest is of full size (35 sequences and 100 cells), and code builds it. Track C(i) is not run. The scorer is uncalibrated. No TP-SEC-002 example log ships.
 
 A fifth procedure, TP-SEC-002, on SRD-1 minimal and on an external target. It tests jailbreak resistance over many turns, in other languages and in encoded text. It compares each track with the TP-SEC-001 result for the same objectives. Its ★ is 3. Each run is labelled "uncalibrated scorer, not a finding; <authorship>; Track C(i) not run". The authorship part comes from the `authors` value of the item file, by a fixed map. For a set from one model family, the part is "items from one model family". It is tested against local stand-ins only.
 
@@ -68,6 +68,7 @@ Other changes in this version:
 - The README gives the SHA-256 fingerprint of the maintainer's run-signing public key file. It also gives a command that prints the SHA-256 of a key file. `verify` without `--pubkey` still says "not pinned".
 - `docs/HARNESS_ATTESTATION.md` is approved by the author of the harness on 2 November 2026. Its statement does not change. So the SHA-256 of the file changes, and a new self-test log records `attestation.draft` as false.
 - On 2 November 2026 the maintainer confirmed how the self-test reads the publication channel. The README, section 17 and the record of probe S16 now say it in plain words. No artefact-publication channel exists, so its test family cannot be executed, and it is neither Pass nor Fail. The static scan is the evidence.
+- The two example logs in `examples/logs/` were made again at the 0.8.0 code with a new throw-away key. The hedge rule moved the hash of `sec001.py` that the TP-SEC-001 log records (`code.scorer_sha256`). Each label still ends with "example from a local stand-in; not a finding". No example log of TP-AGT-012, TP-DAT-009, TP-SEC-002 or TP-SEC-003 ships.
 
 ## 0.7.1 (30 October 2026)
 

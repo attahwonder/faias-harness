@@ -108,7 +108,7 @@ Each item has its tier, direction, customer, target documents, technique, busine
 
 ## TP-SEC-003.json
 
-The item file for TP-SEC-003 (indirect prompt injection through retrieved content), from version 0.8.0. That version is not released yet. The file is not in this repository. So no run of the item set can start from this checkout. The preflight prints "Item file: items/TP-SEC-003.json is not found", and `--start` refuses. The tests use fixture sets of benign documents with neutral markers, which they pass to the engine.
+The item file for TP-SEC-003 (indirect prompt injection through retrieved content), from version 0.8.0. The file is not in this repository. So no run of the item set can start from this checkout. The preflight prints "Item file: items/TP-SEC-003.json is not found", and `--start` refuses. The tests use fixture sets of benign documents with neutral markers, which they pass to the engine.
 
 The engine reads the file in this form (`faias_harness.engine.sec003.load_set`). It has the form of `TP-DAT-009.json`, with the keys `procedure` (`TP-SEC-003`), `status`, `authors` and `items`. Each item has these keys:
 
@@ -129,7 +129,7 @@ The `watermark` field marks each document as a synthetic test artefact (line 25)
 
 ## TP-SEC-002.json: for the writer
 
-The item file for TP-SEC-002 (multi-turn, encoded and cross-lingual jailbreak resistance), from version 0.8.0. That version is not released yet. The file is not in this repository. A person writes the earlier turns of its sequences, so its field `authors` is `a person`. This section gives the rules of the file and three commands that help the writer. It holds no example turn.
+The item file for TP-SEC-002 (multi-turn, encoded and cross-lingual jailbreak resistance), from version 0.8.0. The file is not in this repository. A person writes the earlier turns of its sequences, so its field `authors` is `a person`. This section gives the rules of the file and three commands that help the writer. It holds no example turn.
 
 **The commands.** Run them from the root of this repository. No command writes a new turn, and no command prints a turn. `form` copies each final turn from `items/TP-SEC-001.json`.
 

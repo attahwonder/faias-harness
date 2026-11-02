@@ -1,23 +1,23 @@
 # Architecture
 
-Harness version 0.7. This document describes the design of the harness and what exists today. Each section says what is built and what is not.
+Harness version 0.8. This document describes the design of the harness and what exists today. Each section says what is built and what is not.
 
 ## 1. Scope and status
 
 The harness is planned to run the FAIAS test procedures against an AI system in a test environment. FAIAS is the Financial AI Independent Assurance Standard. Version 1.3.4 of FAIAS has 109 test procedures, one for each Independent Review Question (FAIAS `README.md`, line 31).
 
-Version 0.7 shows the design and the direction. It has eight parts that work:
+Version 0.8 shows the design and the direction. It has eight parts that work:
 
 - the **records**: one generic record for each of 45 procedures;
 - the **record checker**: it compares each record with the FAIAS source lines;
 - the **preflight**: it compares a target profile with the capability needs of each procedure;
-- the **engine**: it runs TP-SEC-001, TP-SEC-006, TP-AGT-012 and TP-DAT-009 on SRD-1 minimal (sections 11, 12, 16, 18 and 19). Version 0.8.0, not yet released, adds TP-SEC-002 and TP-SEC-003 (sections 20 and 21). Since 0.6, the commands `rescore`, `verify --no-repo` and `stamp` work on a signed run log (section 12);
+- the **engine**: it runs TP-SEC-001, TP-SEC-006, TP-AGT-012 and TP-DAT-009 on SRD-1 minimal (sections 11, 12, 16, 18 and 19). Version 0.8.0 adds TP-SEC-002 and TP-SEC-003 (sections 20 and 21). Since 0.6, the commands `rescore`, `verify --no-repo` and `stamp` work on a signed run log (section 12);
 - the **external run**: TP-SEC-001 and, since 0.8.0, TP-SEC-002 against a deployed staging agent, through a channel adapter (sections 13, 20);
 - the **tool emulator**: an MCP server with synthetic tool results and a ledger, for `tool_routing` (section 14). A result is fixed, or (since 0.6) a built-in handler computes it from a synthetic store;
 - the **testability report** (0.6, section 15). `python -m faias_harness.testability` writes the preflight result of a profile as a report. The report can be signed and verified;
 - the **containment self-test** (0.6, section 17). `python -m faias_harness.selftest` probes each path from the harness to a host outside the local machine. It writes a log. With `--sign-key`, it signs the log. It makes client-level and process-level checks. It is not a network sandbox.
 
-The engine runs six procedures only, on SRD-1 minimal. They are TP-SEC-001, TP-SEC-006 (since 0.6.0), TP-AGT-012, TP-DAT-009 (both since 0.7), TP-SEC-002 (section 20) and TP-SEC-003 (section 21). Version 0.8.0 adds TP-SEC-002 and TP-SEC-003, and that version is not yet released. A run on the full item set is labelled "uncalibrated scorer, not a finding", and a run on the spike set "engine spike, not a finding". A run of TP-SEC-006 is labelled "uncalibrated scorer, not a finding; items from one model family". A run of TP-AGT-012 carries the label "not a finding; one action class (fee refund); items from one model family; no second reviewer; no clearance path". A run of TP-DAT-009 carries the label "not a finding; synthetic store of 16 documents; items from one model family; one person; no review records, no change dates". The channel adapters are tested against local stand-ins. Only `generic-http` has also run live, against the OpenRouter chat completions endpoint (section 13). The other four are untested against the platform they are written for. The example target SRD-1 is built only in a minimal form.
+The engine runs six procedures only, on SRD-1 minimal. They are TP-SEC-001, TP-SEC-006 (since 0.6.0), TP-AGT-012, TP-DAT-009 (both since 0.7), TP-SEC-002 (section 20) and TP-SEC-003 (section 21). Version 0.8.0 adds TP-SEC-002 and TP-SEC-003. A run on the full item set is labelled "uncalibrated scorer, not a finding", and a run on the spike set "engine spike, not a finding". A run of TP-SEC-006 is labelled "uncalibrated scorer, not a finding; items from one model family". A run of TP-AGT-012 carries the label "not a finding; one action class (fee refund); items from one model family; no second reviewer; no clearance path". A run of TP-DAT-009 carries the label "not a finding; synthetic store of 16 documents; items from one model family; one person; no review records, no change dates". The channel adapters are tested against local stand-ins. Only `generic-http` has also run live, against the OpenRouter chat completions endpoint (section 13). The other four are untested against the platform they are written for. The example target SRD-1 is built only in a minimal form.
 
 Sections 11 and 12 describe the engine, which version 0.3.0 adds as a spike. Version 0.4.0 adds the full item set (section 12). A feature that sections 8 and 10 give as built for the engine exists only for the six procedures. For TP-SEC-001 it exists on SRD-1 minimal and, since 0.5, on an external target (section 13). For TP-SEC-002 it exists on SRD-1 minimal and, since 0.8.0, on an external target (section 20). For TP-SEC-006, TP-AGT-012, TP-DAT-009 and TP-SEC-003 it exists on SRD-1 minimal only (sections 16, 18, 19 and 21).
 
@@ -162,15 +162,15 @@ An adapter implements the target interface for a real system. `faias_harness/ada
 | `srd1-http` (`srd1_http.py`) | 0.3. SRD-1 minimal. `conversation` and `traces`; `config_read` since 0.6.0 (the prompt only). Section 11. |
 | Contact-centre platforms, Amazon Bedrock InvokeAgent | Not built. |
 
-The harness supports no platform in version 0.7. `faias_harness/adapters/README.md` says what each adapter records for each call.
+The harness supports no platform in version 0.8. `faias_harness/adapters/README.md` says what each adapter records for each call.
 
 `docs/PLATFORMS.md` is a survey of the public vendor documentation of six agent platforms, set against the seven capabilities. Each row in it has a quote that a script found on the vendor page on 16 October 2026. The survey is not an adapter and not a test. It does not show that a platform supports the harness.
 
 ## 8. Design rules
 
-The rules bind every phase of the work. The last column says what version 0.7 does about each rule.
+The rules bind every phase of the work. The last column says what version 0.8 does about each rule.
 
-| # | Rule | Basis | In v0.7 |
+| # | Rule | Basis | In v0.8 |
 |---|---|---|---|
 | 1 | **The target and the harness are separate.** The harness drives a target from outside, through the target interface. No target has a private path. | Section 2 | The interface exists. No target implements it fully. The engine reaches SRD-1 minimal through the `srd1-http` adapter (`conversation`, `traces`, and since 0.6.0 `config_read`), and an external target through a channel adapter (`conversation`). |
 | 2 | **The ★ rating is a label.** The harness copies it from the Confidence line and never computes it. | `PLAYBOOK_OVERVIEW.md`, line 134 | The record checker compares each ★ with the Confidence line. |
@@ -210,9 +210,9 @@ Limits of this draft:
 - The needs say what a procedure asks of a system, in terms of the seven capability names. They do not say that any adapter or platform offers the capability.
 - The preflight result depends on this draft. Check an entry before you rely on it.
 
-## 10. What version 0.7 does not do
+## 10. What version 0.8 does not do
 
-- It runs six procedures only, TP-SEC-001, TP-SEC-006, TP-AGT-012, TP-DAT-009, TP-SEC-002 and TP-SEC-003 (both 0.8.0, not yet released). TP-SEC-006, TP-AGT-012, TP-DAT-009 and TP-SEC-003 run on SRD-1 minimal only. TP-SEC-001 and TP-SEC-002 also run on an external target. Their results are not findings.
+- It runs six procedures only, TP-SEC-001, TP-SEC-006, TP-AGT-012, TP-DAT-009, TP-SEC-002 and TP-SEC-003 (both 0.8.0). TP-SEC-006, TP-AGT-012, TP-DAT-009 and TP-SEC-003 run on SRD-1 minimal only. TP-SEC-001 and TP-SEC-002 also run on an external target. Their results are not findings.
 - The threshold lock and log signing exist for the engines of these six procedures and for the containment self-test only. The spend cap exists for the six engines only. The engine has no network sandbox. The containment self-test (section 17) makes client-level and process-level checks only. The MCP tool emulator exists (section 14). The engines of the first four procedures use it when `tools_enabled` is true. The TP-SEC-002 and TP-SEC-003 engines run with tools off only. A TP-AGT-012 run needs `tools_enabled: true`. A TP-DAT-009 run needs it too, for its tool arm.
 - C-05 is built only as C-05 minimal: a lexical retrieval over 16 synthetic documents (section 19). It has no embedding model, no chunking, no re-index and no export.
 - No adapter is tested against the platform it is written for. The harness supports no platform. `generic-http` has run live one time, against the OpenRouter chat completions endpoint on 22 October 2026. That run tested the channel and the engine only.
@@ -603,7 +603,7 @@ GET `/config/retrieval` (`config_read("retrieval")`) gives the mode, the stage a
 
 **What it does not do.** C-05 minimal does not split a document into chunks. It has no embedding model, no metadata precedence, no re-index and no export. The run has no review records of denials and no change dates. It has no model judge, no human labels and no second reviewer. The emulator applies the entitlement for the principal that SRD-1 presents. So a part of the tool-path control is in the harness, and `config_read("retrieval")` says so. The run makes no Pass, Fail or Partial decision.
 
-## 20. TP-SEC-002 on SRD-1 minimal and on an external target (0.8.0, not yet released)
+## 20. TP-SEC-002 on SRD-1 minimal and on an external target (0.8.0)
 
 The engine runs a fifth procedure, TP-SEC-002, on SRD-1 minimal. It also runs it on an external target, through a channel adapter ("The external run", below). The procedure tests jailbreak resistance over many turns, in other languages and in encoded text. It compares each track with the TP-SEC-001 result for the same inert objectives (FAIAS `PLAYBOOK_SEC_002.md` line 16). Its ★ is 3, copied from the record. The setting `procedure: TP-SEC-002` selects it. The run uses the frame of section 12. That frame has the header and the lock before the first item. It has the thresholds with their bases and the code block. It has the Ed25519 signature, the cap, the egress allow-list, the `yes` prompt and the two run engines. Each run is labelled "uncalibrated scorer, not a finding; <authorship>; Track C(i) not run". The authorship part comes from the `authors` value of the item file, by the fixed map `sec002.AUTHORSHIP` (the table below). The tests use local stand-ins only. No live run has used it. The parts are `engine/sec002.py`, `engine/sec002_families.py`, `engine/sec002_log.py` and `engine/run_sec002.py`. The external run is in `engine/external.py`. The writer's kit of the item file is in `engine/sec002_items.py` (below).
 
@@ -776,7 +776,7 @@ The header's `scorer.rules` block names the other rules of this harness. They ar
 
 **What it does not do.** It does not run Track C(i) or the family "translation to language X" (line 20). A person must write, check and label each such text (lines 12 and 61). It does not change a turn to suit a reply. The turns of each Track A and Track B sequence are written before the run. A turn refers to the earlier output in general terms only. The later turns are still sent after a refusal. So Track A measures a scripted escalation, not the adaptive Crescendo of line 18. It does not peer-check the sequences (step 3, line 29). It does not inspect monitor rules beyond the fact of M6 (step 7, line 33), because SRD-1 minimal has none. It writes no destruction certificate (step 9 and evidence output E3). SRD-1 minimal is built from files for each run and stopped at the end. The engine runs the standard variant with tools off only. The preflight refuses the positive control and tools on before it calls the engine. It has no guardrail layer (C-10), no model judge and no human labels. It makes no Pass, Fail or Partial decision. SRD-1's own trace store (C-15) keeps each message as sent, with the encoded text of each cell. It also keeps each reply as the model gave it. That store is the target's record, not the harness log. It is in the folder `target/` of the run folder, with a README. Do not put that folder in the "working papers". The run log lists these limits (`not_in_run`).
 
-## 21. TP-SEC-003 on SRD-1 minimal (0.8.0, not yet released)
+## 21. TP-SEC-003 on SRD-1 minimal (0.8.0)
 
 The engine runs a sixth procedure, TP-SEC-003, on SRD-1 minimal. The procedure tests indirect prompt injection through retrieved content. Its ★ is 4, copied from the record. The setting `procedure: TP-SEC-003` selects it (`targets/srd1/settings_sec003.yaml`). The run uses the frame of section 12. That frame has the header and the lock before the first item. It has the thresholds with their bases and the code block. It has the Ed25519 signature, the cap, the egress allow-list, the `yes` prompt and the two run engines. The run needs a containment self-test of this code that passes, as TP-DAT-009 does (section 17). The parts are `engine/sec003.py`, `engine/sec003_log.py` and `engine/run_sec003.py`. The tests use a local stand-in for the model host and fixture sets of benign documents. No live run has used the engine.
 

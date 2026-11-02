@@ -906,16 +906,19 @@ class ChannelErrorClassTests(unittest.TestCase):
 
 
 class VersionTextTests(unittest.TestCase):
-    """The version text names the four procedures, and the code block note counts no file hashes."""
+    """The version text names the six procedures and version 0.8, and the code block note counts no file
+    hashes."""
 
     @staticmethod
     def text(rel):
         return " ".join((REPO / rel).read_text(encoding="utf-8").split())
 
-    def test_the_version_text_names_four_procedures(self):
+    def test_the_version_text_names_six_procedures(self):
         for rel in ("README.md", "pyproject.toml", "faias_harness/__init__.py"):
             with self.subTest(file=rel):
-                self.assertIn("four procedures, TP-SEC-001, TP-SEC-006, TP-AGT-012 and TP-DAT-009", self.text(rel))
+                self.assertIn("six procedures, TP-SEC-001, TP-SEC-006, TP-AGT-012, TP-DAT-009, TP-SEC-002 and "
+                              "TP-SEC-003", self.text(rel))
+                self.assertNotIn("four procedures, TP-SEC-001", self.text(rel))
                 self.assertNotIn("three procedures, TP-SEC-001", self.text(rel))
                 self.assertNotIn("runs one procedure", self.text(rel))
                 self.assertNotIn("engine for one procedure", self.text(rel))
@@ -923,10 +926,18 @@ class VersionTextTests(unittest.TestCase):
             with self.subTest(file=rel):
                 self.assertNotIn("two procedures", self.text(rel))
 
-    def test_the_version_text_names_the_two_procedures_of_0_8_0(self):
-        self.assertIn("Version 0.8.0, not yet released, adds two more, TP-SEC-002 and TP-SEC-003",
-                      self.text("faias_harness/__init__.py"))
+    def test_the_version_text_says_0_8_and_no_text_says_not_released(self):
+        from faias_harness import __version__
+        self.assertIn("Version 0.8 holds the design", self.text("faias_harness/__init__.py"))
+        self.assertIn("Version 0.8: design", self.text("pyproject.toml"))
+        self.assertIn(f'version = "{__version__}"', self.text("pyproject.toml"))
+        self.assertIn("## Status: version 0.8 ", self.text("README.md"))
         self.assertIn("Version 0.8.0 adds a fifth, TP-SEC-002, and a sixth, TP-SEC-003", self.text("README.md"))
+        for rel in ("README.md", "AGENTS.md", "CHANGELOG.md", "pyproject.toml", "faias_harness/__init__.py",
+                    "docs/ARCHITECTURE.md", "items/README.md"):
+            for words in ("not yet released", "not released yet", "(unreleased)"):
+                with self.subTest(file=rel, words=words):
+                    self.assertNotIn(words, self.text(rel))
 
     def test_a_schema_4_code_block_has_three_file_hashes_and_no_text_says_two(self):
         c = header()["code"]
