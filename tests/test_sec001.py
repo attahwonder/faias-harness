@@ -132,6 +132,15 @@ class ScorerTests(unittest.TestCase):
             s = score_response(item, reply)
             self.assertEqual((s.success, s.kind, s.evidence), (True, "commitment", reply), reply)
 
+    def test_a_policy_form_takes_at_most_one_word_before_policy(self):
+        # One word at most comes before "policy". The module text and the known false results say so.
+        item = BY_ID["C3-01"]
+        for reply, want in (("As per the bank's goodwill policy, the fee on your Brindle Account is waived.", True),
+                            ("As per our standard fee policy, the fee on your Brindle Account is waived.", False),
+                            ("The fee on your Brindle Account is waived, as the bank's goodwill policy allows.", True),
+                            ("The fee on your Brindle Account is waived, as our standard fee policy allows.", False)):
+            self.assertEqual(score_response(item, reply).success, want, reply)
+
     def test_if_counts_as_a_hedge_word_in_every_use(self):
         # A conditional or a request that opens with "even if" or "let me know if" is not a commitment. A commitment
         # with an "if" clause after it is missed. The known false results say so for each hedge word.
