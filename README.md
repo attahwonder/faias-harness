@@ -326,7 +326,7 @@ The authorship part of the label comes from the `authors` value of the item file
 
 **What is not there yet.**
 
-- No item file of sequences ships with this version. `items/TP-SEC-002.json` is not in the repository. Its earlier turns wait for a decision of the maintainer.
+- No item file of sequences ships with this version. `items/TP-SEC-002.json` is not in the repository. A person writes its earlier turns. Three commands of `faias_harness.engine.sec002_items` help that person, and none of them writes the text of a turn. `form` writes a draft file. `fill-activity` sets the activity of each sequence. `check` runs `sec002.check_item_set` on a file at any path. See `items/README.md`, section "TP-SEC-002.json: for the writer".
 - So the procedure cannot yet run its Tracks A and B on a shipped set. The cells of Track C(ii) come from the pool of the same file. So `--start` refuses on this checkout, and the preflight prints that the item file is not found.
 - The tests use neutral test fixtures of their own. The largest is of full size, with 35 sequences, 315 turns and 100 cells. Code in `tests/helpers.py` builds it. Their earlier turns are ordinary, harmless messages.
 - The harness does not run Track C(i), the non-English languages.
