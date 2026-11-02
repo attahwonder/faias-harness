@@ -728,7 +728,8 @@ class PreflightTests(unittest.TestCase):
                           encoding="utf-8")
         cls.start = ("--start", "--sign-key", str(_MOD["priv"]))
 
-    def preflight(self, *extra, baseline=None, mode="evidence", e2=None, executor=None, answer="no", **changes):
+    def preflight(self, *extra, baseline=None, mode="evidence", e2=None, executor=None, answer="no", item_check=False,
+                  **changes):
         """The preflight with a TP-SEC-002 settings file. `baseline`: a log in place of the baseline of this module.
         `changes`: changes to the settings mapping."""
         raw = sec002_raw(mode=mode, **changes)
@@ -743,9 +744,14 @@ class PreflightTests(unittest.TestCase):
         probes = {"judge_family": "not applicable", "tool_call": {"ok": True}, "reasoning_text": {"present": False},
                   "cost_usd": 0.0}
         buf = io.StringIO()
+        # The test item file of this module has one sequence on each track and two families. It is not the full set.
+        # So the item check of --start (preflight.sec002_item_problems) is left out unless `item_check` is true. The
+        # last three tests of this class run it at full size.
+        item_patch = (contextlib.nullcontext() if item_check
+                      else mock.patch.object(preflight, "sec002_item_problems", lambda: []))
         with contextlib.redirect_stdout(buf), no_outside_network(), mock.patch.dict(os.environ, ENV), \
                 mock.patch.object(spike, "run_probes", lambda g: probes), \
-                mock.patch.object(run_sec002, "E2_FILE", str(e2 or self.e2)):
+                mock.patch.object(run_sec002, "E2_FILE", str(e2 or self.e2)), item_patch:
             rc = preflight.main(["--profile", str(self.profile), "--settings", str(path), *extra],
                                 input_fn=lambda p: answer, gateway_factory=lambda s: Gateway(),
                                 executor=executor or (lambda **k: self.fail("no run may start")),
@@ -927,6 +933,63 @@ class PreflightTests(unittest.TestCase):
         self.assertEqual(rc, 2, out[-1500:])
         self.assertEqual(self.problems(out), ["  - reviewer_values.M1 needs a value and a reason before a run (verify "
                                               "refuses a log without them)"])
+
+    def full_size_file(self, name, change=None):
+        """The neutral fixture of tests/helpers.py at full size, with `change` made to it, in a file of its own."""
+        data = sec002_neutral_fixture(REPO)
+        if change:
+            change(data)
+        path = self.dir / name
+        path.write_text(json.dumps(data), encoding="utf-8")
+        return data, path
+
+    def assert_no_turn(self, out, data):
+        for s in data["tracks"]["A"] + data["tracks"]["B"]:
+            for turn in s["turns"]:
+                self.assertNotIn(turn, out)
+
+    def test_start_runs_the_item_check_and_takes_the_full_size_fixture(self):
+        """With the full-size neutral fixture as the item file, the item check of --start finds no problem, and the
+        preflight reaches the typed yes. The output holds no turn of the file."""
+        data, path = self.full_size_file("TP-SEC-002_full.json")
+        with mock.patch.object(sec002, "ITEM_FILE", str(path)):
+            self.assertEqual(preflight.sec002_item_problems(), [])
+            rc, out = self.preflight(*self.start, e2=_MOD["e2_five"], item_check=True)
+        self.assertEqual(rc, 4, out[-1500:])
+        self.assertNotIn("REFUSED", out)
+        self.assertIn("Start conditions are met.", out)
+        self.assert_no_turn(out, data)
+
+    def test_start_refuses_an_item_file_that_the_item_check_does_not_pass_and_probes_do_not_check_it(self):
+        """A faulty copy of the full-size fixture. --start refuses it, before the operator types yes, with each problem
+        of the item check after "the item file: ". --probes does not run the item check, as for TP-AGT-012 and
+        TP-SEC-003, because the probes send no item. No output holds a turn of the file."""
+        def faults(d):
+            d["sizes"]["A"] = 21
+            d["tracks"]["A"][2]["technique"] = ""
+            d["tracks"]["B"][3]["turns"][0] += " film"
+        data, path = self.full_size_file("TP-SEC-002_faulty.json", faults)
+        with mock.patch.object(sec002, "ITEM_FILE", str(path)):
+            rc, out = self.preflight(*self.start, e2=_MOD["e2_five"], item_check=True)
+            self.assertEqual(rc, 2, out[-1500:])
+            self.assertEqual(self.problems(out), ["  - the item file: the field sizes does not match the counts",
+                                                  "  - the item file: A-03: the sequence names no technique",
+                                                  "  - the item file: B-04: banned stem 'film'"])
+            self.assert_no_turn(out, data)
+            rc, out = self.preflight("--probes", e2=_MOD["e2_five"], item_check=True)
+        self.assertEqual(rc, 0, out[-1500:])
+        self.assertNotIn("the item file:", out)
+        self.assertNotIn("REFUSED", out)
+        self.assert_no_turn(out, data)
+
+    def test_start_names_an_undeclared_authors_value_of_the_item_file_once(self):
+        """The item check names the authors value too. --start names that problem once."""
+        data, path = self.full_size_file("TP-SEC-002_authors_full.json", lambda d: d.update(authors="a model"))
+        with mock.patch.object(sec002, "ITEM_FILE", str(path)):
+            rc, out = self.preflight(*self.start, e2=_MOD["e2_five"], item_check=True)
+        self.assertEqual(rc, 2, out[-1500:])
+        self.assertEqual(self.problems(out), ["  - the item file: " + sec002.authorship_problem("a model")])
+        self.assert_no_turn(out, data)
 
 
 class _Log:

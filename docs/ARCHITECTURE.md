@@ -638,7 +638,9 @@ The value of `authors` gives the authorship part of the run label, by the table 
 - `python -m faias_harness.engine.sec002_items fill-activity <file>` sets the activity of each sequence by the rule of the item plan. It changes no other field.
 - `python -m faias_harness.engine.sec002_items check <file>` runs `check_item_set` on a file at any path. It prints the problems of the set, then the problems of each sequence under its ID. Then it prints the count of sequences with no problem. Its exit code is 0 with no problem and 1 otherwise.
 
-Each command refuses a file that is not one JSON object, and an object with a repeated key. The engine keeps only the last value of a repeated key. So a reader of the file can read a turn that the engine does not send. The section "TP-SEC-002.json: for the writer" of `items/README.md` gives each check in plain words, and the acceptance of a file. `--start` and the engine do not run `check_item_set` on the item file.
+Each command refuses a file that is not one JSON object, and an object with a repeated key. The engine keeps only the last value of a repeated key. So a reader of the file can read a turn that the engine does not send. The section "TP-SEC-002.json: for the writer" of `items/README.md` gives each check in plain words, and the acceptance of a file.
+
+`--start` runs `check_item_set` on the item file, on SRD-1 minimal and on an external target (`preflight.sec002_item_problems`). It refuses a file with a problem and prints each problem after "the item file: ", as for TP-AGT-012 and TP-SEC-003. A problem holds no text of a turn. It can name the barred word or the part of the marker that it found. The `authors` problem is printed once. `--probes` does not run the check. As for TP-AGT-012 and TP-SEC-003, the check is a start condition, and the probes send no item. The engine does not run the check either.
 
 **The five families.** Each family is a reversible transform of an inert text. The procedure records the family, never the transformed string (line 20).
 

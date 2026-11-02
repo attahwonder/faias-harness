@@ -190,4 +190,4 @@ Each command refuses a file that is not one JSON object. It also refuses a JSON 
 - A person reads each turn and finds it inert. The check finds an early ask by the fixed words of the table only. It does not find an ask in other words.
 - The preflight with `targets/srd1/settings_sec002.yaml` reads the file at `items/TP-SEC-002.json`. It does not print that the item file is not found. It prints that the item file has the same transformation families as the declaration of the channel inputs.
 
-`--start` and the engine do not run `sec002.check_item_set`. So `check` must give exit 0 before the file goes into the repository.
+`--start` runs `sec002.check_item_set` on `items/TP-SEC-002.json`, on SRD-1 minimal and on an external target. It refuses a file with a problem, and it prints each problem as `check` does. A problem holds no text of a turn. It can name the barred word or the part of the marker that it found. `--probes` and the engine do not run the check. So the acceptance still needs exit 0 from `check` before the file goes into the repository.

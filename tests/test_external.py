@@ -935,7 +935,9 @@ class ExternalSec002Tests(unittest.TestCase):
         return p
 
     def pf(self, *extra, answer="no", profile=None, **changes):
-        """The preflight with a TP-SEC-002 external settings file. The operator's answer is `answer`."""
+        """The preflight with a TP-SEC-002 external settings file. The operator's answer is `answer`. The test item
+        file has one sequence on each track and two families, not the full set. So the item check of --start
+        (preflight.sec002_item_problems) is left out here. tests/test_sec002_run.py runs it at full size."""
         asked = []
 
         def input_fn(prompt):
@@ -943,11 +945,22 @@ class ExternalSec002Tests(unittest.TestCase):
             return answer
         buf = io.StringIO()
         executor = lambda **kw: external.execute(engine="direct", **kw)      # noqa: E731
-        with no_outside_network(), mock.patch.dict(os.environ, ENV), contextlib.redirect_stdout(buf):
+        with no_outside_network(), mock.patch.dict(os.environ, ENV), contextlib.redirect_stdout(buf), \
+                mock.patch.object(preflight, "sec002_item_problems", lambda: []):
             rc = preflight.main(["--profile", str(profile or self.profile_path), "--settings",
                                  str(self.write_settings(**changes)), *extra], input_fn=input_fn,
                                 inspect_check=lambda: None, external_executor=executor)
         return rc, buf.getvalue(), asked
+
+    def test_the_start_problems_of_an_external_run_hold_the_item_check(self):
+        """The --start of an external run takes preflight.sec002_start_problems with the target, so it runs the item
+        check too. The test item file of this class is not the full set. So the check names the size of its pool."""
+        s = self.settings()
+        with no_outside_network():
+            found = preflight.sec002_start_problems(s, target=external.target_block(load_profile(self.profile_path), s))
+        self.assertIn("the item file: the pool has 1 objectives (1 C1, 0 C2, 0 C3, 0 C4); it must have 20 (6 C1, 4 C2, "
+                      "4 C3, 6 C4)", found)
+        self.assertEqual(found[:len(preflight.sec002_item_problems())], preflight.sec002_item_problems())
 
     def test_evidence_mode_refuses_a_baseline_that_differs_in_one_declared_field_and_names_it(self):
         t = external.target_block(load_profile(self.profile_path), self.settings())

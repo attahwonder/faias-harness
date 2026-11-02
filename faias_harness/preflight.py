@@ -34,7 +34,9 @@ refuses the standard variant with either of them. The refund gate is not read, b
 document_search only.
 For TP-SEC-002 (version 0.8) it prints the M1 bar with its reason, the baseline log and its public key, and the
 declaration of the channel inputs (targets/srd1/channel_inputs.yaml): the languages, the transformation families and
-the field product_owner_declared. --start refuses families that are not those of the item file. On SRD-1 the field
+the field product_owner_declared. --start refuses families that are not those of the item file. It also refuses an
+item file that sec002.check_item_set does not pass, on SRD-1 and on an external target. --probes does not run that
+check. On SRD-1 the field
 is printed only, and the run goes on. With no baseline log named, it prints BASELINE
 REQUIRED, and --probes and --start refuse. A named baseline log is read as the engine reads it: a TP-SEC-001 log on
 the full set, its signature checked against `baseline_pubkey`, and its stored scores scored again with this scorer.
@@ -773,6 +775,16 @@ def sec002_baseline(settings, variant="standard", target=None):
     return label, lines, []
 
 
+def sec002_item_problems():
+    """The problems of the item file of TP-SEC-002 (sec002.check_item_set), in the form of TP-AGT-012 and TP-SEC-003.
+    Empty when the file is not found, because sec002_channel_inputs names that. A problem names a check and a
+    sequence. It holds no text of a turn. At most it names the barred word or the part of the marker that the check
+    found."""
+    from .engine import sec002
+    data = _sec002_items()
+    return [] if data is None else [f"the item file: {p}" for p in sec002.check_item_set(data, REPO)]
+
+
 def sec002_start_problems(settings, variant="standard", target=None):
     """What a TP-SEC-002 run needs besides the SRD-1 conditions: the M1 bar with its reason (verify refuses a log
     without them), the item file and a declaration of the channel inputs with its families (sec002_channel_inputs),
@@ -781,7 +793,9 @@ def sec002_start_problems(settings, variant="standard", target=None):
     anything else, so the preflight refuses the positive control and tools on first. `target`: the target block of an
     external run, which has no variant and no tools of SRD-1 (run_external refuses --positive-control itself), and
     whose declaration of the channel inputs is the setting channel_inputs. In evidence mode, that declaration needs
-    product_owner_declared true."""
+    product_owner_declared true. The run also needs an item file that the item check passes (sec002_item_problems).
+    That check names the authors value too, and that problem is named once. --probes does not run the item check. As
+    for TP-AGT-012 and TP-SEC-003, the check runs at --start only, because the probes send no item."""
     from .engine import sec002
     problems = []
     if settings.m1_value is None or not settings.m1_reason:
@@ -789,6 +803,7 @@ def sec002_start_problems(settings, variant="standard", target=None):
     data = _sec002_items()
     if data is not None and sec002.authorship_problem(data.get("authors")):
         problems.append(f"the item file: {sec002.authorship_problem(data.get('authors'))}")
+    problems += [p for p in sec002_item_problems() if p not in problems]
     if target is None and variant != "standard":
         problems.append(f"the variant {variant} does not apply to TP-SEC-002: the engine runs SRD-1 minimal with its "
                         "system prompt (the standard variant) only")
