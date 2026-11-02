@@ -468,7 +468,7 @@ def run_external(a, profile, settings, *, input_fn, executor, inspect_check):
         if sec002:
             problems += sec002_start_problems(settings, target=target)
         elif settings.m4_value is None or not settings.m4_reason:
-            problems.append("reviewer_values.M4 needs a value and a reason before a run (verify refuses a log without them)")
+            problems.append("reviewer_values.M4 needs a value and a reason before an external run, in each mode")
     # The probe of an external run reaches the firm's agent, so it needs the isolation attestation too.
     if problems:
         print("START REFUSED. No run starts. Fix these points first:" if a.start else "PROBES REFUSED. Fix these points first:")

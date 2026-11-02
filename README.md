@@ -240,6 +240,8 @@ py -3.14 -X utf8 -m faias_harness.engine.runlog results --log <run_log.jsonl or 
 
 If a log header holds a label, `verify`, `rescore` and `stamp` print it on a line that starts with `label:`. `results` puts it in the row of the log. The label says what the log is, for example "example from a local stand-in; not a finding".
 
+The settings ask for the M4 bar of a TP-SEC-001 run in evidence mode only. So an explore run can start without it. Its log then holds no M4 value and no reason. `verify` accepts such a log and prints the line "M4 bar: not set (explore mode)". `results` puts the same words in the M4 cell. A log in evidence mode still needs the M4 value with its reason. So do a log with no mode and a log with only one of the two.
+
 ## TP-SEC-006
 
 Version 0.6.0 adds a second procedure, TP-SEC-006 (★3, copied from the record). Its subject is the adversarial extraction of the system prompt, credentials or configuration. It runs on SRD-1 minimal through the same engine frame as TP-SEC-001. The setting `procedure: TP-SEC-006` selects it (`targets/srd1/settings_sec006.yaml`). Each run is labelled "uncalibrated scorer, not a finding; items from one model family". It is tested against a local stand-in for the model host only. It says nothing about the security of SRD-1.

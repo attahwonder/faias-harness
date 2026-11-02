@@ -15,7 +15,8 @@ from tests.helpers import make_settings
 REPO = Path(__file__).resolve().parents[1]
 
 
-def build_log(path, settings=None, lock_ns=1_000, run_ns=2_000, with_summary=True, mutate=None, request=None):
+def build_log(path, settings=None, lock_ns=1_000, run_ns=2_000, with_summary=True, mutate=None, request=None,
+              summary=None):
     s = settings or make_settings()
     if request is None:     # the text of C1-01 in the set of the settings, as a real run sends it
         request = next(i.text for i in sec001.load_items(s.item_set)[0] if i.id == "C1-01")
@@ -31,7 +32,7 @@ def build_log(path, settings=None, lock_ns=1_000, run_ns=2_000, with_summary=Tru
                "score": {"success": False, "kind": "override", "evidence": ""}, "served_host": "ExampleHost",
                "served_model": "m/x"})
     if with_summary:
-        log.write({"type": "summary", "status": "complete"})
+        log.write(summary or {"type": "summary", "status": "complete"})
     log.close()
     return h
 
@@ -214,6 +215,93 @@ class SignatureTests(unittest.TestCase):
         rc, out = call(["verify", "--log", str(self.log), "--sig", str(self.sig)])
         self.assertEqual(rc, 1)
         self.assertIn("FAIL", out)
+
+
+class ExploreM4Tests(unittest.TestCase):
+    """A TP-SEC-001 log in explore mode may leave the M4 bar unset, with no value and no reason. The settings ask for
+    the bar in evidence mode only (settings.validate). A log in evidence mode still fails the form check. So do a log
+    with no mode and a log with only one of the two."""
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.dir = Path(self.tmp.name)
+        self.priv, self.pub = runlog.make_key(self.dir / "keys", repo=REPO)
+
+    def tearDown(self):
+        self.tmp.cleanup()
+
+    def log(self, name, mode="explore", value=None, reason=None):
+        """A signed log in the folder `name`, with the mode and the M4 bar given. A mode of None leaves out the field.
+        The summary holds an M4 measure with no bar, as a run with no bar writes it."""
+        s = make_settings(mode="explore", reviewer_values={"M4": {"value": value, "reason": reason}})
+
+        def set_mode(h):
+            if mode is None:
+                del h["mode"]
+            else:
+                h["mode"] = mode
+        path = self.dir / name / "run_log.jsonl"
+        path.parent.mkdir()
+        build_log(path, settings=s, mutate=set_mode,
+                  summary={"type": "summary", "status": "complete",
+                           "measures": {"M4": {"value": 1.0, "bar": None, "within_bar": None}}})
+        runlog.sign_log(path, self.priv)
+        return path
+
+    def verify(self, path, use_repo=True):
+        return runlog.verify_log(path, path.with_name(path.name + ".sig"), self.pub, use_repo=use_repo)
+
+    def test_an_explore_log_with_no_m4_bar_passes_and_says_so(self):
+        path = self.log("explore")
+        self.assertEqual(runlog.check_log(path), [])
+        self.assertEqual(runlog.check_log(path, use_repo=False), [])
+        for use_repo in (True, False):
+            ok, msg = self.verify(path, use_repo)
+            self.assertTrue(ok, msg)
+            self.assertEqual(msg.splitlines()[1], "M4 bar: not set (explore mode)", msg)
+        buf = io.StringIO()
+        with contextlib.redirect_stdout(buf):
+            rc = runlog.main(["verify", "--log", str(path), "--sig", str(path) + ".sig", "--pubkey", str(self.pub)])
+        self.assertEqual(rc, 0)
+        self.assertEqual(buf.getvalue().splitlines()[1:], ["label: engine spike, not a finding",
+                                                           "M4 bar: not set (explore mode)"])
+        lines, refused = runlog.results([path.parent], self.pub)
+        self.assertEqual(refused, [])
+        self.assertIn("| value 1; within_bar null; M4 bar: not set (explore mode) |", lines[-1])
+
+    def test_an_evidence_log_or_a_log_with_no_mode_still_needs_the_m4_value_and_its_reason(self):
+        both = ["header: threshold M4 has no value", "header: the M4 value has no reason"]
+        for name, mode in (("evidence", "evidence"), ("no_mode", None)):
+            with self.subTest(mode=mode):
+                path = self.log(name, mode=mode)
+                self.assertEqual(runlog.check_log(path), both)
+                ok, msg = self.verify(path)
+                self.assertFalse(ok)
+                self.assertIn("malformed", msg)
+                self.assertNotIn("M4 bar: not set", msg)
+                self.assertEqual(len(runlog.results([path.parent], self.pub)[1]), 1)
+
+    def test_an_explore_log_with_only_one_of_the_value_and_the_reason_fails(self):
+        self.assertEqual(runlog.check_log(self.log("value_only", value=0.5)), ["header: the M4 value has no reason"])
+        self.assertEqual(runlog.check_log(self.log("reason_only", reason="a reason")),
+                         ["header: threshold M4 has no value"])
+
+    def test_a_log_with_an_m4_bar_prints_no_explore_line(self):
+        for name, mode in (("explore_set", "explore"), ("evidence_set", "evidence")):
+            with self.subTest(mode=mode):
+                path = self.log(name, mode=mode, value=0.5, reason="a reason")
+                ok, msg = self.verify(path)
+                self.assertTrue(ok, msg)
+                self.assertNotIn("M4 bar", msg)
+                lines, refused = runlog.results([path.parent], self.pub)
+                self.assertEqual(refused, [])
+                self.assertIn("| value 1; within_bar null |", lines[-1])
+
+    def test_the_rule_reads_tp_sec_001_logs_only(self):
+        h = {"schema": runlog.SCHEMA, "mode": "explore", "thresholds": {"M4": {"value": None, "value_reason": None}}}
+        self.assertTrue(runlog.m4_bar_not_set(h))
+        for schema in (runlog.SCHEMA_SEC006, runlog.SCHEMA_SEC002, runlog.SCHEMA_SELFTEST):
+            self.assertFalse(runlog.m4_bar_not_set({**h, "schema": schema}), schema)
 
 
 if __name__ == "__main__":

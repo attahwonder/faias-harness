@@ -18,6 +18,9 @@ The command refuses a folder inside the repository and refuses to overwrite a ke
 
 `verify` checks the signature over the exact bytes of the log, then checks the form of the log. Without
 `--pubkey` it uses the public key stored in the signature file, and says that the key is not pinned.
+The form check needs the M4 value with its reason. A TP-SEC-001 log in explore mode may leave out both
+(m4_bar_not_set). The settings ask for them in evidence mode only. For such a log, `verify` prints the line
+"M4 bar: not set (explore mode)", and `results` adds the same words to the M4 cell.
 
 Schema 3 (version 0.5) is the log of an external run (engine/external.py). Its header has a `target` block (the
 adapter, the channel, the endpoint host, what the channel shows, and the declared model and version with their
@@ -599,6 +602,18 @@ def external_header_problems(h):
     return out
 
 
+M4_NOT_SET = "M4 bar: not set (explore mode)"
+
+
+def m4_bar_not_set(h):
+    """True for the header `h` of a TP-SEC-001 log in explore mode whose M4 has no value and no reason. The settings
+    ask for the M4 bar in evidence mode only (settings.validate), so `check_log` accepts such a log. A log in evidence
+    mode still needs both. So do a log with no mode and a log with only one of the two."""
+    m4 = (h.get("thresholds") or {}).get("M4") or {}
+    return (h.get("schema") in KNOWN_SCHEMAS and h.get("mode") == "explore" and m4.get("value") is None
+            and not m4.get("value_reason"))
+
+
 def check_log(path, repo=REPO, use_repo=True):
     """Return the list of problems in the form of a run log (empty if none).
 
@@ -660,13 +675,14 @@ def check_log(path, repo=REPO, use_repo=True):
     if not h.get("settings_hash"):
         problems.append("header: settings hash is missing")
     th = h.get("thresholds") or {}
+    m4_unset = m4_bar_not_set(h)       # allowed in explore mode, as in the settings
     for m in ("M1", "M2", "M3", "M4"):
         t = th.get(m) or {}
         if not t.get("basis") or not t.get("basis_source"):
             problems.append(f"header: threshold {m} has no basis")
-        if t.get("value") is None:
+        if t.get("value") is None and not (m == "M4" and m4_unset):
             problems.append(f"header: threshold {m} has no value")
-    if not (th.get("M4") or {}).get("value_reason"):
+    if not (th.get("M4") or {}).get("value_reason") and not m4_unset:
         problems.append("header: the M4 value has no reason")
     if (h.get("scorer") or {}).get("calibrated") is not True and not (h.get("scorer") or {}).get("known_false_results"):
         problems.append("header: an uncalibrated scorer must list its known false results")
@@ -798,7 +814,8 @@ def verify_log(log_path, sig_path, pubkey_path=None, repo=REPO, use_repo=True):
         return False, "FAIL: the signature is valid but the log is malformed: " + "; ".join(problems) + tail
     pin = "pinned public key" if pubkey_path else "public key taken from the signature file (not pinned)"
     form = "log form ok" if use_repo else "log form ok without the repository"
-    return True, f"PASS: signature valid ({pin}); {form}" + tail
+    m4 = m4_line(log_path)
+    return True, f"PASS: signature valid ({pin}); {form}" + (f"\n{m4}" if m4 else "") + tail
 
 
 def _no_repo_lines(log_path):
@@ -928,6 +945,17 @@ def label_line(log_path):
     return f"label: {label}" if isinstance(label, str) and label else None
 
 
+def m4_line(log_path):
+    """The line M4_NOT_SET when the header of the log leaves the M4 bar unset in explore mode, or else None. The
+    rule is m4_bar_not_set. It reads line 1 only and checks nothing."""
+    try:
+        with open(log_path, encoding="utf-8") as f:
+            h = json.loads(f.readline())
+    except (OSError, ValueError):
+        return None
+    return M4_NOT_SET if isinstance(h, dict) and m4_bar_not_set(h) else None
+
+
 # ---------- results, one table over N signed logs ----------
 RESULT_VALUES = ("rate", "item_rate", "value", "uplift")
 RESULT_CHECKS = ("within_threshold", "within_bar", "within", "materially_higher")
@@ -990,7 +1018,8 @@ def result_logs(paths):
 def result_row(recs, name):
     """Return the row of one log, as a dict by column name. It holds the name, procedure, label, model, variant,
     items, k and status of the log. It also holds the outcome counts of the summary and a cell for each measure of
-    the summary."""
+    the summary. For a TP-SEC-001 log in explore mode with no M4 bar (m4_bar_not_set), the M4 cell ends with
+    M4_NOT_SET."""
     h = recs[0]
     s = recs[-1] if recs[-1].get("type") == "summary" else {}
     corpus, model = h.get("corpus") or {}, h.get("model") or {}
@@ -1007,6 +1036,8 @@ def result_row(recs, name):
     for k, m in (s.get("measures") or {}).items():
         if MEASURE_KEY.fullmatch(k):
             row[k] = measure_cell(m)
+    if m4_bar_not_set(h):
+        row["M4"] = f"{row['M4']}; {M4_NOT_SET}" if "M4" in row else M4_NOT_SET
     if h.get("schema") == SCHEMA_SEC002:
         # A TP-SEC-002 log: its items are the sequences and the cells, and M1 has a block for each sequence track.
         tracks = corpus.get("tracks") or {}
