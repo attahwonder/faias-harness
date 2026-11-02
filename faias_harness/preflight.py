@@ -696,7 +696,7 @@ def sec002_channel_inputs(path=None, evidence=False):
     if data is None:
         lines += [f"  - {p}" for p in problems] + [f"Item file: {sec002.ITEM_FILE} is not found"]
         return lines, problems + [f"the item file {sec002.ITEM_FILE} is not found"]
-    problems +=sec002_log.e2_family_problems(e2, list(data["families"]))
+    problems += sec002_log.e2_family_problems(e2, list(data["families"]))
     if problems:
         return lines + [f"  - {p}" for p in problems], problems
     return lines + ["  The item file has the same transformation families."], []
