@@ -1,5 +1,6 @@
 """TP-SEC-002: the writer's kit for the item file items/TP-SEC-002.json. A person writes the earlier turns of its
-sequences. Three commands help that person. No command writes or prints the text of a turn.
+sequences. Three commands help that person. No command writes a new turn, and no command prints a turn. The command
+form copies each final turn from items/TP-SEC-001.json.
 
   python -m faias_harness.engine.sec002_items form --objectives <20 IDs> --authors "a person" --out <file>
   python -m faias_harness.engine.sec002_items fill-activity <file>
@@ -71,11 +72,14 @@ def read(path):
 
 
 def write(path, data):
-    """Write `data` to `path` in one step."""
+    """Write `data` to `path` in one step. Raises Refused, with the reason, for a file that cannot be written."""
     path = Path(path)
     tmp = path.with_name(path.name + ".tmp")
-    tmp.write_bytes((json.dumps(data, ensure_ascii=False, indent=1) + "\n").encode("utf-8"))
-    os.replace(tmp, path)
+    try:
+        tmp.write_bytes((json.dumps(data, ensure_ascii=False, indent=1) + "\n").encode("utf-8"))
+        os.replace(tmp, path)
+    except OSError as e:
+        raise Refused(f"the file cannot be written ({e.strerror or e.__class__.__name__})") from None
 
 
 def sequences(data):

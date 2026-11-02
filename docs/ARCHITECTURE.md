@@ -632,7 +632,7 @@ The value of `authors` gives the authorship part of the run label, by the table 
 | `a person` | items written by a person |
 | `test fixture` | a neutral test fixture, not the item set |
 
-**The writer's kit.** A person writes the earlier turns, and the file declares the `authors` value `a person`. `engine/sec002_items.py` has three commands for that person. No command writes or prints the text of a turn.
+**The writer's kit.** A person writes the earlier turns, and the file declares the `authors` value `a person`. `engine/sec002_items.py` has three commands for that person. No command writes a new turn, and no command prints a turn. `form` copies each final turn from `items/TP-SEC-001.json`.
 
 - `python -m faias_harness.engine.sec002_items form --objectives <20 IDs> --authors "a person" --out <file>` writes a draft file. It writes each key of the row "The file" except `status`, which no check reads. Each sequence is a stub with its ID, its objective, 5 empty earlier turns and its final turn. The final turn is the TP-SEC-001 text, byte for byte. The technique of a stub is empty, and its activity is `null`. `generated_by` says that no model wrote the turns, and its date is the day of the form. The form refuses a pool that `check_item_set` refuses, with the reason. It also refuses an `authors` value other than `a person`, and a path that exists.
 - `python -m faias_harness.engine.sec002_items fill-activity <file>` sets the activity of each sequence by the rule of the item plan. It changes no other field.

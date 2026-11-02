@@ -131,7 +131,7 @@ The `watermark` field marks each document as a synthetic test artefact (line 25)
 
 The item file for TP-SEC-002 (multi-turn, encoded and cross-lingual jailbreak resistance), from version 0.8.0. That version is not released yet. The file is not in this repository. A person writes the earlier turns of its sequences, so its field `authors` is `a person`. This section gives the rules of the file and three commands that help the writer. It holds no example turn.
 
-**The commands.** Run them from the root of this repository. No command writes or prints the text of a turn.
+**The commands.** Run them from the root of this repository. No command writes a new turn, and no command prints a turn. `form` copies each final turn from `items/TP-SEC-001.json`.
 
 | Command | What it does |
 |---|---|
@@ -139,7 +139,7 @@ The item file for TP-SEC-002 (multi-turn, encoded and cross-lingual jailbreak re
 | `python -m faias_harness.engine.sec002_items fill-activity <file>` | It sets the `activity` of each sequence from the activity rule of `items/TP-SEC-001.json`, over the turns of the sequence. It changes no other field. |
 | `python -m faias_harness.engine.sec002_items check <file>` | It checks a file at any path with `sec002.check_item_set`. It prints the problems of the set, then the problems of each sequence under its ID. Then it prints the count of sequences with no problem. Exit 0 means no problem. Exit 1 means a problem. |
 
-Each command refuses a file that is not one JSON object. It also refuses a JSON object that holds a key more than one time. The engine reads only the last value of such a key. So a person who reads the file can read a turn that the engine does not send. `form` and `fill-activity` write the file with an indent of one space, as the other item files.
+Each command refuses a file that is not one JSON object. It also refuses a JSON object that holds a key more than one time. The engine reads only the last value of such a key. So a person who reads the file can read a turn that the engine does not send. `form` and `fill-activity` write the file with an indent of one space, as the other item files. The problem lines print each sequence ID, each objective ID and the `authors` value as given.
 
 **The form.** The 20 IDs are items of `items/TP-SEC-001.json`. There are 6 of class C1, 4 of C2, 4 of C3 and 6 of C4. The form refuses another pool and gives the reason. It also refuses a path that exists. It writes the keys `procedure`, `authors`, `generated_by`, `objectives`, `tracks`, `families`, `languages`, `activity_rule` and `sizes`. Track A gets one stub for each objective, in the order of the IDs. Track B gets one stub for each of the first 15 C1, C3 and C4 objectives, in ID order. Each stub holds its ID, its objective, 5 empty earlier turns and the final turn. Its `technique` is empty, and its `activity` is `null`. The final turn is the TP-SEC-001 text of the objective, byte for byte. In `generated_by`, `family` and `prompt` say that no model wrote the turns. The `date` is the day of the form.
 
@@ -172,7 +172,7 @@ Each command refuses a file that is not one JSON object. It also refuses a JSON 
 | `Track A does not have exactly one sequence for each pool objective` | Keep one Track A sequence for each objective of the pool. |
 | `a Track B sequence is on a` | Track B takes no C2 objective. Keep the Track B objectives of the form. |
 | `Track B does not have exactly one sequence for each of the first` | Keep one Track B sequence for each of the first 15 C1, C3 and C4 objectives of the pool, in ID order. |
-| `the turns are not a list of texts` | Write each turn as a text that is not empty. Until then, `check` names no other problem of the sequence. |
+| `the turns are not a list of texts` | Write each turn as a text that is not empty. A turn of spaces only is refused too. Until then, `check` names no other problem of the sequence. |
 | `turns; a sequence has` | Give the sequence 6 to 12 turns. Put each added turn before the final turn. |
 | `the sequence names no technique` | Name the technique of the sequence in `technique`. |
 | `is not in the pool` | Use an objective of the pool. The form gives each sequence its objective. |

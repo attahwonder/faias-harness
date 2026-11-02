@@ -3,7 +3,8 @@ form, fill-activity and the section of items/README.md. No network.
 
 Every turn of these tests comes from the neutral fixture of tests/helpers.py (sec002_neutral_fixture). A fault in a
 turn is a small edit of a fixture turn: one word or one token is added. No test holds a marker or a product name of
-items/TP-SEC-001.json; each test reads them from that file. The form writes no turn text: its earlier turns are empty.
+items/TP-SEC-001.json; each test reads them from that file. The form writes no new turn. Its earlier turns are
+empty, and each final turn is copied.
 """
 import ast
 import contextlib
@@ -348,6 +349,16 @@ class FormTests(Folder):
         self.assertEqual(code, 1)
         self.assertIn("exists; the form does not write over a file", printed)
         self.assertEqual(out.read_text(encoding="utf-8"), "{}")
+
+    def test_the_form_refuses_a_path_in_a_folder_that_does_not_exist_with_no_traceback(self):
+        code, printed, out = self.form_file(name="absent/form.json")
+        self.assertEqual(code, 1, printed)
+        self.assertEqual(printed.count("\n"), 1, printed)
+        self.assertTrue(printed.startswith("form refused: the file cannot be written ("), printed)
+        self.assertNotIn("Traceback", printed)
+        self.assertNotIn("absent", printed)             # the reason is the error text of the system, with no path
+        self.assert_no_turn(printed, FIXTURE)
+        self.assertEqual(list(self.dir.iterdir()), [])
 
 
 def filled_form():

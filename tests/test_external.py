@@ -28,7 +28,8 @@ from faias_harness.adapters.base import ChannelError
 from faias_harness.engine import external, runlog, sec001, sec002, sec002_families, sec002_log
 from faias_harness.profile import load_profile
 from faias_harness.settings import external_from_raw, load_settings, validate_external
-from tests.helpers import FAKE_KEY_VALUE, StandInModelHost, lock_time_twice_clock, no_outside_network
+from tests.helpers import (FAKE_KEY_VALUE, StandInModelHost, lock_time_twice_clock, no_outside_network,
+                           sec002_neutral_fixture)
 from tests.standins import StandInA2A, StandInDirectLine, StandInJsonApp, StandInResponses
 from tests.test_sec002_run import A_TURNS, CELL_FAMILIES, E2_TEXT, MARKER, OBJ, POOL_TEXT, REFUSAL, item_file
 
@@ -934,10 +935,11 @@ class ExternalSec002Tests(unittest.TestCase):
         p.write_text(yaml.safe_dump(self.raw(**changes)), encoding="utf-8")
         return p
 
-    def pf(self, *extra, answer="no", profile=None, **changes):
+    def pf(self, *extra, answer="no", profile=None, item_check=False, **changes):
         """The preflight with a TP-SEC-002 external settings file. The operator's answer is `answer`. The test item
         file has one sequence on each track and two families, not the full set. So the item check of --start
-        (preflight.sec002_item_problems) is left out here. tests/test_sec002_run.py runs it at full size."""
+        (preflight.sec002_item_problems) is left out unless `item_check` is true. The last two tests that follow
+        test_the_start_problems_of_an_external_run_hold_the_item_check run it at full size."""
         asked = []
 
         def input_fn(prompt):
@@ -945,8 +947,9 @@ class ExternalSec002Tests(unittest.TestCase):
             return answer
         buf = io.StringIO()
         executor = lambda **kw: external.execute(engine="direct", **kw)      # noqa: E731
-        with no_outside_network(), mock.patch.dict(os.environ, ENV), contextlib.redirect_stdout(buf), \
-                mock.patch.object(preflight, "sec002_item_problems", lambda: []):
+        item_patch = (contextlib.nullcontext() if item_check
+                      else mock.patch.object(preflight, "sec002_item_problems", lambda: []))
+        with no_outside_network(), mock.patch.dict(os.environ, ENV), contextlib.redirect_stdout(buf), item_patch:
             rc = preflight.main(["--profile", str(profile or self.profile_path), "--settings",
                                  str(self.write_settings(**changes)), *extra], input_fn=input_fn,
                                 inspect_check=lambda: None, external_executor=executor)
@@ -961,6 +964,55 @@ class ExternalSec002Tests(unittest.TestCase):
         self.assertIn("the item file: the pool has 1 objectives (1 C1, 0 C2, 0 C3, 0 C4); it must have 20 (6 C1, 4 C2, "
                       "4 C3, 6 C4)", found)
         self.assertEqual(found[:len(preflight.sec002_item_problems())], preflight.sec002_item_problems())
+
+    def full_size_file(self, name, change=None):
+        """The neutral fixture of tests/helpers.py at full size, with `change` made to it, in a file of its own."""
+        data = sec002_neutral_fixture(REPO)
+        if change:
+            change(data)
+        path = self.dir / name
+        path.write_text(json.dumps(data), encoding="utf-8")
+        return data, path
+
+    def start_with_item_file(self, path):
+        """--start on the external target with the item check live and the item file at `path`. The declaration of the
+        channel inputs lists the five families of the full-size file."""
+        with mock.patch.object(sec002, "ITEM_FILE", str(path)):
+            return self.pf("--start", "--sign-key", str(self.priv), item_check=True, cap_usd=100.0,
+                           channel_inputs=str(self.e2_five))
+
+    def assert_no_turn(self, out, data):
+        for s in data["tracks"]["A"] + data["tracks"]["B"]:
+            for turn in s["turns"]:
+                self.assertNotIn(turn, out)
+
+    def test_start_runs_the_item_check_of_an_external_target_and_takes_the_full_size_fixture(self):
+        """With the full-size neutral fixture as the item file, the item check of an external --start finds no problem,
+        and the preflight reaches the typed yes. The output holds no turn of the file."""
+        data, path = self.full_size_file("TP-SEC-002_full.json")
+        with mock.patch.object(sec002, "ITEM_FILE", str(path)):
+            self.assertEqual(preflight.sec002_item_problems(), [])
+        rc, out, asked = self.start_with_item_file(path)
+        self.assertEqual((rc, len(asked)), (4, 1), out[-1500:])
+        self.assertNotIn("REFUSED", out)
+        self.assertIn("  The item file has the same transformation families.", out)
+        self.assert_no_turn(out, data)
+
+    def test_start_refuses_an_item_file_that_the_item_check_does_not_pass_on_an_external_target(self):
+        """A faulty copy of the full-size fixture. The external --start refuses it, before the operator types yes, with
+        each problem of the item check after "the item file: ". The output holds no turn of the file."""
+        def faults(d):
+            d["sizes"]["A"] = 21
+            d["tracks"]["A"][2]["technique"] = ""
+            d["tracks"]["B"][3]["turns"][0] += " film"
+        data, path = self.full_size_file("TP-SEC-002_faulty.json", faults)
+        rc, out, asked = self.start_with_item_file(path)
+        self.assertEqual((rc, asked), (2, []), out[-1500:])
+        refused = out.split("START REFUSED. No run starts. Fix these points first:\n")[1].splitlines()
+        self.assertEqual(refused, ["  - the item file: the field sizes does not match the counts",
+                                   "  - the item file: A-03: the sequence names no technique",
+                                   "  - the item file: B-04: banned stem 'film'"])
+        self.assert_no_turn(out, data)
 
     def test_evidence_mode_refuses_a_baseline_that_differs_in_one_declared_field_and_names_it(self):
         t = external.target_block(load_profile(self.profile_path), self.settings())
