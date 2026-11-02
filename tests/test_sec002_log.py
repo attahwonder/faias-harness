@@ -249,6 +249,8 @@ class ConstantTests(unittest.TestCase):
         self.assertIn("A character whose NFKC form holds a full stop or an exclamation mark stays as received",
                       sec002_log.SCORER_STATUS["rules"]["NFKC view"])
         self.assertTrue(any("holds a full stop or an exclamation mark as received" in x for x in lines))
+        # Two separate Base64 texts one space apart decode as one text (sec002_families._base64_runs).
+        self.assertTrue(any("two separate Base64 texts one space apart" in x for x in lines))
 
     def test_the_readings_name_the_choice_of_the_harness(self):
         self.assertEqual(len(sec002_log.READINGS), 10)
