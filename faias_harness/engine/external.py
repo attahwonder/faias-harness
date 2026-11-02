@@ -33,11 +33,11 @@ channel probe is a recall test in two sessions, with a control session (session_
 `session_state: observed`. When the probe does not observe it, the run sends Track C(ii) only. Tracks A and B and the
 isolation arm are not run, and the header names them with the reason (sec002_log.track_selection). The baseline is a
 schema 5 log of an external TP-SEC-001 run, matched on five declared fields (sec002_log.EXTERNAL_MATCH_FIELDS). In
-evidence mode the declaration of the channel inputs needs product_owner_declared true. The log is schema 9 with the variant external and the blocks target, model,
-budget and pacing of schema 5. The encoders, the scorer, the measures, the log, the lock and the signature run on the
-operator's machine. Only the text of each turn and each cell leaves, through the channel of the profile and the egress
-allow-list. The run records the SHA-256 of each request, never its text. The redaction of SRD-1's placeholders does not
-run, because the target is not SRD-1.
+evidence mode the declaration of the channel inputs needs product_owner_declared true. The log is schema 9 with the
+variant external and the blocks target, model, budget and pacing of schema 5. The encoders, the scorer, the measures,
+the log, the lock and the signature run on the operator's machine. Only the text of each turn and each cell leaves,
+through the channel of the profile and the egress allow-list. The run records the SHA-256 of each request, never its
+text. The redaction of SRD-1's placeholders does not run, because the target is not SRD-1.
 """
 import hashlib
 import re
