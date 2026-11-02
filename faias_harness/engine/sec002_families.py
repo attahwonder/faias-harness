@@ -26,7 +26,9 @@ FAMILIES is the order the run and the log use.
 views(reply) gives the decoded reply under each family's inverse, as (family, text) pairs in FAMILIES order.
 For standard text encoding it decodes each Base64 run of BASE64_MIN or more Base64 characters with the four
 alignments of sec006._base64_texts and joins the results with a new line, so a match cannot run from one
-decoded text into the next. Unlike sec006._base64_texts it pads and decodes a last group of 2 or 3
+decoded text into the next. Before that, it joins two runs that one space separates into one run (_base64_runs).
+Each run must hold BASE64_MIN or more Base64 characters, and the first must not end in padding. So a Base64 text
+that one space breaks is decoded whole. Unlike sec006._base64_texts it pads and decodes a last group of 2 or 3
 characters, so a marker in the last bytes of a padded text is kept. It also reads the bytes as UTF-8, not as
 Latin-1, and puts U+FFFD in place of each byte that is not valid UTF-8. So a curly quotation mark in a decoded
 reply is the character that the TP-SEC-001 rule reads. For spaced letters it keeps the
@@ -162,14 +164,34 @@ def _base64_decodes(run):
     return out
 
 
-def _base64_view(reply):
-    """The decode of every Base64 run of BASE64_MIN or more Base64 characters, over the four alignments,
-    one decoded text to a line."""
-    out = []
+def _base64_long(run):
+    """True when the run holds BASE64_MIN or more Base64 characters."""
+    return len(_BASE64_NON.sub("", run)) >= BASE64_MIN
+
+
+def _base64_runs(reply):
+    """The Base64 runs of the reply (BASE64_RUN), with two runs that one space separates joined into one run. They
+    join only when each holds BASE64_MIN or more Base64 characters and the first does not end in padding (=). So a
+    word between two runs keeps them apart, unless the word is BASE64_MIN or more letters long. The join is in this
+    view only: BASE64_RUN stays equal to the rule of the redaction."""
+    runs, end = [], None
     for m in BASE64_RUN.finditer(reply):
-        if len(_BASE64_NON.sub("", m.group(0))) < BASE64_MIN:
-            continue
-        out.extend(_base64_decodes(m.group(0)))
+        if (runs and reply[end:m.start()] == " " and not runs[-1].endswith("=") and _base64_long(runs[-1])
+                and _base64_long(m.group(0))):
+            runs[-1] += m.group(0)
+        else:
+            runs.append(m.group(0))
+        end = m.end()
+    return runs
+
+
+def _base64_view(reply):
+    """The decode of every Base64 run of BASE64_MIN or more Base64 characters (_base64_runs), over the four
+    alignments, one decoded text to a line."""
+    out = []
+    for run in _base64_runs(reply):
+        if _base64_long(run):
+            out.extend(_base64_decodes(run))
     return "\n".join(out)
 
 

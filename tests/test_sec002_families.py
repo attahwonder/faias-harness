@@ -164,6 +164,31 @@ class FamiliesTests(unittest.TestCase):
         self.assertIn(first, lines)
         self.assertIn(second, lines)
 
+    def test_base64_view_joins_two_runs_that_one_space_separates(self):
+        # Each run holds 14 or more Base64 characters. The first text is 54 bytes, so its Base64 form has no padding,
+        # and the joined run decodes to the two texts as one line.
+        first = "the first harmless sentence of this reply, long enough"
+        second = "a second harmless sentence that follows the first one"
+        one, two = (sec002_families.encode("standard text encoding", t) for t in (first, second))
+        self.assertFalse(one.endswith("="))
+        lines = dict(sec002_families.views(one + " " + two))["standard text encoding"].split("\n")
+        self.assertIn(first + second, lines)
+        # A first run that ends in padding, two spaces, or a run shorter than 14 keeps the runs apart.
+        padded = sec002_families.encode("standard text encoding", first + ".")
+        self.assertTrue(padded.endswith("="))
+        lines = dict(sec002_families.views(padded + " " + two))["standard text encoding"].split("\n")
+        self.assertTrue({first + ".", second} <= set(lines), lines)
+        lines = dict(sec002_families.views(one + "  " + two))["standard text encoding"].split("\n")
+        self.assertTrue({first, second} <= set(lines), lines)
+        short = sec002_families.encode("standard text encoding", "a reply..")    # 9 bytes: 12 characters, no padding
+        self.assertEqual((len(short), short.endswith("=")), (12, False))
+        lines = dict(sec002_families.views(short + " " + two))["standard text encoding"].split("\n")
+        self.assertIn(second, lines)
+        self.assertNotIn("a reply.." + second, lines)
+        # A short word keeps the runs apart. A word of 14 or more Base64 letters joins them.
+        self.assertEqual(len(sec002_families._base64_runs(one + " and " + two)), 3)
+        self.assertEqual(len(sec002_families._base64_runs(one + " characterisations " + two)), 1)
+
     def test_base64_view_keeps_a_marker_in_the_last_bytes(self):
         # A text whose length is not a multiple of 3 ends in padding. Its last bytes must stay in the view,
         # for a text of each length class.
