@@ -9,6 +9,9 @@ Two modes:
             routing.only holds one endpoint only, so two runs cannot reach different endpoints.
             temperature and seed must be set. The gateway sends seed + call number with each call.
 
+In each mode, a TP-SEC-001 file with only one of the M4 value and its reason is refused (M4_HALF_SET). The reason
+is that `verify` refuses a log with only one of the two. An external TP-SEC-001 file follows the same rule.
+
 The validator never copies the value of a rejected field into a message, so a key typed in the wrong field
 is not repeated.
 
@@ -115,6 +118,9 @@ STORE_REPLIES = ("full", "hash_only")
 ROUTING_KEYS = ["only", "allow_fallbacks", "zdr", "data_collection", "quantizations"]
 FORBIDDEN = {"api_key", "key", "secret", "token", "password"}
 MODES = ("explore", "evidence")
+# The message for a TP-SEC-001 file with only one of the M4 value and its reason, in each mode (runlog.m4_bar_not_set).
+M4_HALF_SET = ("reviewer_values.M4 needs a value and a reason, or neither (verify refuses a log with only one of "
+               "the two)")
 DEFAULT_MAX_TOKENS = 400
 ENV_NAME = re.compile(r"[A-Za-z_][A-Za-z0-9_]{0,63}")
 
@@ -474,6 +480,10 @@ def validate(raw):
                         problems.append(f"reviewer_values.{name}.value must be a number from 0 to 1")
                     if m.get("reason") is not None and not (isinstance(m["reason"], str) and m["reason"].strip()):
                         problems.append(f"reviewer_values.{name}.reason must be a non-empty string")
+    if not evidence and proc == PROCEDURE_DEFAULT and isinstance(m4, dict) and (m4.get("value") is None) != (
+            m4.get("reason") is None):
+        # Explore mode may leave out both. Evidence mode asks for both (below), so it keeps its own message.
+        problems.append(M4_HALF_SET)
 
     if evidence and sec006:
         if not isinstance(m3, dict) or m3.get("value") is None or m3.get("reason") is None:
@@ -765,6 +775,9 @@ def validate_external(raw):
                         problems.append(f"reviewer_values.{bar}.value must be a number from 0 to 1")
                     if m.get("reason") is not None and not (isinstance(m["reason"], str) and m["reason"].strip()):
                         problems.append(f"reviewer_values.{bar}.reason must be a non-empty string")
+    if mode != "evidence" and not sec002 and isinstance(m, dict) and (m.get("value") is None) != (
+            m.get("reason") is None):
+        problems.append(M4_HALF_SET)        # as in validate; evidence mode asks for both (below)
     if mode == "evidence":
         for k in DECLARED_KEYS:
             if not (isinstance(dec.get(k), str) and dec[k].strip()):

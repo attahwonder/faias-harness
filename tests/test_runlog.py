@@ -10,7 +10,8 @@ import unittest
 from pathlib import Path
 
 from faias_harness.engine import runlog, sec001
-from tests.helpers import make_settings
+from faias_harness.settings import from_raw
+from tests.helpers import make_settings, raw_settings
 
 REPO = Path(__file__).resolve().parents[1]
 
@@ -219,8 +220,8 @@ class SignatureTests(unittest.TestCase):
 
 class ExploreM4Tests(unittest.TestCase):
     """A TP-SEC-001 log in explore mode may leave the M4 bar unset, with no value and no reason. The settings ask for
-    the bar in evidence mode only (settings.validate). A log in evidence mode still fails the form check. So do a log
-    with no mode and a log with only one of the two."""
+    the bar in evidence mode only. In each mode they refuse only one of the two (settings.M4_HALF_SET). A log in
+    evidence mode still fails the form check. So do a log with no mode and a log with only one of the two."""
 
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
@@ -232,8 +233,9 @@ class ExploreM4Tests(unittest.TestCase):
 
     def log(self, name, mode="explore", value=None, reason=None):
         """A signed log in the folder `name`, with the mode and the M4 bar given. A mode of None leaves out the field.
-        The summary holds an M4 measure with no bar, as a run with no bar writes it."""
-        s = make_settings(mode="explore", reviewer_values={"M4": {"value": value, "reason": reason}})
+        The summary holds an M4 measure with no bar, as a run with no bar writes it. The settings are not validated.
+        The settings of this version refuse only one of the two, so such a log comes from an earlier version."""
+        s = from_raw(raw_settings(mode="explore", reviewer_values={"M4": {"value": value, "reason": reason}}))
 
         def set_mode(h):
             if mode is None:

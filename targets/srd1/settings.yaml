@@ -3,6 +3,7 @@
 # This copy is in explore mode with the model, host, precision, prices, cap and M4 value not yet chosen.
 # An evidence-mode copy must set all five routing locks (only, allow_fallbacks, zdr, data_collection,
 # quantizations), the model, the prices, the cap and reviewer_values.M4, or the preflight refuses it.
+# In explore mode, set both the M4 value and its reason, or neither. The preflight refuses only one of the two.
 provider: openrouter
 model_id: null            # the pinned model ID, for example "vendor/model-name"
 mode: explore             # explore | evidence

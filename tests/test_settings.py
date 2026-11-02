@@ -148,6 +148,54 @@ class ValidatorTests(unittest.TestCase):
             self.assertNotIn(FAKE_KEY_VALUE, str(cm.exception))
 
 
+class M4BarTests(unittest.TestCase):
+    """A TP-SEC-001 file may hold the M4 value with its reason. In explore mode it may hold neither. It may never hold
+    only one of the two (sm.M4_HALF_SET), because the log check refuses such a log (runlog.m4_bar_not_set). The rule
+    is the same for SRD-1 minimal and for an external run."""
+    EVIDENCE = "evidence mode: reviewer_values.M4 needs a value and a reason"
+    FULL = {"value": 0.5, "reason": "test value for the unit tests"}
+    HALF = ({"value": 0.5, "reason": None}, {"value": None, "reason": "test value for the unit tests"})
+    EXT = {"kind": "external", "mode": "explore", "item_set": "spike", "cap_usd": 10.0, "cost_per_call_usd": 0.01,
+           "declared": {"model_id": "example-model", "target_version": "1.0.3"}}
+
+    def srd1(self, mode, rv):
+        return sm.validate(raw_settings(mode=mode, reviewer_values=rv))
+
+    def ext(self, mode, rv):
+        return sm.validate_external({**self.EXT, "mode": mode, "reviewer_values": rv})
+
+    def test_a_half_set_bar_is_refused_in_explore_mode(self):
+        for name, check in (("srd1", self.srd1), ("external", self.ext)):
+            for m4 in self.HALF:
+                with self.subTest(name, m4=m4):
+                    self.assertEqual(check("explore", {"M4": m4}), [sm.M4_HALF_SET])
+
+    def test_evidence_mode_keeps_its_one_message_for_a_half_set_bar(self):
+        for name, check in (("srd1", self.srd1), ("external", self.ext)):
+            for m4 in self.HALF:
+                with self.subTest(name, m4=m4):
+                    self.assertEqual(check("evidence", {"M4": m4}), [self.EVIDENCE])
+
+    def test_a_full_bar_loads_in_each_mode_and_no_bar_in_explore_mode(self):
+        for name, check in (("srd1", self.srd1), ("external", self.ext)):
+            for rv in ({"M4": self.FULL}, {"M4": {"value": None, "reason": None}}, {"M4": None}, {}, None):
+                with self.subTest(name, rv=rv):
+                    self.assertEqual(check("explore", rv), [])
+            with self.subTest(name, mode="evidence"):
+                self.assertEqual(check("evidence", {"M4": self.FULL}), [])
+                self.assertEqual(check("evidence", None), [self.EVIDENCE])
+
+    def test_the_rule_reads_the_m4_bar_of_tp_sec_001_only(self):
+        """A TP-SEC-006 file and an external TP-SEC-002 file keep their own rules. Their starts ask for the bars in each
+        mode (preflight.sec006_start_problems and preflight.sec002_start_problems)."""
+        sec006 = raw_settings(mode="explore", procedure="TP-SEC-006", item_set="TP-SEC-006",
+                              reviewer_values={"M4": self.HALF[0]})
+        self.assertNotIn(sm.M4_HALF_SET, sm.validate(sec006))
+        sec002 = {**self.EXT, "procedure": "TP-SEC-002", "item_set": "TP-SEC-002",
+                  "channel_inputs": "targets/srd1/channel_inputs.yaml", "reviewer_values": {"M1": self.HALF[0]}}
+        self.assertNotIn(sm.M4_HALF_SET, sm.validate_external(sec002))
+
+
 class Sec002SettingsTests(unittest.TestCase):
     """The settings of a TP-SEC-002 run: baseline_log and baseline_pubkey, the M1 bar, and the settings hash."""
 
@@ -321,6 +369,18 @@ class PreflightSettingsTests(unittest.TestCase):
                                gateway_factory=lambda s: called.append("gateway"), executor=lambda **k: called.append("run"))
         self.assertEqual(rc, 2)
         self.assertIn(f"the environment variable {KEY_ENV} is not set", out)
+        self.assertEqual(called, [])
+
+    def test_start_refuses_a_half_set_m4_bar_in_explore_mode_before_any_run(self):
+        called = []
+        raw = raw_settings(mode="explore", reviewer_values={"M4": {"value": 0.5, "reason": None}})
+        self.settings_path.write_text(yaml.safe_dump(raw), encoding="utf-8")
+        with no_outside_network(), self.env_with_key():
+            rc, out = run_main(self.argv("--start", "--sign-key", str(self.key)),
+                               gateway_factory=lambda s: called.append("gateway"),
+                               executor=lambda **k: called.append("run"))
+        self.assertEqual(rc, 2)
+        self.assertIn(f"SETTINGS INVALID. No run starts:\n  - {sm.M4_HALF_SET}\n", out)
         self.assertEqual(called, [])
 
     def test_start_refuses_without_a_signing_key_or_with_a_key_inside_the_repository(self):

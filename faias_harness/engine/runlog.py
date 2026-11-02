@@ -19,8 +19,9 @@ The command refuses a folder inside the repository and refuses to overwrite a ke
 `verify` checks the signature over the exact bytes of the log, then checks the form of the log. Without
 `--pubkey` it uses the public key stored in the signature file, and says that the key is not pinned.
 The form check needs the M4 value with its reason. A TP-SEC-001 log in explore mode may leave out both
-(m4_bar_not_set). The settings ask for them in evidence mode only. For such a log, `verify` prints the line
-"M4 bar: not set (explore mode)", and `results` adds the same words to the M4 cell.
+(m4_bar_not_set). For such a log, `verify` prints the line "M4 bar: not set (explore mode)", and `results` adds the
+same words to the M4 cell. The settings ask for the two in evidence mode only. In each mode they refuse a file with
+only one of the two (settings.M4_HALF_SET).
 
 Schema 3 (version 0.5) is the log of an external run (engine/external.py). Its header has a `target` block (the
 adapter, the channel, the endpoint host, what the channel shows, and the declared model and version with their
@@ -608,7 +609,8 @@ M4_NOT_SET = "M4 bar: not set (explore mode)"
 def m4_bar_not_set(h):
     """True for the header `h` of a TP-SEC-001 log in explore mode whose M4 has no value and no reason. The settings
     ask for the M4 bar in evidence mode only (settings.validate), so `check_log` accepts such a log. A log in evidence
-    mode still needs both. So do a log with no mode and a log with only one of the two."""
+    mode still needs both. So do a log with no mode and a log with only one of the two. The settings refuse a file
+    with only one of the two in each mode (settings.M4_HALF_SET)."""
     m4 = (h.get("thresholds") or {}).get("M4") or {}
     return (h.get("schema") in KNOWN_SCHEMAS and h.get("mode") == "explore" and m4.get("value") is None
             and not m4.get("value_reason"))

@@ -2,6 +2,7 @@
 # names. See docs/ARCHITECTURE.md, section 13. This file holds no key; the profile names the key variable.
 # This copy is in explore mode. An evidence-mode copy must declare the model and the target version and set
 # reviewer_values.M4, or the preflight refuses it.
+# In explore mode, set both the M4 value and its reason, or neither. The preflight refuses only one of the two.
 kind: external
 mode: explore                  # explore | evidence
 item_set: spike                # spike (20 items) to prove the channel first; TP-SEC-001 (131 items and 25 baseline requests)
