@@ -360,7 +360,7 @@ def build_log(dir_, *, bypass=False):
                        "cap": CAP, "limit": LIMIT}]
     risk_appetite = {"cap_gbp": CAP, "session_limit_gbp": LIMIT, "time_to_halt_s": 5.0, "source": "risk_appetite.yaml",
                      "sha256": "d" * 64, "declared_by": "the owner (maintainer)", "declared_on": "2026-10-29",
-                     "declaration_ref": "D-7", "basis": "x"}
+                     "basis": "x"}
     header = agt012_log.build_header(
         tools_settings(), allow_hosts=["127.0.0.1:9"], items=ITEMS, isolation=isolation,
         action_classes=action_classes, structural_inspection=structural, risk_appetite=risk_appetite,
@@ -458,6 +458,17 @@ class LogTests(unittest.TestCase):
         null_cap = json.loads(json.dumps(recs))
         null_cap[0]["risk_appetite"]["cap_gbp"] = None
         self.assertTrue(any("risk_appetite.cap_gbp" in p for p in runlog.check_log(_write(self.dir / "c.jsonl", null_cap))))
+
+    def test_a_log_made_with_the_old_declaration_field_still_passes_check(self):
+        # Versions 0.7.0 and 0.7.1 wrote one more field in the risk_appetite block. check does not read it, and the
+        # lock of such a log covers the block as written, so the log still passes.
+        log, *_ = build_log(self.dir)
+        recs = runlog.read_log(log)
+        self.assertEqual(runlog.check_log(log), [])
+        self.assertNotIn("declaration_ref", recs[0]["risk_appetite"])
+        recs[0]["risk_appetite"]["declaration_ref"] = "a row ID"
+        recs[0]["lock"]["hash"] = runlog.sha256_hex(runlog.canonical(runlog.lock_fixed(recs[0])))
+        self.assertEqual(runlog.check_log(_write(self.dir / "old.jsonl", recs)), [])
 
     def test_rescore_matches_and_an_edited_field_mismatches(self):
         log, *_ = build_log(self.dir, bypass=True)

@@ -48,6 +48,10 @@ A sixth procedure, TP-SEC-003, on SRD-1 minimal. It tests indirect prompt inject
 - In `results`, the M2 cell of a schema 10 log has a part for each marker class. It also gives `runs_per_item` and the incomplete items. The M6 cell shows the two counts, for example "identifiable 7 of affected 7" (`runlog.RESULT_COUNTS`).
 - `tests/test_sec003.py`, `tests/test_sec003_log.py` and `tests/test_sec003_run.py` are new. They test the seed route, the item check, the scorer, the measures, the log form and the engine. They use the stand-in host. The seeded faults of the log check also run on a log that the engine wrote. A test of the Inspect path runs when `inspect_ai` is installed. Where it is not, the test says so and passes. `tests/run_all.py` checks the shipped TP-SEC-003 settings.
 
+Other changes in this version:
+
+- The `risk_appetite` block of the TP-AGT-012 header no longer holds the field `declaration_ref`. Versions 0.7.0 and 0.7.1 wrote a project row ID there, and an outside reader cannot look it up. The fields `source` and `sha256` name the file that declares the values and give its hash. `check` does not read the field. So a log of 0.7.0 or 0.7.1 that holds it still passes, and its lock covers the block as written.
+
 ## 0.7.1 (30 October 2026)
 
 The first test run on Linux, the CI run of the 0.7.0 push, failed one test of 562. This release fixes that test. The code under test was right.

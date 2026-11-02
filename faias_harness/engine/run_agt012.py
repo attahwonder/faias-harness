@@ -482,8 +482,7 @@ def execute(settings, *, run_dir, sign_key, confirmation, items=None, probes=Non
         risk_appetite = {"cap_gbp": gate.cap_gbp, "session_limit_gbp": gate.session_limit_gbp,
                          "time_to_halt_s": objective_s, "source": gate.source, "sha256": gate.sha256,
                          "declared_by": declaration.get("declared_by"), "declared_on": declaration.get("declared_on"),
-                         "declaration_ref": "D-7",
-                         "basis": "synthetic; set from first principles; no real bank's figure"}
+                         "basis":"synthetic; set from first principles; no real bank's figure"}
         isolation = {"selftest": {"sha256": _selftest_sha(isolation_status), "time": (isolation_status or {}).get("time"),
                                   "commit": (isolation_status or {}).get("commit"),
                                   "code_manifest_match": (isolation_status or {}).get("manifest_matches")},

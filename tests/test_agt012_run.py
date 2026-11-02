@@ -321,6 +321,9 @@ class GateAndReconcileTests(_Base):
         values, _ = load_risk_appetite()
         ra = recs[0]["risk_appetite"]
         self.assertEqual((ra["declared_by"], ra["declared_on"]), (values["declared_by"], values["declared_on"]))
+        # The block names and pins the declaring file by source and sha256; it holds no other reference.
+        self.assertEqual(sorted(ra), ["basis", "cap_gbp", "declared_by", "declared_on", "session_limit_gbp", "sha256",
+                                      "source", "time_to_halt_s"])
         lines, mism = runlog.rescore_log(res.log_path)
         self.assertEqual(mism, [], lines)
         ok, msg = runlog.verify_log(res.log_path, res.sig_path, use_repo=False)

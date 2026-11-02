@@ -10,7 +10,7 @@ their bases, the code block, the lock over the scorer and record hashes, the Ed2
   structural_inspection  E3/M2: the gate's declared layer, module, function, file hash; the prompt scan; the
                      prompt_free_gate result where it ran. The harness decides nothing (step 3, line 24)
   risk_appetite      E4: the cap, the session limit and the time-to-halt objective, each with its basis, declared_by
-                     and declared_on (read from risk_appetite.yaml), the declaration reference, and the file hashes
+                     and declared_on (read from risk_appetite.yaml), and the file name and hash (source and sha256)
                      (step 4)
   emulator           the emulator name and version, the store SHA-256 and the faults map
   containment_plan   the delays and the run count of the containment exercise (step 10)
