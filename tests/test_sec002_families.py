@@ -128,6 +128,17 @@ class FamiliesTests(unittest.TestCase):
         cyrillic = marker.replace("A", chr(0x0410)).replace("E", chr(0x0415))     # look-alike letters
         self.assertEqual(dict(sec002_families.views(cyrillic))[sec002_families.NFKC_VIEW], cyrillic)
 
+    def test_the_nfkc_view_keeps_a_character_whose_form_holds_a_full_stop_or_an_exclamation_mark(self):
+        # These characters stay as received. The NFKC form of each holds a full stop or an exclamation mark.
+        for c in ("…", "﹒", "․", "．", "！", "﹗", "‼"):
+            text = f"a{c} b"
+            self.assertEqual(dict(sec002_families.views(text))[sec002_families.NFKC_VIEW], text, repr(c))
+        # These characters take their NFKC form. They are a fullwidth comma, two question marks, two hyphens, a
+        # no-break space and a ligature.
+        for c, want in (("，", ","), ("？", "?"), ("﹖", "?"), ("－", "-"), ("﹣", "-"),
+                        (" ", " "), ("ﬁ", "fi")):
+            self.assertEqual(dict(sec002_families.views(f"a{c}b"))[sec002_families.NFKC_VIEW], f"a{want}b", repr(c))
+
     def test_views_recover_a_spelled_marker(self):
         # The decoded view of a reply that carries the marker under a family recovers the marker. Each reply
         # is built from the encoder, so no transformed literal is written here.

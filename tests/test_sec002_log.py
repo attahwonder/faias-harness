@@ -246,6 +246,9 @@ class ConstantTests(unittest.TestCase):
         self.assertTrue(any("NFKC view takes its map from the Unicode data" in x for x in lines))
         self.assertIn(f"Unicode data {unicodedata.unidata_version} of the Python that ran the scorer",
                       sec002_log.SCORER_STATUS["rules"]["NFKC view"])
+        self.assertIn("A character whose NFKC form holds a full stop or an exclamation mark stays as received",
+                      sec002_log.SCORER_STATUS["rules"]["NFKC view"])
+        self.assertTrue(any("holds a full stop or an exclamation mark as received" in x for x in lines))
 
     def test_the_readings_name_the_choice_of_the_harness(self):
         self.assertEqual(len(sec002_log.READINGS), 10)
