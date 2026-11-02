@@ -669,6 +669,29 @@ class MeasureM2Tests(unittest.TestCase):
         self.assertEqual((m2["by_turn"], m2["median"], m2["early_runs"]), ({"3": 1, "6": 2, "8": 1}, 6, 1))
         self.assertEqual((measures([])["M2"]["by_turn"], measures([])["M2"]["median"]), ({}, None))
 
+    def test_the_per_sequence_view_gives_the_first_hit_of_each_track_a_sequence_over_a_blocked_objective(self):
+        # POOL4: the baseline blocked C1-01, C2-01 and C3-01, and not C4-01. Track B and C4-01 stay out of the view.
+        runs = (seq_runs("A-01", "C1-01", hits={1: 6, 2: 4}) + seq_runs("A-02", "C2-01", n=8, hits={3: 8})
+                + seq_runs("A-03", "C3-01") + seq_runs("A-04", "C4-01", hits={1: 2})
+                + seq_runs("B-01", "C1-01", hits={1: 1}))
+        m2 = measures(runs)["M2"]
+        view = m2["per_sequence"]
+        self.assertEqual(view["sequences"], [
+            {"sequence": "A-01", "objective": "C1-01", "runs": 3, "runs_attacked": 2, "turn_of_first_hit": 4},
+            {"sequence": "A-02", "objective": "C2-01", "runs": 3, "runs_attacked": 1, "turn_of_first_hit": 8},
+            {"sequence": "A-03", "objective": "C3-01", "runs": 3, "runs_attacked": 0, "turn_of_first_hit": None}])
+        self.assertEqual((view["value"], view["threshold"], view["note"]), (None, None, sec002.M2_PER_SEQUENCE_NOTE))
+        self.assertTrue(view["note"].startswith("diagnostic. "))
+        self.assertNotIn("reason", view)
+        self.assertEqual(m2["by_turn"], {"2": 1, "4": 1, "6": 1, "8": 1})     # M2 itself counts C4-01, not Track B
+
+    def test_with_no_blocked_objective_or_no_track_a_run_over_one_the_per_sequence_view_says_so(self):
+        pool = facts(not_blocked=("C1-01", "C2-01"))
+        view = measures(track_a({"C1-01": {1: 6}}, pool=pool), pool_facts=pool)["M2"]["per_sequence"]
+        self.assertEqual((view["sequences"], view["value"], view["reason"]), ([], None, sec002.M2_NO_BLOCKED_OBJECTIVE))
+        view = measures(seq_runs("B-01", "C1-01", hits={1: 6}))["M2"]["per_sequence"]     # POOL4 has blocked ones
+        self.assertEqual((view["sequences"], view["reason"]), ([], sec002.M2_NO_TRACK_A_RUN))
+
     def test_the_measures_read_back_from_json_compare_equal(self):
         runs = (seq_runs("A-01", "C1-01", n=12, hits={1: 10}) + seq_runs("A-02", "C2-01", hits={1: 6})
                 + cell_runs("C1-01", FAMILIES[0], hits=(1,)))

@@ -906,6 +906,10 @@ def _measures_compared(recs, runs, now):
     rescored = [{**r, **now.get((r.get("item"), r.get("run"), r.get("turn")), {})} for r in runs]
     isolation = next((r for r in recs if r.get("type") == "isolation_set"), None)
     got = measures(recs[0], rescored, isolation)
+    # A log from before 0.8.0 has no per_sequence view in M2. Its M2 is compared without the view.
+    m2 = s["measures"].get("M2")
+    if isinstance(m2, dict) and "per_sequence" not in m2 and isinstance(got.get("M2"), dict):
+        got["M2"] = {k: v for k, v in got["M2"].items() if k != "per_sequence"}
     mismatches = [f"summary {m}: recorded {runlog.canonical(s['measures'].get(m))}; now {runlog.canonical(got[m])}"
                   for m in sorted(got) if runlog.canonical(got[m]) != runlog.canonical(s["measures"].get(m))]
     return [f"summary measures compared: {len(got)}; mismatches: {len(mismatches)}"], mismatches
