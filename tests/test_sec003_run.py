@@ -13,6 +13,7 @@ marker in its first seeded session only, so its three sessions differ (k = 3). P
 of its replies holds a staged placeholder of SRD-1's system prompt, so the redaction shows in the log. With `fill`, the
 stand-in pads each reply with its plain sentence up to the output limit, for the test of the estimate. With `fail`, it
 answers each turn of the named items with HTTP 400, which SRD-1's gateway does not retry, for the test of a send error.
+An entry (item ID, turn) of `fail` names one turn of the item only.
 
 The settings of a run come from a settings file (faias_harness/settings.py). SettingsTests and PreflightTests check
 the TP-SEC-003 settings, the shipped file targets/srd1/settings_sec003.yaml and the preflight. They make no model call.
@@ -79,7 +80,8 @@ class Responder:
 
     def __call__(self, user, nth, messages):
         item = self.by_turn[user]
-        if item.id in self.fail:        # an error response of the stand-in host (tests/helpers.StandInModelHost)
+        turn = item.turns.index(user) + 1
+        if item.id in self.fail or (item.id, turn) in self.fail:    # an error response (tests/helpers.StandInModelHost)
             return {"status": 400, "body": {"error": {"code": 400, "message": "a test error"}}}
         a, b = item.marker
         earlier = [m.get("content") or "" for m in messages[:-1] if m["role"] in ("system", "assistant")]
@@ -587,6 +589,28 @@ class StopTests(unittest.TestCase):
         self.assertEqual((p2["seeded"]["items"], p2["seeded"]["items_without_result"],
                           p2["clean"]["items_without_result"], p2["override_rate"]), (0, 1, 1, None))
         self.assertEqual(recs[-1]["measures"]["M2"]["by_class"]["P1"]["override_rate"], 1.0)    # the others go on
+
+    def test_a_send_error_at_the_second_turn_keeps_the_lines_of_the_first_turn(self):
+        """The stand-in answers turn 2 of P5-01 with HTTP 400 and turn 1 as usual. The record of each session of
+        P5-01 keeps the lines of turn 1. They are the retrieval line and the turn line with its reply. Turn 2 has its
+        retrieval line and no turn line. So the scored turn has no reply, and the session has no result. The run
+        goes on to the end."""
+        res, h = run("send_error_turn2", stand_in=host(fail=(("P5-01", 2),)))
+        recs = self.ended(res, "complete")
+        runs = [r for r in recs if r.get("type") == "run"]
+        self.assertEqual((len(runs), len(h.requests)), (24, 30))
+        failed = [r for r in runs if r["item"] == "P5-01"]
+        self.assertEqual(len(failed), 6)                # three sessions on each arm
+        for r in failed:
+            with self.subTest(arm=r["arm"], run=r["run"]):
+                self.assertEqual([(x["kind"], x["turn"]) for x in r["lines"]],
+                                 [("retrieval", 1), ("turn", 1), ("retrieval", 2)])
+                self.assertTrue(r["lines"][1]["reply"].startswith(PLAIN))
+                self.assertEqual((r["scored_turns"], r["no_reply_turns"], r["marker"]), ([2], [2], False))
+        # The seeded sessions still show the marker at turn 1 (a fact, not a score), from the kept turn line.
+        self.assertEqual([r["early_marker_turns"] for r in failed], [[]] * 3 + [[1]] * 3)
+        p5 = recs[-1]["measures"]["M2"]["by_class"]["P5"]
+        self.assertEqual((p5["seeded"]["items_without_result"], p5["clean"]["items_without_result"]), (1, 1))
 
     def test_an_engine_error_stops_the_run_with_the_error_class_only(self):
         """SRD-1 refuses to open the second session (an Srd1ChatError, as for an HTTP 500 of SRD-1). The run stops: a
