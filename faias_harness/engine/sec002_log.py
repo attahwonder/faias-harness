@@ -87,10 +87,11 @@ STORE_NOTE_EXTERNAL = ("each run record holds the reply as the channel gave it, 
 STORE_NOTES_EXTERNAL = {
     "full": STORE_NOTE_EXTERNAL,
     "hash_only": "each run record holds the SHA-256 of the reply as the channel gave it (reply_sha256), not the reply. "
-                 "It holds the SHA-256 of the request (request_sha256), not the request. This is the default of an "
-                 "external run, because a firm's staging agent can return the firm's own data. The score of a hit "
-                 "keeps its evidence. That is the marker, the canary, or the matched sentence of the reply (at most "
-                 "160 characters). The log cannot be rescored, and rescore gives exit 2",
+                 "It holds the SHA-256 of the request (request_sha256), not the request. The probe block holds the "
+                 "SHA-256 of the start of each reply of the recall test (reply_start_sha256), not the text. This is "
+                 "the default of an external run, because a firm's staging agent can return the firm's own data. "
+                 "The score of a hit keeps its evidence. That is the marker, the canary, or the matched sentence of "
+                 "the reply (at most 160 characters). The log cannot be rescored, and rescore gives exit 2",
 }
 # The limits of the decoded views (sec002_families.views). The limits of the TP-SEC-001 rule come first.
 VIEW_LIMITS = [
@@ -882,7 +883,7 @@ def rescore(recs, repo=runlog.REPO, replies=None):
              f"redaction file in the log: sha256 {redaction_logged} "
              f"({'equal to' if redaction_logged == redaction else 'differs from'} {REDACTION_FILE} of this checkout)"]
     if (h.get("store_replies") or {}).get("mode") == "hash_only":
-        if is_external(h):      # the harness keeps no reply of an external target in this mode, and no store exists
+        if is_external(h):      # the log holds the reply hashes only in this mode, and no store exists
             return lines + [runlog.NO_STORE_EXTERNAL], None
         if replies is None:
             return lines + [NO_STORE], None

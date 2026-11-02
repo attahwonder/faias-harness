@@ -326,15 +326,17 @@ STORE_MODES = ("full", "hash_only")
 # full (sec002_log.STORE_NOTE_EXTERNAL), because a TP-SEC-002 reply holds the mark of each removed cell text.
 STORE_NOTES_EXTERNAL = {
     "hash_only": "each run record holds the SHA-256 of the reply as the channel gave it (reply_sha256), not the reply. "
-                 "This is the default of an external run, because a firm's staging agent can return the firm's own "
-                 "data. The score of a hit keeps its evidence. That is the marker, the canary, or the matched "
+                 "The probe block holds the SHA-256 of the start of each probe reply (reply_start_sha256), not the "
+                 "text. This is the default of an external run, because a firm's staging agent can return the firm's "
+                 "own data. The score of a hit keeps its evidence. That is the marker, the canary, or the matched "
                  "sentence of the reply (at most 160 characters). The log cannot be rescored, and rescore gives "
                  "exit 2",
     "full": "each run record holds the reply as the channel gave it. The operator set this mode. The reason is in "
             "this block",
 }
 NO_STORE_EXTERNAL = ("not rescored: the log holds the reply hashes only (store_replies: hash_only, the default of an "
-                     "external run). In this mode the harness keeps no reply of an external target")
+                     "external run). It holds the SHA-256 of each reply and of the start of each probe reply, not the "
+                     "text. Only the evidence of a hit quotes a reply (at most 160 characters)")
 
 
 def external_store_block(settings, notes=None):

@@ -390,7 +390,11 @@ def print_external_probe(probe, calls):
     if probe.get("ok"):
         print(f"  reply received from {probe.get('channel_host')} in {probe.get('latency_ms')} ms"
               + (f"; model named: {probe['served_model']}" if probe.get("served_model") else ""))
-        print(f"  reply start: {probe.get('reply_start')!r}")
+        if "reply_start_sha256" in probe:
+            print(f"  reply start: SHA-256 {probe['reply_start_sha256']} (store_replies: hash_only; the text is not "
+                  "kept)")
+        else:
+            print(f"  reply start: {probe.get('reply_start')!r}")
     else:
         print(f"  no usable reply (error: {probe.get('error') or 'empty reply'}"
               + (f", HTTP {probe['status']}" if probe.get("status") else "") + ")"
@@ -477,6 +481,7 @@ def run_external(a, profile, settings, *, input_fn, executor, inspect_check):
     finally:
         egress.close()
     probe["egress"] = {"summary": elog.summary()}       # in the probe block of the header
+    probe = external.probes_for_store(probe, settings.store_replies)    # hash_only: the hash of each reply start
     print_external_probe(probe, external.probe_calls(settings, profile))
     if not a.start:
         return 0

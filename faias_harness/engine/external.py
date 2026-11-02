@@ -366,6 +366,26 @@ def channel_probe(target, session_check=False, pair=None):
     return out
 
 
+def probes_for_store(probes, store_replies):
+    """The probe block as the preflight prints it and the header keeps it (since 0.8). With store_replies hash_only,
+    each `reply_start` (the first 200 characters of a probe reply) becomes `reply_start_sha256`, the SHA-256 of those
+    characters. That covers the reply of the TP-SEC-001 probe and each call of the TP-SEC-002 recall test. With full
+    the block does not change."""
+    if store_replies == "full":
+        return probes
+    if isinstance(probes, list):
+        return [probes_for_store(v, store_replies) for v in probes]
+    if not isinstance(probes, dict):
+        return probes
+    out = {}
+    for k, v in probes.items():
+        if k == "reply_start" and isinstance(v, str):
+            out["reply_start_sha256"] = runlog.sha256_hex(v)
+        else:
+            out[k] = probes_for_store(v, store_replies)
+    return out
+
+
 @dataclass
 class ExternalResult:
     status: str
@@ -679,6 +699,7 @@ def execute(settings, profile, *, run_dir, sign_key, confirmation, probes=None, 
     if settings.store_replies == "full" and not (isinstance(reason, str) and reason.strip()):
         raise ValueError("store_replies: full needs store_replies_reason (an external run keeps the reply hashes by "
                          "default)")
+    probes = probes_for_store(probes, settings.store_replies)      # the header keeps no probe reply with hash_only
     if settings.procedure == sec002.TP:
         return _execute_sec002(settings, profile, run_dir=run_dir, sign_key=sign_key, confirmation=confirmation,
                                probes=probes, engine=engine, clock_ns=clock_ns, repo=repo, prior_calls=prior_calls,

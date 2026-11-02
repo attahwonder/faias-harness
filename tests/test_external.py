@@ -327,6 +327,46 @@ class ExternalRunTests(unittest.TestCase):
         legacy = {k: v for k, v in h.items() if k != "store_replies"}     # a schema 5 log of 0.7 holds no block
         self.assertFalse(any("store_replies" in p or "hash_only" in p for p in problems(legacy, rest)))
 
+    def start_with_probe(self, name, **changes):
+        """--start through the preflight against a Direct Line stand-in. It makes the probe, takes the typed yes and
+        runs."""
+        with StandInDirectLine(respond, secret=FAKE_KEY_VALUE) as dl:
+            rc, out = self.pf(["--profile", str(self.dl_profile(dl)), "--settings", str(self.write_settings(**changes)),
+                               "--start", "--sign-key", str(self.priv), "--run-dir", str(self.dir / name)])
+        self.assertEqual(rc, 0, out[-600:])
+        return out, self.dir / name / "run_log.jsonl"
+
+    def test_with_hash_only_the_probe_block_and_the_preflight_hold_the_hash_of_the_probe_reply(self):
+        out, log = self.start_with_probe("probe_hash")
+        probe = runlog.read_log(log)[0]["probes"]["channel"]
+        self.assertEqual(probe["reply_start_sha256"], runlog.sha256_hex(NEUTRAL_REPLY[:200]))
+        self.assertNotIn("reply_start", probe)
+        self.assertIn(f"  reply start: SHA-256 {probe['reply_start_sha256']} (store_replies: hash_only; the text is "
+                      "not kept)", out)
+        # The probe reply is the reply of most items too. No file of the run folder and no line of the output holds it.
+        self.assertNotIn("Example Bank accounts", out)
+        for f in (p for p in log.parent.rglob("*") if p.is_file()):
+            self.assertNotIn("Example Bank accounts", f.read_text(encoding="utf-8", errors="replace"), f.name)
+        self.assertTrue(runlog.verify_log(log, log.with_name("run_log.jsonl.sig"), self.pub, repo=REPO)[0])
+
+    def test_with_full_the_probe_block_and_the_preflight_hold_the_reply_start_and_a_0_7_log_still_verifies(self):
+        out, log = self.start_with_probe("probe_full", **FULL)
+        lines = log.read_text(encoding="utf-8").splitlines()
+        h = json.loads(lines[0])
+        self.assertEqual(h["probes"]["channel"]["reply_start"], NEUTRAL_REPLY[:200])
+        self.assertNotIn("reply_start_sha256", h["probes"]["channel"])
+        self.assertIn(f"  reply start: {NEUTRAL_REPLY[:200]!r}", out)
+        self.assertTrue(runlog.verify_log(log, log.with_name("run_log.jsonl.sig"), self.pub, repo=REPO)[0])
+        # A schema 5 log of 0.7 has no store_replies block, and its probe block holds reply_start. It still verifies.
+        del h["store_replies"]
+        h["lock"]["hash"] = runlog.sha256_hex(runlog.canonical(runlog.lock_fixed(h)))
+        old = self.dir / "old_0_7.jsonl"
+        old.write_text("\n".join([runlog.canonical(h)] + lines[1:]) + "\n", encoding="utf-8")
+        sig = runlog.sign_log(old, self.priv)
+        self.assertEqual(runlog.check_log(old, repo=REPO), [])
+        ok, msg = runlog.verify_log(old, sig, self.pub, repo=REPO)
+        self.assertTrue(ok, msg)
+
     def write_settings(self, **changes):
         _, raw = ext_settings(**changes)
         p = self.dir / "external_settings.yaml"
@@ -708,6 +748,22 @@ class ExternalSec002Tests(unittest.TestCase):
         self.assertEqual((base["rescored"], base["runs_rescored"], base["mismatches"]), (False, 0, 0))
         self.assertEqual(base["scorer_sha256_logged"], base["scorer_sha256_used"])
         self.assertEqual((h["mode"], h["label"]), ("evidence", ext_label()))
+
+    def test_the_probe_block_keeps_the_hash_of_each_recall_reply_start_by_default_and_the_text_with_full(self):
+        run = self.run_sec002("hashes")
+        given, kept = run.probes["channel"], run.recs[0]["probes"]["channel"]
+        self.assertNotIn('"reply_start"', runlog.canonical(run.recs[0]))
+        self.assertEqual(kept["reply_start_sha256"], runlog.sha256_hex(given["reply_start"]))
+        calls = kept["session_check"]["calls"]
+        self.assertEqual(len(calls), 4)
+        self.assertEqual([c["reply_start_sha256"] for c in calls],
+                         [runlog.sha256_hex(c["reply_start"]) for c in given["session_check"]["calls"]])
+        self.assertEqual(kept["session_state"], "observed")        # the facts of the probe stay
+        run = self.complete()
+        kept = run.recs[0]["probes"]["channel"]
+        self.assertEqual([c["reply_start"] for c in kept["session_check"]["calls"]],
+                         [c["reply_start"] for c in run.probes["channel"]["session_check"]["calls"]])
+        self.assertNotIn("reply_start_sha256", runlog.canonical(run.recs[0]))
 
     def test_a_baseline_that_cannot_be_rescored_needs_this_scorer(self):
         base = {"mode": "evidence", "signature": {"verified": True, "public_key_sha256": "a" * 64},
