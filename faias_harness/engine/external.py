@@ -29,8 +29,9 @@ pacing and stops. It uses the item file, the pool, the encoders, the scorer and 
 (run_sec002.py), in its three passes: the sequences of Tracks A and B, the cells of Track C(ii), and the isolation arm.
 Each run of a sequence is one adapter session, and each turn has its own run record. A channel error that does not stop
 the run ends the session: the record of that turn has the outcome no_result, and the later turns are not sent. The
-channel probe is a recall test in two sessions, with a control session (session_probe), and the run needs
-`session_state: observed`. The baseline is a schema 5 log of an external TP-SEC-001 run, matched on five declared
+channel probe is a recall test in two sessions, with a control session (session_probe). Tracks A and B need
+`session_state: observed`. When the probe does not observe it, the run sends Track C(ii) only. Tracks A and B and the
+isolation arm are not run, and the header names them with the reason (sec002_log.track_selection). The baseline is a schema 5 log of an external TP-SEC-001 run, matched on five declared
 fields (sec002_log.EXTERNAL_MATCH_FIELDS). The log is schema 9 with the variant external and the blocks target, model,
 budget and pacing of schema 5. The encoders, the scorer, the measures, the log, the lock and the signature run on the
 operator's machine. Only the text of each turn and each cell leaves, through the channel of the profile and the egress
@@ -96,16 +97,18 @@ def probe_calls(settings, profile=None):
     return turns + sessions * (calls_per_session(profile) - 1)
 
 
-def estimate(settings, repo=REPO, profile=None):
+def estimate(settings, repo=REPO, profile=None, cells_only=False):
     """The calls of the whole run (one session per run of each item and baseline request; retries are extra), and
     their estimated cost from the operator's cost per call. `probe_calls`: the calls of the channel probe.
 
     For TP-SEC-002, a run of a sequence is one session with a call for each turn; a cell and an isolation item are one
     session of one turn. The isolation arm counts at its worst case, as in run_sec002.planned_calls. The start event of
-    Direct Line is one more call for each session, not for each turn."""
+    Direct Line is one more call for each session, not for each turn. With `cells_only` (a probe that did not observe
+    session state; sec002_log.track_selection), only the cells of Track C(ii) count."""
     extra = calls_per_session(profile) - 1
     if settings.procedure == sec002.TP:
         seqs, cells, _ = sec002.load_items(repo)
+        seqs = () if cells_only else seqs           # Track C(ii) only: no sequence and so no isolation item
         alone = len(cells) + len(run_sec002.isolation_plan(seqs))         # sessions of one turn each
         sessions = len(seqs) + alone
         calls = (sum(len(s.turns) for s in seqs) + alone + sessions * extra) * settings.runs_per_item
@@ -668,15 +671,16 @@ def sec002_header(settings, profile, *, allow_hosts, baseline, e2, confirmation,
 
 
 def sec002_start_problems(settings, probes):
-    """Why an external TP-SEC-002 run may not start (empty if it may): no baseline log, or a channel probe that did
-    not observe session state (Tracks A and B need it). The preflight refuses both before the operator types yes."""
+    """Why an external TP-SEC-002 run may not start (empty if it may): no baseline log, or no channel probe with a
+    session state. A probe that did not observe session state does not stop the run: the run then sends Track C(ii)
+    only (sec002_log.track_selection). The preflight refuses both problems before the operator types yes."""
     problems = []
     if not settings.m4_baseline_log:
         problems.append("a TP-SEC-002 run needs a TP-SEC-001 baseline log (baseline_log) in both modes: without it "
                         "the uplift cannot be computed (PLAYBOOK_SEC_002.md line 8)")
-    if ((probes or {}).get("channel") or {}).get("session_state") != "observed":
-        problems.append("the channel probe did not observe session state: Tracks A and B send each sequence in one "
-                        "session, and a target that keeps no session state cannot run them")
+    if sec002_log.session_state(probes) is None:
+        problems.append("the channel probe gave no session state (probes.channel.session_state). A TP-SEC-002 run "
+                        "needs the probe, because Tracks A and B run only when it observes session state")
     return problems
 
 
@@ -761,10 +765,11 @@ def _sec002_pass(engine, target, runner, run_dir, k, items, model_name):
 def _execute_sec002(settings, profile, *, run_dir, sign_key, confirmation, probes, engine, clock_ns, repo, prior_calls,
                     env, sleep, clock):
     """Run TP-SEC-002 against the external target of the profile (see the module docstring). It refuses, before it
-    writes any file: a run with no baseline log, a channel probe that did not observe session state, a baseline that
-    is not a schema 5 log of an external TP-SEC-001 run on the full set, a declaration of the channel inputs that
-    cannot be read, and, in evidence mode, a baseline that evidence mode does not allow (sec002_log.evidence_problems,
-    on the five declared fields)."""
+    writes any file: a run with no baseline log, no channel probe with a session state, a baseline that is not a
+    schema 5 log of an external TP-SEC-001 run on the full set, a declaration of the channel inputs that cannot be
+    read, and, in evidence mode, a baseline that evidence mode does not allow (sec002_log.evidence_problems, on the
+    five declared fields). When the probe did not observe session state, the run sends the cells of Track C(ii) only,
+    and the header holds the block track_selection (sec002_log.track_selection)."""
     refused = sec002_start_problems(settings, probes)
     if refused:
         raise ValueError("; ".join(refused))
@@ -785,6 +790,9 @@ def _execute_sec002(settings, profile, *, run_dir, sign_key, confirmation, probe
     target = make_target(profile, settings, egress, budget, env=env, sleep=sleep, clock=clock)
     header = sec002_header(settings, profile, allow_hosts=egress.allow_text, baseline=baseline, e2=e2,
                            confirmation=confirmation, probes=probes, repo=repo, engine=engine)
+    selection = sec002_log.track_selection(probes)
+    if selection:       # Track C(ii) only: the header names the tracks not run and the reason, under the lock
+        header["track_selection"] = selection
     runlog.lock_header(header, clock_ns())
     log_path = run_dir / "run_log.jsonl"
     log = runlog.RunLog(log_path)
@@ -793,9 +801,10 @@ def _execute_sec002(settings, profile, *, run_dir, sign_key, confirmation, probe
         runlog.wait_past_lock(header, clock_ns)
         runner = _Sec002Runner(log, clock_ns, budget, settings, pool)
         k = settings.runs_per_item
-        engine_facts = [_sec002_pass(engine, target, runner, run_dir, k, seqs + cells, profile.adapter)]
+        items = cells if selection else seqs + cells
+        engine_facts = [_sec002_pass(engine, target, runner, run_dir, k, items, profile.adapter)]
         iso_record = None
-        if not runner.stopped:
+        if not runner.stopped and not selection:
             iso_items, iso_record = run_sec002._isolation(runner, seqs, clock_ns)
             log.write(iso_record)
             if iso_items:

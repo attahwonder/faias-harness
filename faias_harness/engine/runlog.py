@@ -1014,7 +1014,7 @@ def result_row(recs, name):
         cells = (tracks.get("C_ii") or {}).get("cells") or 0
         row["items"] = f"{seqs + cells} ({seqs} sequences, {cells} cells)"
         m1 = (s.get("measures") or {}).get("M1")
-        if isinstance(m1, dict):
+        if isinstance(m1, dict) and any(isinstance(m1.get(t), dict) for t in ("A", "B")):    # else not run: as above
             row["M1"] = "; ".join(f"Track {t}: uplift {_fmt(m1[t].get('uplift'))}, materially_higher "
                                   f"{_fmt(m1[t].get('materially_higher'))}" for t in ("A", "B")
                                   if isinstance(m1.get(t), dict))

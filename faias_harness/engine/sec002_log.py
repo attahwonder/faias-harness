@@ -45,7 +45,9 @@ schema 5, and the lock covers them (lock_extra). The code block keeps the same f
 run on an external run, and sec006.py stays an entry. The baseline is a schema 5 TP-SEC-001 log. It must match the
 run on EXTERNAL_MATCH_FIELDS, which are declared fields, and the header says that the harness did not observe the
 model, the version or the prompt (`baseline_match_basis`). The session limits are not read (no config_read), and the
-replies are stored in full. `probes.channel.session_state` must be "observed".
+replies are stored in full. When `probes.channel.session_state` is not "observed", the run sends Track C(ii) only. The
+header then holds the block `track_selection` (track_selection), which names the tracks not run and the reason, and
+the lock covers it.
 """
 from pathlib import Path
 
@@ -223,6 +225,27 @@ READINGS_EXTERNAL = [
     "session holds a word as written, or when the server names the same ID for both sessions; a target that keeps "
     "state only in a way that the recall question does not reach shows as not observed" + _READING,
 ]
+# The track selection of an external run (since 0.8). A run whose channel probe did not observe session state sends
+# Track C(ii) only. Its header names the tracks not run and the reason (track_selection), and each measure that needs
+# them is not run, with the reason (sec002.compute_measures, sequences_not_run).
+TRACKS_NOT_RUN = ("The channel probe did not observe session state. Tracks A and B send each sequence in one session, "
+                  "and a target with no session state cannot run them. The isolation arm sends the earlier turns of a "
+                  "sequence with a hit, so it has nothing to send. So the run sends Track C(ii) only.")
+
+
+def session_state(probes):
+    """The session_state of the channel probe in a probe block, or None when the block has none."""
+    return ((probes or {}).get("channel") or {}).get("session_state")
+
+
+def track_selection(probes):
+    """The track_selection block of the header of an external run, from its probe block. None when the channel probe
+    observed session state: every track runs, and the header has no such block. Otherwise the session state, the track
+    that runs (Track C(ii)), the tracks that do not run (Tracks A and B and the isolation arm) and the reason."""
+    state = session_state(probes)
+    if state == "observed":
+        return None
+    return {"session_state": state, "run": ["C_ii"], "not_run": ["A", "B", "isolation"], "reason": TRACKS_NOT_RUN}
 
 
 # ---------- the parts of the header ----------
@@ -302,6 +325,8 @@ def lock_extra(header):
            "e2": header.get("e2"), "readings": header.get("readings"), "store_replies": header.get("store_replies")}
     if is_external(header):
         out.update({k: header.get(k) for k in ("target", "budget", "pacing", "baseline_match_basis")})
+        if "track_selection" in header:     # only when present, so an earlier log still verifies
+            out["track_selection"] = header["track_selection"]
     return out
 
 
@@ -321,8 +346,11 @@ LOCK_COVERS_EXTERNAL = ("procedure, thresholds with bases, settings hash, target
 
 
 def lock_covers(header):
-    """The `covers` text of the lock of a schema 9 header, by its variant."""
-    return LOCK_COVERS_EXTERNAL if is_external(header) else LOCK_COVERS
+    """The `covers` text of the lock of a schema 9 header, by its variant. An external header with a track_selection
+    block adds it."""
+    if not is_external(header):
+        return LOCK_COVERS
+    return LOCK_COVERS_EXTERNAL + (", track selection (track_selection)" if "track_selection" in header else "")
 
 
 # ---------- the baseline ----------
@@ -637,9 +665,12 @@ def check(recs, repo=runlog.REPO, use_repo=True):
         problems += runlog.external_header_problems(h)
         if not isinstance(h.get("pacing"), dict):
             problems.append("header: the pacing block is missing")
-        if ((h.get("probes") or {}).get("channel") or {}).get("session_state") != "observed":
-            problems.append("header: the channel probe of an external run did not observe session state, and Tracks A "
-                            "and B need it")
+        if session_state(h.get("probes")) is None:
+            problems.append("header: the channel probe of an external run has no session state")
+        elif h.get("track_selection") != track_selection(h.get("probes")):
+            problems.append("header: the track_selection block does not agree with the session state of the channel "
+                            "probe. With session state not observed, the block names the tracks not run and the "
+                            "reason. With it observed, the header has no such block")
     elif not (h.get("model") or {}).get("pinned_id"):
         problems.append("header: model ID is missing")
     if not h.get("settings_hash"):
@@ -709,11 +740,15 @@ def check(recs, repo=runlog.REPO, use_repo=True):
     by_id = {m.get("id"): m for m in rows if _row_ok(m)}
     families = corpus.get("families") if isinstance(corpus.get("families"), list) else []
     isolation = None
+    narrow = external and session_state(h.get("probes")) not in (None, "observed")     # Track C(ii) only
     for r in recs:
         if r.get("type") == "isolation_set":
             isolation = {i.get("id"): i for i in r.get("items") or [] if isinstance(i, dict)}
         if r.get("type") == "run":
             problems += _run_problems(r, by_id, cells, classes, families, isolation, store, lock)
+            if narrow and r.get("track") in ("A", "B", "I"):
+                problems.append(f"run {sec006_log._run_name(r.get('item'), r.get('run'), r.get('turn'))}: a Track "
+                                f"{r.get('track')} record in a run that sends Track C(ii) only (track_selection)")
     if recs[-1].get("type") != "summary":
         problems.append("the last record is not the summary (the run did not finish cleanly)")
     return problems
@@ -790,16 +825,20 @@ def measures(h, runs, isolation):
     record (None when the run stopped before the isolation arm). The engine writes them in the summary, and rescore
     computes them again from the log alone: the pool and its baseline facts, k, the families, the M1 bar, the
     languages of the e2 block and the monitoring fact of the session limits are all in the header. For an external
-    run the monitoring fact is not known (MONITORING_SOURCE_EXTERNAL)."""
+    run the monitoring fact is not known (MONITORING_SOURCE_EXTERNAL). The reason of its track_selection block, where
+    it has one, makes the measures that need Tracks A and B not run."""
     corpus, e2, limits = h.get("corpus") or {}, h.get("e2") or {}, h.get("session_limits") or {}
     pool = {o.get("id"): {k: o.get(k) for k in ("class", "baseline_blocked", "baseline_unknown")}
             for o in corpus.get("objectives") or [] if isinstance(o, dict)}
-    source = MONITORING_SOURCE_EXTERNAL if is_external(h) else MONITORING_SOURCE
+    external = is_external(h)
+    source = MONITORING_SOURCE_EXTERNAL if external else MONITORING_SOURCE
+    selection = h.get("track_selection") if external and isinstance(h.get("track_selection"), dict) else {}
     return sec002.compute_measures(
         runs, pool_facts=pool, runs_per_item=corpus.get("runs_per_item"),
         m1_bar=((h.get("thresholds") or {}).get("M1") or {}).get("value"), families=list(corpus.get("families") or []),
         languages={"languages": list(e2.get("languages") or []), "e2": e2},
-        monitoring={"exists": limits.get("session_monitoring"), "source": source}, isolation=isolation)
+        monitoring={"exists": limits.get("session_monitoring"), "source": source}, isolation=isolation,
+        sequences_not_run=selection.get("reason"))
 
 
 def _measures_compared(recs, runs, now):

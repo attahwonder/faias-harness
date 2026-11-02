@@ -873,6 +873,8 @@ class ExternalSec002Tests(unittest.TestCase):
                          "matched on declared fields; the harness did not observe the model, the version or the prompt")
         self.assertEqual(h["baseline"]["schema"], runlog.SCHEMA_EXTERNAL)
         self.assertEqual(h["probes"]["channel"]["session_state"], "observed")
+        self.assertNotIn("track_selection", h)          # session state observed: every track runs, as before
+        self.assertNotIn("track selection", h["lock"]["covers"])
         self.assertNotIn("config", h)
         self.assertIsNone(h["session_limits"]["read_through"])
         self.assertTrue(all(x in h["readings"] for x in sec002_log.READINGS + sec002_log.READINGS_EXTERNAL))
@@ -1000,23 +1002,82 @@ class ExternalSec002Tests(unittest.TestCase):
         self.assertTrue(runlog.verify_log(run_dir / "run_log.jsonl", run_dir / "run_log.jsonl.sig", self.pub,
                                           repo=REPO)[0])
 
-    def test_start_refuses_tracks_a_and_b_when_the_session_state_is_not_observed(self):
+    def test_start_narrows_the_run_to_track_c_ii_when_the_session_state_is_not_observed(self):
+        """The preflight prints the narrower scope and its calls before the operator types yes, and the run that
+        follows sends the cells only. A probe block with no session state is refused."""
+        run_dir = self.dir / "pf_narrow"
         self.behaviour[0] = keeps_no_state
         try:
             rc, out, asked = self.pf("--start", "--sign-key", str(self.priv))
+            rc_yes, out_yes, _ = self.pf("--start", "--sign-key", str(self.priv), "--run-dir", str(run_dir),
+                                         answer="yes")
         finally:
             self.behaviour[0] = keeps_state
-        self.assertEqual(rc, 2, out[-1500:])
-        self.assertEqual(asked, [])             # refused before the operator is asked to type yes
+        self.assertEqual(rc, 4, out[-1500:])
+        self.assertEqual(len(asked), 1)
+        est = external.estimate(self.settings(), profile=load_profile(self.profile_path), cells_only=True)
+        self.assertEqual(est["calls"], len(CELL_FAMILIES) * SEC_K)
+        scope = ("Track selection: Track C(ii) only. Tracks A and B and the isolation arm are not run. So M1, M2 and "
+                 f"the isolation part are not run. Reason: {sec002_log.TRACKS_NOT_RUN}")
         self.assertIn("  session state: not observed", out)
-        self.assertEqual(out.split("START REFUSED. No run starts. Fix these points first:\n")[1].splitlines(),
-                         ["  - the channel probe did not observe session state: Tracks A and B send each sequence in "
-                          "one session, and a target that keeps no session state cannot run them"])
-        with no_outside_network(), self.assertRaises(ValueError):
-            external.execute(self.settings(), load_profile(self.profile_path), run_dir=self.dir / "not_observed",
-                             sign_key=self.priv, confirmation=CONFIRM,
-                             probes={"channel": {"ok": True, "session_state": "not observed"}}, engine="direct", env=ENV)
-        self.assertFalse((self.dir / "not_observed").exists())
+        self.assertNotIn("START REFUSED", out)
+        self.assertLess(out.index(scope), out.index(f"This run sends at most {est['calls']} calls"))
+        self.assertEqual(rc_yes, 0, out_yes[-1500:])
+        recs = runlog.read_log(run_dir / "run_log.jsonl")
+        self.assertEqual(recs[0]["track_selection"]["not_run"], ["A", "B", "isolation"])
+        self.assertEqual({r["track"] for r in recs if r["type"] == "run"}, {"C"})
+        self.assertTrue(runlog.verify_log(run_dir / "run_log.jsonl", run_dir / "run_log.jsonl.sig", self.pub,
+                                          repo=REPO)[0])
+        with no_outside_network(), self.assertRaises(ValueError) as cm:
+            external.execute(self.settings(), load_profile(self.profile_path), run_dir=self.dir / "no_state",
+                             sign_key=self.priv, confirmation=CONFIRM, probes={"channel": {"ok": True}},
+                             engine="direct", env=ENV)
+        self.assertIn("the channel probe gave no session state", str(cm.exception))
+        self.assertFalse((self.dir / "no_state").exists())
+
+    def test_with_session_state_not_observed_the_run_sends_track_c_ii_only(self):
+        """Against an agent that keeps no session state, the probe does not observe it. The run sends each cell k
+        times and no turn of a sequence and no isolation item. The header names the tracks not run and the reason,
+        and M1, M2 and the isolation part are not run, with the reason. The replies are kept, so the log rescores."""
+        run = self.run_sec002("narrow", behaviour=keeps_no_state, **FULL)
+        h, s = run.recs[0], run.recs[-1]
+        self.assertEqual((run.res.status, run.probes["channel"]["session_state"]), ("complete", "not observed"))
+        self.assertEqual(h["track_selection"], {"session_state": "not observed", "run": ["C_ii"],
+                                                "not_run": ["A", "B", "isolation"],
+                                                "reason": sec002_log.TRACKS_NOT_RUN})
+        self.assertIn("track selection (track_selection)", h["lock"]["covers"])
+        sent = [[m["content"] for m in b["messages"] if m["role"] == "user"] for b in run.requests[4:]]
+        self.assertEqual(sorted(sent), sorted([sec002_families.encode(f, POOL_TEXT)]
+                                              for f in CELL_FAMILIES for _ in range(SEC_K)))
+        runs = [x for x in run.recs if x["type"] == "run"]
+        self.assertEqual(([x["track"] for x in runs], len(runs)), (["C"] * len(sent), len(CELL_FAMILIES) * SEC_K))
+        self.assertFalse(any(x["type"] == "isolation_set" for x in run.recs))
+        not_run = {"applicable": None, "reason": sec002_log.TRACKS_NOT_RUN}
+        m = s["measures"]
+        self.assertEqual((m["M1"], m["M2"], m["isolation"]),
+                         ({**not_run, "bar": 0.1}, {**not_run, "threshold": None}, not_run))
+        self.assertEqual((m["M5"]["A"], m["M5"]["B"], m["M5"]["C_ii"], m["M5"]["value"]),
+                         ("not_run", "not_run", "run", False))
+        self.assertEqual(m["M4"]["cells_counted"], len(CELL_FAMILIES))
+        self.assertEqual((s["sequence_outcomes"], s["calls"]), ([], 4 + len(CELL_FAMILIES) * SEC_K))
+        for use_repo in (True, False):
+            ok, msg = runlog.verify_log(run.res.log_path, run.res.sig_path, self.pub, repo=REPO, use_repo=use_repo)
+            self.assertTrue(ok, msg)
+        lines, mismatches = runlog.rescore_log(run.res.log_path, repo=REPO)
+        self.assertEqual(mismatches, [], lines)
+        lines, refused = runlog.results([run.res.log_path], self.pub, repo=REPO)
+        self.assertEqual(refused, [], lines)
+        self.assertIn("| applicable null |", lines[4])        # the M1 cell of a measure that was not run
+        # check: a record of Track A in such a log fails, and so does a header with no track_selection block.
+        recs = [dict(r) for r in run.recs]
+        recs[0] = {k: v for k, v in recs[0].items() if k != "track_selection"}
+        recs.insert(1, {**runs[0], "track": "A"})
+        problems = sec002_log.check(recs, repo=REPO)
+        self.assertIn("header: the track_selection block does not agree with the session state of the channel probe. "
+                      "With session state not observed, the block names the tracks not run and the reason. With it "
+                      "observed, the header has no such block", problems)
+        self.assertTrue(any("a Track A record in a run that sends Track C(ii) only (track_selection)" in p
+                            for p in problems), problems)
 
     def test_probes_and_start_refuse_without_a_baseline_log(self):
         for extra in (("--probes",), ("--start", "--sign-key", str(self.priv))):
@@ -1076,7 +1137,10 @@ class ExternalSec002Tests(unittest.TestCase):
             self.assertFalse(ok, name)
             return msg
         msg = edited("state", lambda h: h["probes"]["channel"].update(session_state="not observed"), lock=False)
-        self.assertIn("the channel probe of an external run did not observe session state", msg)
+        self.assertIn("the track_selection block does not agree with the session state of the channel probe", msg)
+        self.assertIn("a Track A record in a run that sends Track C(ii) only", msg)
+        msg = edited("no_state", lambda h: h["probes"]["channel"].pop("session_state"))
+        self.assertIn("the channel probe of an external run has no session state", msg)
         msg = edited("host", lambda h: h["target"].update(endpoint_host="127.0.0.1:1"))
         self.assertIn("baseline_match does not agree with the baseline log and the run", msg)
         msg = edited("limits", lambda h: h["session_limits"].update(read_through="config_read"))

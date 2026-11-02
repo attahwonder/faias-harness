@@ -59,8 +59,8 @@ setting `channel_inputs` names. The baseline must be a schema 5 log of an extern
 it must match the run on five declared fields (sec002_log.EXTERNAL_MATCH_FIELDS), and each field that differs is
 named with both values. The probe is a recall test: one session gives the agent two words and asks for them back, and
 a fresh control session sends a plain first turn and asks the same question at its second turn. It is four calls, or
-six with the Direct Line start event. --start refuses Tracks A and B when the probe does not observe
-session state, before the operator types `yes`. The probe's requests go to an egress log of their own, and its summary
+six with the Direct Line start event. When the probe does not observe session state, the run sends Track C(ii)
+only. --start then prints that narrower scope and its calls before the operator types `yes`. The probe's requests go to an egress log of their own, and its summary
 goes into the probe block of the header.
 
 Exit codes: 0 table printed, or a run finished; 2 start refused or profile or settings invalid; 3 start
@@ -490,12 +490,18 @@ def run_external(a, profile, settings, *, input_fn, executor, inspect_check):
         print("START REFUSED: the channel probe got no usable reply. Fix the channel first.")
         return 2
     refused = external.sec002_start_problems(settings, {"channel": probe}) if sec002 else []
-    if refused:         # before the operator types yes: Tracks A and B need the session state
+    if refused:         # before the operator types yes
         print()
         print("START REFUSED. No run starts. Fix these points first:")
         for p in refused:
             print(f"  - {p}")
         return 2
+    selection = external.sec002_log.track_selection({"channel": probe}) if sec002 else None
+    if selection:       # session state not observed: the narrower scope and its calls, before the operator types yes
+        est = external.estimate(settings, profile=profile, cells_only=True)
+        print()
+        print("Track selection: Track C(ii) only. Tracks A and B and the isolation arm are not run. So M1, M2 and the "
+              f"isolation part are not run. Reason: {selection['reason']}")
     print()
     print("Start conditions are met.")
     sends = f"sends at most {est['calls']} calls" if sec002 else f"sends {est['calls']} calls"
