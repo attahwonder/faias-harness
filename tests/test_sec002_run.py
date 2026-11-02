@@ -650,6 +650,8 @@ class EngineTests(unittest.TestCase):
                                    f"{run.recs[0]['code']['scorer_sha256']}")
         self.assertIn(f"redaction file in the log: sha256 {run.recs[0]['code']['redaction_sha256']} (equal to "
                       f"{sec002_log.REDACTION_FILE} of this checkout)", lines)
+        self.assertIn(f"families file in the log: sha256 {run.recs[0]['code']['families_sha256']} (equal to "
+                      f"{sec002_log.FAMILIES_FILE} of this checkout)", lines)
         self.assertIn("summary measures compared: 7; mismatches: 0", lines)
         for argv in (["verify", "--log", str(log), "--sig", str(sig), "--pubkey", str(pub)],
                      ["verify", "--log", str(log), "--sig", str(sig), "--pubkey", str(pub), "--no-repo"],

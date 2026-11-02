@@ -474,6 +474,21 @@ class CheckTests(unittest.TestCase):
                                                                        self.full[0]["code"]["redaction_sha256"]),
                       sec002_log.rescore(self.full, repo=REPO)[0])
 
+    def test_a_families_hash_that_differs_from_the_file(self):
+        # As for the redaction hash, the check does not compare the families hash with its file. The rescore says
+        # whether it equals the hash of sec002_families.py of the checkout.
+        recs = copy.deepcopy(self.full)
+        recs[0]["code"]["families_sha256"] = sha("other encoders")
+        relock(recs[0])
+        for use_repo in (True, False):
+            self.assertEqual(sec002_log.check(recs, repo=REPO, use_repo=use_repo), [])
+        want = (f"families file in the log: sha256 {sha('other encoders')} (differs from "
+                "faias_harness/engine/sec002_families.py of this checkout)")
+        self.assertIn(want, sec002_log.rescore(recs, repo=REPO)[0])
+        self.assertIn(want.replace("differs from", "equal to").replace(sha("other encoders"),
+                                                                       self.full[0]["code"]["families_sha256"]),
+                      sec002_log.rescore(self.full, repo=REPO)[0])
+
     def test_a_code_block_without_the_redaction_hash(self):
         recs = copy.deepcopy(self.full)
         for k in ("redaction_file", "redaction_sha256"):

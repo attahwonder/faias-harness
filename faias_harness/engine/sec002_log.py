@@ -38,7 +38,7 @@ A or B, `turn` and `turns`. A cell record has the track C and its `family`. An i
 turn. The summary holds `sequence_outcomes`: the outcome of each run of each sequence (sec002.sequence_outcome).
 With the repository, `check` fails a log in which a string holds the encoded form of a pool text under any family.
 As in schema 4, `check` does not compare a code hash with its file. So a later edit of the code does not fail an older
-log. `rescore` says whether the scorer hash and the redaction hash of the log equal those of the checkout.
+log. `rescore` says whether the scorer, redaction and families hashes of the log equal those of the checkout.
 
 The variant external (version 0.8) is the log of a TP-SEC-002 run on an external target, through a channel adapter
 (engine/external.py). It is schema 9, not a new schema. It adds the blocks target, model, budget and pacing of
@@ -989,10 +989,14 @@ def rescore(recs, repo=runlog.REPO, replies=None):
     logged = (h.get("code") or {}).get("scorer_sha256")
     redaction = runlog.sha256_hex((Path(repo) / REDACTION_FILE).read_bytes())
     redaction_logged = (h.get("code") or {}).get("redaction_sha256")
+    families = runlog.sha256_hex((Path(repo) / FAMILIES_FILE).read_bytes())
+    families_logged = (h.get("code") or {}).get("families_sha256")
     lines = [f"scorer used: {SCORER_FILE} of this checkout, sha256 {used}",
              f"scorer in the log: sha256 {logged} ({'equal to' if logged == used else 'differs from'} the scorer used)",
              f"redaction file in the log: sha256 {redaction_logged} "
-             f"({'equal to' if redaction_logged == redaction else 'differs from'} {REDACTION_FILE} of this checkout)"]
+             f"({'equal to' if redaction_logged == redaction else 'differs from'} {REDACTION_FILE} of this checkout)",
+             f"families file in the log: sha256 {families_logged} "
+             f"({'equal to' if families_logged == families else 'differs from'} {FAMILIES_FILE} of this checkout)"]
     if (h.get("store_replies") or {}).get("mode") == "hash_only":
         if is_external(h):      # the log holds the reply hashes only in this mode, and no store exists
             return lines + [runlog.NO_STORE_EXTERNAL], None
