@@ -22,6 +22,10 @@ TP-SEC-001 (the default) or TP-SEC-002. A TP-SEC-002 file takes `baseline_log`, 
 declaration of the channel inputs of the target, required) and `reviewer_values.M1` in place of M4. In evidence mode
 it needs the M1 value with its reason, the baseline log and its public key. The TP-SEC-002 fields enter the settings
 hash only for a TP-SEC-002 file, so a TP-SEC-001 external file keeps its hash.
+Since 0.8 an external run keeps the SHA-256 of each reply, not the reply (`store_replies: hash_only`, the default).
+A firm's staging agent can return the firm's own data. `store_replies: full` keeps each reply. It needs
+`store_replies_reason`, a non-empty reason. A file with full and no reason is refused. The two settings enter the
+settings hash only with full, so a file without them keeps its hash.
 
 The setting `procedure` (version 0.6) chooses the procedure of an SRD-1 run: TP-SEC-001 (the default) or
 TP-SEC-006 (docs/ARCHITECTURE.md, section 16). Only TP-SEC-006 takes `store_replies` (full or hash_only; since 0.8,
@@ -596,12 +600,15 @@ def load_settings(path):
 EXT_REQUIRED = ["kind", "mode", "cap_usd", "cost_per_call_usd"]
 EXT_OPTIONAL = ["item_set", "runs_per_item", "max_calls", "reply_timeout_s", "min_interval_ms",
                 "max_consecutive_errors", "declared", "reviewer_values", "procedure", "baseline_log", "baseline_pubkey",
-                "channel_inputs"]
+                "channel_inputs", "store_replies", "store_replies_reason"]
 EXT_DEFAULTS = {"reply_timeout_s": 90, "min_interval_ms": 500, "max_consecutive_errors": 5}
 DECLARED_KEYS = ("model_id", "target_version")
 # The procedures of an external run (since 0.8). TP-SEC-002 takes the keys of EXT_SEC002_KEYS, and only it.
 EXT_PROCEDURES = ("TP-SEC-001", SEC002)
 EXT_SEC002_KEYS = ("baseline_log", "baseline_pubkey", "channel_inputs")
+# Since 0.8 an external run keeps the reply hashes by default. A firm's agent can return the firm's own data. Full
+# text needs a reason, which the header records.
+EXT_STORE_DEFAULT = "hash_only"
 
 
 @dataclass(frozen=True)
@@ -625,8 +632,9 @@ class ExternalSettings:
     m1_value: object = None             # TP-SEC-002 only; the bar of a material uplift
     m1_reason: object = None
     channel_inputs: object = None       # TP-SEC-002 only: the declaration of the channel inputs (evidence output E2)
+    store_replies: str = EXT_STORE_DEFAULT  # hash_only (the default) or full
+    store_replies_reason: object = None     # the operator's reason for full; required with full
     kind = "external"
-    store_replies = "full"      # a class attribute: an external run keeps each reply in its run record
 
     @property
     def call_budget(self):
@@ -635,7 +643,8 @@ class ExternalSettings:
 
     def canonical(self):
         """The validated content as one dict. Its hash is the settings hash. The TP-SEC-002 fields are in it only for
-        a TP-SEC-002 run, so the settings hash of a TP-SEC-001 external run is unchanged."""
+        a TP-SEC-002 run, so the settings hash of a TP-SEC-001 external run is unchanged. The store mode and its
+        reason are in it only with full. So a file that keeps the default keeps its hash."""
         out = {
             "kind": "external", "mode": self.mode, "item_set": self.item_set, "runs_per_item": self.runs_per_item,
             "cap_usd": self.cap_usd, "cost_per_call_usd": self.cost_per_call_usd, "max_calls": self.max_calls,
@@ -648,6 +657,8 @@ class ExternalSettings:
             out.update(procedure=self.procedure, baseline_log=self.m4_baseline_log,
                        baseline_pubkey=self.m4_baseline_pubkey, channel_inputs=self.channel_inputs)
             out["reviewer_values"]["M1"] = {"value": self.m1_value, "reason": self.m1_reason}
+        if self.store_replies == "full":
+            out["store_replies"] = {"mode": "full", "reason": self.store_replies_reason}
         return out
 
     def digest(self):
@@ -713,6 +724,16 @@ def validate_external(raw):
         problems += [f"{k} applies to the procedure TP-SEC-002 only" for k in EXT_SEC002_KEYS if k in raw]
         if "item_set" in raw and raw["item_set"] not in ITEM_SETS:
             problems.append(f"item_set must be one of {', '.join(ITEM_SETS)}")
+    store = raw.get("store_replies", EXT_STORE_DEFAULT)
+    if store not in STORE_REPLIES:
+        problems.append(f"store_replies must be one of {', '.join(STORE_REPLIES)}")
+    reason = raw.get("store_replies_reason")
+    if store == "full" and not (isinstance(reason, str) and reason.strip()):
+        problems.append("store_replies: full needs store_replies_reason, the reason to keep the replies of the target "
+                        f"in the log. An external run keeps the reply hashes by default (store_replies: "
+                        f"{EXT_STORE_DEFAULT})")
+    elif store != "full" and "store_replies_reason" in raw:
+        problems.append("store_replies_reason applies to store_replies: full only")
     if "reply_timeout_s" in raw and not (_num(raw["reply_timeout_s"]) and 5 <= raw["reply_timeout_s"] <= 600):
         problems.append("reply_timeout_s must be a number from 5 to 600")
     if "min_interval_ms" in raw and not _whole(raw["min_interval_ms"], 0, 60000):
@@ -778,4 +799,5 @@ def external_from_raw(raw):
         m4_value=m4.get("value"), m4_reason=m4.get("reason"), procedure=proc,
         m4_baseline_log=raw.get("baseline_log"), m4_baseline_pubkey=raw.get("baseline_pubkey"),
         m1_value=m1.get("value"), m1_reason=m1.get("reason"), channel_inputs=raw.get("channel_inputs"),
+        store_replies=raw.get("store_replies", EXT_STORE_DEFAULT), store_replies_reason=raw.get("store_replies_reason"),
     )

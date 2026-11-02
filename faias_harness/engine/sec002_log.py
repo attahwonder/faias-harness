@@ -22,7 +22,8 @@ their bases, the code block, the lock over the scorer and record hashes, the Ed2
   readings          the readings that this harness took where the owner has not ruled (READINGS)
   store_replies     "full": each run record holds the reply, redacted, with the mark sec002.CELL_TEXT_REMOVED in place
                     of each copy of an encoded pool text. "hash_only": it holds the SHA-256 of the reply as received;
-                    a rescore then needs the replies from the controlled evidence store
+                    a rescore then needs the replies from the controlled evidence store. An external run keeps
+                    hash_only by default, and its log cannot be rescored (runlog.NO_STORE_EXTERNAL)
 
 The corpus also holds the pool (`objectives`: each with its class and its baseline facts), the counts of each track,
 the families, the languages, the manifest (each sequence with its track, objective, class, activity, turn count and
@@ -81,6 +82,16 @@ STORE_NOTE_EXTERNAL = ("each run record holds the reply as the channel gave it, 
                        "removal finds exact copies only: a partial or re-wrapped echo of the request is not removed "
                        "and stays in the stored reply. The redaction of SRD-1's staged placeholders does not run, "
                        "because the target is not SRD-1")
+# Since 0.8 an external run keeps the hashes only by default. A firm's staging agent can return the firm's own data.
+# Full text (STORE_NOTE_EXTERNAL) needs the operator's reason (settings.validate_external).
+STORE_NOTES_EXTERNAL = {
+    "full": STORE_NOTE_EXTERNAL,
+    "hash_only": "each run record holds the SHA-256 of the reply as the channel gave it (reply_sha256), not the reply. "
+                 "It holds the SHA-256 of the request (request_sha256), not the request. This is the default of an "
+                 "external run, because a firm's staging agent can return the firm's own data. The score of a hit "
+                 "keeps its evidence. That is the marker, the canary, or the matched sentence of the reply (at most "
+                 "160 characters). The log cannot be rescored, and rescore gives exit 2",
+}
 # The limits of the decoded views (sec002_families.views). The limits of the TP-SEC-001 rule come first.
 VIEW_LIMITS = [
     f"a marker given only as Base64 of fewer than {sec002_families.BASE64_MIN} characters is not decoded, so it is "
@@ -317,6 +328,11 @@ def lock_covers(header):
 
 ANOTHER_TARGET = sec006_log.ANOTHER_TARGET
 RESCORED_DIFFERS = "baseline scores differ from this scorer"
+# A baseline of an external run with store_replies hash_only holds no reply. So it cannot be rescored, and
+# read_baseline sets rescored to false. Its stored scores are the scores of this scorer only when the two scorer
+# hashes are equal.
+UNCHECKED_SCORES = ("baseline scores not checked, because the baseline holds reply hashes only and its scorer "
+                    "differs")
 EVIDENCE_BASELINE = ("a baseline log of TP-SEC-001 on the full set, of the same model, variant, system prompt, routing "
                      "locks and tool definitions, in evidence mode, with a signature that verifies against "
                      "baseline_pubkey, and with stored scores that this scorer gives again")
@@ -379,7 +395,8 @@ def read_baseline(path, pool_ids, repo=runlog.REPO, pubkey=None, external=False)
       per_item   for each pool objective, its facts in M4.per_item of the summary: blocked when its item had no
                  successful run, unknown when the item has no complete result with a run that has a result
       rescore    the log scored again with the scorer of this checkout (runlog.rescore_log): scorer_sha256_logged,
-                 scorer_sha256_used, runs_rescored and mismatches
+                 scorer_sha256_used, runs_rescored and mismatches. A log with store_replies hash_only (an external
+                 run since 0.8) cannot be rescored: then runs_rescored and mismatches are 0 and rescored is false
       runs_per_item  the k of the baseline run, from the corpus block of its header (None when the header has none)
     With `external` (the baseline of an external run), the log must be a schema 5 log of an external TP-SEC-001 run.
     The facts then add its schema and the declared fields of its target block that EXTERNAL_MATCH_FIELDS names.
@@ -399,7 +416,7 @@ def read_baseline(path, pool_ids, repo=runlog.REPO, pubkey=None, external=False)
                          f"{FULL_SET} items by ID, so the baseline must be a run on the full set")
     recs = runlog.read_log(p)
     per = (((recs[-1].get("measures") or {}).get("M4") or {}).get("per_item")) or {}
-    _, mismatches = runlog.rescore_log(p, repo=repo)
+    _, mismatches = runlog.rescore_log(p, repo=repo)     # None: a hash_only external log, which cannot be rescored
     sig = base["signature"]
     if sig.get("verified") is None:
         sig = {**sig, "reason": _renamed(sig["reason"])}
@@ -410,8 +427,11 @@ def read_baseline(path, pool_ids, repo=runlog.REPO, pubkey=None, external=False)
            "per_item": {i: _pool_fact(per.get(i)) for i in pool_ids},
            "scorer_sha256_logged": (recs[0].get("code") or {}).get("scorer_sha256"),
            "scorer_sha256_used": runlog.sha256_hex(Path(sec001.__file__).read_bytes()),
-           "runs_rescored": sum(1 for r in recs if r.get("type") == "run"), "mismatches": len(mismatches),
+           "runs_rescored": 0 if mismatches is None else sum(1 for r in recs if r.get("type") == "run"),
+           "mismatches": len(mismatches or []),
            "runs_per_item": (recs[0].get("corpus") or {}).get("runs_per_item")}
+    if mismatches is None:
+        out["rescored"] = False     # the log holds the reply hashes only (UNCHECKED_SCORES)
     if external:
         t = recs[0].get("target") or {}
         out.update(schema=recs[0].get("schema"),
@@ -439,14 +459,25 @@ def evidence_problems(baseline):
     if baseline.get("mismatches"):
         out.append(f"the stored scores of the baseline log differ from this scorer: {baseline['mismatches']} of "
                    f"{baseline.get('runs_rescored')} runs score differently now")
+    if scores_unchecked(baseline):
+        out.append("the baseline log holds reply hashes only, and its scorer hash differs from that of this scorer. "
+                   "So its stored scores cannot be checked")
     return out
+
+
+def scores_unchecked(baseline):
+    """True when the baseline holds reply hashes only (rescored false) and its scorer hash differs from this scorer.
+    With equal hashes, the deterministic scorer gives the stored scores again."""
+    b = baseline or {}
+    return b.get("rescored") is False and b.get("scorer_sha256_logged") != b.get("scorer_sha256_used")
 
 
 def run_label(baseline_match, baseline=None, *, authors, external=False):
     """The label of a TP-SEC-002 run: sec002.label of the `authors` value that the item file declares (a key of
     sec002.AUTHORSHIP; another value raises ValueError). An external run adds EXTERNAL_LABEL: its baseline is compared
     on declared fields only. A baseline log from another target (explore mode only) adds to it, and so does a baseline
-    log whose stored scores the scorer of this checkout does not give again (explore mode only)."""
+    log whose stored scores the scorer of this checkout does not give again (explore mode only). So does a baseline
+    whose stored scores cannot be checked (scores_unchecked; explore mode only)."""
     label = sec002.label(authors)
     if external:
         label += f"; {EXTERNAL_LABEL}"
@@ -454,6 +485,8 @@ def run_label(baseline_match, baseline=None, *, authors, external=False):
         label += f"; {ANOTHER_TARGET}"
     if (baseline or {}).get("mismatches"):
         label += f"; {RESCORED_DIFFERS}"
+    if scores_unchecked(baseline):
+        label += f"; {UNCHECKED_SCORES}"
     return label
 
 
@@ -630,6 +663,8 @@ def check(recs, repo=runlog.REPO, use_repo=True):
     store = (h.get("store_replies") or {}).get("mode")
     if store not in STORE_MODES:
         problems.append("header: store_replies is missing or unknown")
+    elif external:      # full needs the operator's reason (runlog.external_store_problems)
+        problems += runlog.external_store_problems(h)
     limits = h.get("session_limits") or {}
     if external:        # an external target offers no config_read: the block says that the limits were not read
         if limits.get("read_through") is not None or limits.get("note") != SESSION_NOT_READ:
@@ -847,6 +882,8 @@ def rescore(recs, repo=runlog.REPO, replies=None):
              f"redaction file in the log: sha256 {redaction_logged} "
              f"({'equal to' if redaction_logged == redaction else 'differs from'} {REDACTION_FILE} of this checkout)"]
     if (h.get("store_replies") or {}).get("mode") == "hash_only":
+        if is_external(h):      # the harness keeps no reply of an external target in this mode, and no store exists
+            return lines + [runlog.NO_STORE_EXTERNAL], None
         if replies is None:
             return lines + [NO_STORE], None
         return rescore_from_store(recs, replies, lines, repo=repo)

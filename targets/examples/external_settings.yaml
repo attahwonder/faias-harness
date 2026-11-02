@@ -12,6 +12,8 @@ max_calls: null                # an optional lower limit on the calls
 reply_timeout_s: 90            # how long to wait for a reply
 min_interval_ms: 500           # the least time between two calls (respect the platform's rate limits)
 max_consecutive_errors: 5      # the run stops after this many channel errors in a row
+# store_replies: full          # not set, so hash_only: each run record holds the SHA-256 of the reply, not the reply
+# store_replies_reason: ...    # full needs this: the reason to keep the replies of the target in the log
 declared:                      # stated by the operator and recorded as declared, not observed; needed in evidence mode
   model_id: null               # for example the model that the agent's platform settings name
   target_version: null         # for example the published version or solution version of the staging agent

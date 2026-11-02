@@ -19,6 +19,10 @@ kind (`channel_errors`) and by class (`channel_errors_by_class`: the HTTP status
 no status), so that a channel that rejects attack items is visible. The rates do not change.
 
 The run log is schema 5 (schema 3 before version 0.6; runlog.build_external_header). It is signed like every run log.
+Since 0.8 each run record holds the SHA-256 of the reply, not the reply (`store_replies: hash_only`, the default).
+A firm's staging agent can return the firm's own data. `store_replies: full` keeps each reply and needs
+`store_replies_reason`. execute refuses full with no reason. The header block store_replies holds the mode and the
+reason (runlog.external_store_block). With hash_only the Inspect log shows the hash, and the log cannot be rescored.
 
 TP-SEC-002 (version 0.8, `procedure: TP-SEC-002` in the external settings) runs through the same channel, budget,
 pacing and stops. It uses the item file, the pool, the encoders, the scorer and the measures of the SRD-1 engine
@@ -381,6 +385,8 @@ class _ExternalRunner:
         self.channel_error_classes = Counter()      # by HTTP status, or by kind where the error has no status
         self.retries = self.consecutive_errors = 0
         self.last_no_result = False     # read by the Inspect solver, so its score matches the run log
+        self.last_score = None          # set with hash_only: the Inspect score then comes from the run record
+        self.full = settings.store_replies == "full"    # else hash_only (the default): the record holds the hash
 
     @property
     def stopped(self):
@@ -406,8 +412,13 @@ class _ExternalRunner:
         self.runs.append({"item": item.id, "cls": item.cls, "run": n, "success": sc.success, "outcome": outcome})
         self.last_no_result = outcome == "no_result"
         channel = {k: ex[k] for k in CHANNEL_FIELDS if k in ex}
+        stored = {"reply": reply} if self.full else {"reply_sha256": runlog.sha256_hex(reply)}
+        if not self.full:       # the Inspect log then shows the hash, and its score is the score of the record
+            self.last_score = ({"value": 0, "kind": "baseline", "explanation": "clean baseline: recorded, not scored"}
+                               if item.cls == sec001.BASELINE else
+                               {"value": int(sc.success), "kind": sc.kind, "explanation": sc.evidence or None})
         self.log.write({"type": "run", "item": item.id, "class": item.cls, "run": n, "t_ns": t_ns,
-                        "time": runlog.iso(t_ns), "request": item.text, "reply": reply,
+                        "time": runlog.iso(t_ns), "request": item.text, **stored,
                         "score": {"success": sc.success, "kind": sc.kind, "evidence": sc.evidence},
                         "outcome": outcome, "finish_reason": ex.get("finish_reason"), "blocked": ex.get("blocked"),
                         "block_type": ex.get("block_type"), "served_host": ex.get("channel_host"),
@@ -416,9 +427,10 @@ class _ExternalRunner:
                         "latency_ms": ex.get("latency_ms"), "retries": ex.get("retries", 0),
                         "retry_reasons": ex.get("retry_reasons", []), "channel": channel,
                         "channel_error": channel_error})
+        return reply if self.full else f"reply stored as SHA-256 only: {stored['reply_sha256']}"
 
     def one(self, target, item, n):
-        self.last_no_result = False
+        self.last_no_result, self.last_score = False, None
         if self.stopped:
             return None
         t_ns = self.clock_ns()
@@ -460,8 +472,7 @@ class _ExternalRunner:
                 self._stop(item, n, t_ns, consecutive_errors=self.consecutive_errors)
             return ""
         self.consecutive_errors = 0
-        self._record(item, n, t_ns, reply or "", ex, calls)
-        return reply or ""
+        return self._record(item, n, t_ns, reply or "", ex, calls)
 
 
 def _run_direct(target, runner, runs_per_item, items):
@@ -572,8 +583,10 @@ class _Sec002Runner(_ExternalRunner):
         self.runs.append({**run, "score": score, "outcome": outcome, "finish_reason": ex.get("finish_reason"),
                           "reply_empty": empty})
         channel = {k: ex[k] for k in CHANNEL_FIELDS if k in ex}
+        # hash_only (the default): the hash of the reply as the channel gave it, as on SRD-1 (run_sec002._Runner)
+        kept = {"reply": stored} if self.full else {"reply_sha256": runlog.sha256_hex(reply or "")}
         self.log.write({"type": "run", **run, "t_ns": t_ns, "time": runlog.iso(t_ns),
-                        "request_sha256": runlog.sha256_hex(request), "reply": stored, "score": score,
+                        "request_sha256": runlog.sha256_hex(request), **kept, "score": score,
                         "outcome": outcome, "cell_texts_removed": removed, "reply_empty": empty,
                         "finish_reason": ex.get("finish_reason"),
                         "blocked": ex.get("blocked"), "block_type": ex.get("block_type"),
@@ -583,7 +596,8 @@ class _Sec002Runner(_ExternalRunner):
                         "latency_ms": ex.get("latency_ms"), "retries": ex.get("retries", 0),
                         "retry_reasons": ex.get("retry_reasons", []), "channel": channel,
                         "channel_error": channel_error})
-        return {**run, "score": score, "outcome": outcome, "shown": stored}
+        shown = stored if self.full else f"reply stored as SHA-256 only: {kept['reply_sha256']}"
+        return {**run, "score": score, "outcome": outcome, "shown": shown}
 
 
 def target_facts(profile):
@@ -622,7 +636,7 @@ def sec002_header(settings, profile, *, allow_hosts, baseline, e2, confirmation,
         "baseline": baseline, "baseline_match": match, "baseline_match_basis": sec002_log.EXTERNAL_MATCH,
         "session_limits": {"read_through": None, "note": sec002_log.SESSION_NOT_READ},
         "e2": e2, "readings": list(sec002_log.READINGS) + list(sec002_log.READINGS_EXTERNAL),
-        "store_replies": {"mode": "full", "note": sec002_log.STORE_NOTE_EXTERNAL},
+        "store_replies": runlog.external_store_block(settings, sec002_log.STORE_NOTES_EXTERNAL),
         "variant": {"name": sec002_log.EXTERNAL, "purpose": runlog.VARIANTS["external"]},
         "run_engine": runlog._engine_facts(engine),
         "scorer": sec002_log.SCORER_STATUS,
@@ -661,6 +675,10 @@ def execute(settings, profile, *, run_dir, sign_key, confirmation, probes=None, 
     problems = registry.problems(profile)
     if problems:
         raise ValueError("the profile cannot drive an external run: " + "; ".join(problems))
+    reason = settings.store_replies_reason
+    if settings.store_replies == "full" and not (isinstance(reason, str) and reason.strip()):
+        raise ValueError("store_replies: full needs store_replies_reason (an external run keeps the reply hashes by "
+                         "default)")
     if settings.procedure == sec002.TP:
         return _execute_sec002(settings, profile, run_dir=run_dir, sign_key=sign_key, confirmation=confirmation,
                                probes=probes, engine=engine, clock_ns=clock_ns, repo=repo, prior_calls=prior_calls,

@@ -31,6 +31,10 @@ also covers those two file hashes. The corpus holds the scorer keys (the marker 
 each C2 and C3 item), so the items hash can be checked from the log alone. `verify` recomputes the lock hash of a schema 4 or 5 log. Logs of schemas 1 to 3 are checked as before.
 A schema 4 log also has the header field `redaction`, and each run record holds `placeholders`. SRD-1's prompts hold
 two staged placeholders, so the engine redacts each request and reply before it scores and stores them (engine/spike.py).
+Since 0.8 a schema 5 header holds `store_replies` (external_store_block). It gives the mode, the operator's reason
+for full and a note. With hash_only, the default, each run record holds `reply_sha256` in place of the reply. Then
+`rescore` gives exit 2. The lock covers the block. A schema 5 log of an earlier version has no such block and holds
+each reply.
 
 Schema 6 (version 0.6) is the log of a TP-SEC-006 run on SRD-1 minimal (engine/sec006_log.py). It has the frame of
 schema 4, with the scorer and record of TP-SEC-006 in the `code` block, and the blocks `config`, `placeholders`,
@@ -317,6 +321,43 @@ def external_blocks(settings, target):
     }
 
 
+STORE_MODES = ("full", "hash_only")
+# The store notes of an external run (since 0.8). A schema 9 header of the variant external takes its own note for
+# full (sec002_log.STORE_NOTE_EXTERNAL), because a TP-SEC-002 reply holds the mark of each removed cell text.
+STORE_NOTES_EXTERNAL = {
+    "hash_only": "each run record holds the SHA-256 of the reply as the channel gave it (reply_sha256), not the reply. "
+                 "This is the default of an external run, because a firm's staging agent can return the firm's own "
+                 "data. The score of a hit keeps its evidence. That is the marker, the canary, or the matched "
+                 "sentence of the reply (at most 160 characters). The log cannot be rescored, and rescore gives "
+                 "exit 2",
+    "full": "each run record holds the reply as the channel gave it. The operator set this mode. The reason is in "
+            "this block",
+}
+NO_STORE_EXTERNAL = ("not rescored: the log holds the reply hashes only (store_replies: hash_only, the default of an "
+                     "external run). In this mode the harness keeps no reply of an external target")
+
+
+def external_store_block(settings, notes=None):
+    """The store_replies block of an external header: the mode, the operator's reason (null with hash_only) and the
+    note of the mode."""
+    notes = notes or STORE_NOTES_EXTERNAL
+    return {"mode": settings.store_replies, "reason": settings.store_replies_reason,
+            "note": notes[settings.store_replies]}
+
+
+def external_store_problems(h):
+    """The checks of the store_replies block of an external header (empty if none). A schema 5 log of an earlier
+    version has no block. It holds each reply, and nothing is checked. With full, the block must give a reason."""
+    if "store_replies" not in h:
+        return []
+    st = h.get("store_replies") if isinstance(h.get("store_replies"), dict) else {}
+    if st.get("mode") not in STORE_MODES:
+        return ["header: store_replies is missing or unknown"]
+    if st.get("mode") == "full" and not (isinstance(st.get("reason"), str) and st["reason"].strip()):
+        return ["header: store_replies full has no reason (an external run keeps the reply hashes by default)"]
+    return []
+
+
 def build_external_header(settings, *, target, allow_hosts, confirmation, probes=None, repo=REPO, engine="inspect"):
     """The header of an external run (schema 3), without the lock. `target` is the dict that describes the target:
     adapter, channel, endpoint host, what the adapter observes, the profile name and the profile hash."""
@@ -341,6 +382,7 @@ def build_external_header(settings, *, target, allow_hosts, confirmation, probes
                    "scorer_keys": sec001.scorer_keys(items),
                    "scoring": "deterministic; no model judge; the clean-baseline requests are recorded, not scored"},
         "variant": {"name": "external", "purpose": VARIANTS["external"]},
+        "store_replies": external_store_block(settings),
         "run_engine": _engine_facts(engine),
         "scorer": SCORER_STATUS,
         "egress": {"allow": sorted(allow_hosts), "limit": EGRESS_LIMIT},
@@ -388,6 +430,8 @@ def lock_fixed(header):
         fixed.update(sec003_log.lock_extra(header))
     if "tools" in header:       # since 0.6, only when the run had tools on, so every earlier log still verifies
         fixed["tools_sha256"] = sha256_hex(canonical(header["tools"]))
+    if schema in EXTERNAL_SCHEMAS and "store_replies" in header:    # since 0.8, so every earlier log still verifies
+        fixed["store_replies"] = header["store_replies"]
     return fixed
 
 
@@ -421,6 +465,8 @@ def lock_header(header, clock_ns=None):
             covers += f", redaction file hash ({code.get('redaction_file')})"
     if "tools" in header:
         covers += ", tools block (names, definitions hash, emulator, store hash)"
+    if external and "store_replies" in header:
+        covers += ", reply storage (store_replies)"
     header["lock"] = {"time": iso(ns), "time_ns": ns, "hash": sha256_hex(canonical(lock_fixed(header))),
                       "covers": covers}
     return header
@@ -604,9 +650,11 @@ def check_log(path, repo=REPO, use_repo=True):
     if schema in CODE_SCHEMAS:
         problems += _code_problems(h)
     if external:
-        problems += external_header_problems(h)
+        problems += external_header_problems(h) + external_store_problems(h)
     elif not (h.get("model") or {}).get("pinned_id"):
         problems.append("header: model ID is missing")
+    st = h.get("store_replies") if external else None       # since 0.8; an earlier schema 5 log has none
+    store = st.get("mode") if isinstance(st, dict) else None
     if not h.get("settings_hash"):
         problems.append("header: settings hash is missing")
     th = h.get("thresholds") or {}
@@ -652,6 +700,11 @@ def check_log(path, repo=REPO, use_repo=True):
             problems.append(f"run {r.get('item')}/{r.get('run')}: time is not later than the lock time")
         if "served_host" not in r or "served_model" not in r:
             problems.append(f"run {r.get('item')}/{r.get('run')}: served host or served model is not recorded")
+        if store == "hash_only" and ("reply" in r or not HEX64.fullmatch(str(r.get("reply_sha256")))):
+            problems.append(f"run {r.get('item')}/{r.get('run')}: a hash_only record must hold the reply hash and not "
+                            "the reply")
+        if store == "full" and not isinstance(r.get("reply"), str):
+            problems.append(f"run {r.get('item')}/{r.get('run')}: the reply is not in the record")
     if schema == SCHEMA:
         # Since 0.6 a TP-SEC-001 run on SRD-1 redacts each request and reply (spike.REDACTION_NOTE). So, as for
         # schema 6, no text of the log may hold the placeholder marking. Schemas 1 to 3 are checked as before.
@@ -784,7 +837,7 @@ def rescore_log(log_path, repo=REPO, replies=None):
     Returns (lines to print, mismatches). Makes no network call. A TP-SEC-006 log (schema 6) is rescored by
     sec006_log.rescore, and a TP-SEC-002 log (schema 9) by sec002_log.rescore. When such a log holds the reply hashes
     only, `replies` names the store file of the replies. Without it, mismatches is None. Only such a log takes
-    `replies`."""
+    `replies`. A schema 5 log with store_replies hash_only holds no reply, so it is not rescored (mismatches None)."""
     recs = read_log(log_path)
     if recs[0].get("schema") == SCHEMA_SEC006:
         from . import sec006_log
@@ -812,6 +865,8 @@ def rescore_log(log_path, repo=REPO, replies=None):
     lines = [f"scorer used: {SCORER_FILE} of this checkout, sha256 {used}",
              "scorer in the log: " + (f"sha256 {logged} ({'equal to' if logged == used else 'differs from'} the "
                                       "scorer used)" if logged else "not recorded (logs before schema 4 do not record it)")]
+    if h.get("schema") in EXTERNAL_SCHEMAS and (h.get("store_replies") or {}).get("mode") == "hash_only":
+        return lines + [NO_STORE_EXTERNAL], None
     corpus = h.get("corpus") or {}
     keys = corpus.get("scorer_keys")
     if isinstance(keys, dict):      # schemas 4 and 5: the log holds what the scorer needs, also for a stopped run

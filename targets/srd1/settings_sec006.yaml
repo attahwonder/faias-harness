@@ -20,7 +20,7 @@ api_key_env: OPENROUTER_API_KEY
 max_tokens: 400
 runs_per_item: 3          # k: at least 3 (the reviewer-set design minimum of the procedure), at most 20
 item_set: TP-SEC-006      # items/TP-SEC-006.json: 60 items and 8 X4 sequences
-store_replies: full       # full | hash_only (a firm's target: the log holds the SHA-256 of each reply, not its text)
+store_replies: full       # full | hash_only (the log holds the SHA-256 of each reply, not its text)
 m4_baseline_log: null     # a TP-SEC-001 run log; in evidence mode, a log of the same model, variant, prompt and routing
                           # locks, made in evidence mode. M4 compares the follow-on rate with its class C1 rate
 m4_baseline_pubkey: null  # the public key file that verifies the signature of that log (<log>.sig); keep it outside

@@ -338,10 +338,14 @@ def external_settings_report(profile, settings, est):
         print(f"Baseline (a TP-SEC-001 log of an external run on the full set): "
               f"{settings.m4_baseline_log or 'not named'}")
         print(f"Baseline public key: {settings.m4_baseline_pubkey or 'not named'}")
-        print("Replies in the log: full (an external run keeps each reply)")
     else:
         m4 = "not set" if settings.m4_value is None else settings.m4_value
         print(f"M4 bar: {m4}; reason: {settings.m4_reason or 'not set'}")
+    if settings.store_replies == "full":
+        print(f"Replies in the log: full (set by the operator); reason: {settings.store_replies_reason}")
+    else:
+        print("Replies in the log: hash_only (the default of an external run). Each run record holds the SHA-256 of "
+              "the reply, not the reply. The log cannot be rescored")
     if est is None:         # only a TP-SEC-002 run without its item file has no estimate
         print("Calls in the run: not available (the item file is not found)")
     elif sec002:
@@ -714,8 +718,12 @@ def sec002_baseline(settings, variant="standard", target=None):
     lines = [f"Baseline signature: verified (public key SHA-256 {sig['public_key_sha256']})" if sig["verified"]
              else f"Baseline signature: not checked ({sig['reason']})",
              f"Baseline mode: {base['mode']}; item set: {base['item_set']}",
-             f"Baseline rescore with this scorer: {base['mismatches']} of {base['runs_rescored']} runs score "
-             "differently now",
+             (f"Baseline rescore with this scorer: {base['mismatches']} of {base['runs_rescored']} runs score "
+              "differently now" if base.get("rescored") is not False else
+              "Baseline rescore with this scorer: not made, because the baseline log holds reply hashes only. Its "
+              f"scorer hash "
+              f"{'equals' if base['scorer_sha256_logged'] == base['scorer_sha256_used'] else 'differs from'} "
+              "that of this scorer"),
              f"M1 bar: {'not set' if settings.m1_value is None else settings.m1_value}; the run-to-run variance of the "
              f"baseline (its M4 value): {'not computed' if variance is None else variance}"]
     if external:
@@ -744,6 +752,8 @@ def sec002_baseline(settings, variant="standard", target=None):
         lines.append(f"  Explore mode allows this. The run label adds '{sec002_log.ANOTHER_TARGET}'.")
     if base["mismatches"]:
         lines.append(f"  Explore mode allows this. The run label adds '{sec002_log.RESCORED_DIFFERS}'.")
+    if sec002_log.scores_unchecked(base):
+        lines.append(f"  Explore mode allows this. The run label adds '{sec002_log.UNCHECKED_SCORES}'.")
     return label, lines, []
 
 

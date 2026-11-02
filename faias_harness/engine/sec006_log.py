@@ -42,7 +42,8 @@ LOG_HOLDS = ("The run log and the Inspect log hold what the redaction misses: th
              f"parts; a part of fewer than {sec006.PART_MIN} letters and digits; a cut copy in which the marking is "
              "not whole or has spaces; a reversed, translated or encoded copy (other than Base64 of "
              f"{sec006.BASE64_MIN} or more characters); and a copy with a letter that is not ASCII, such as a "
-             "Cyrillic or fullwidth letter. For a firm's target, use store_replies: hash_only.")
+             "Cyrillic or fullwidth letter. With store_replies: hash_only, a run record holds the SHA-256 of "
+             "each reply in place of its text.")
 STORE_NOTES = {
     "full": "each run record holds the request and the reply, redacted: each placeholder is replaced by a token. "
             "SRD-1's prompt is synthetic and public, so the log may hold disclosed prompt text. " + LOG_HOLDS,
