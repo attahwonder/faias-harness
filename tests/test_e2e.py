@@ -283,8 +283,11 @@ class SpikeRunTests(unittest.TestCase):
         with StandInModelHost(respond) as host:
             host.httpd.shutdown()          # the stand-in no longer answers: connection refused
             host.httpd.server_close()
-            # A refused connection is retried 5 times. The connect fails at once, as on Linux (refused_at).
-            with refused_at(host.port), mock.patch("targets.srd1.app.gateway.time.sleep") as slept:
+            # A refused connection is retried 5 times. The connect fails at once, as on Linux (refused_at). The patch of
+            # sleep covers the whole process. So the wait for the lock time is patched too: on Python before 3.13 on
+            # Windows its loop sleeps again and again, and each sleep would count as a retry.
+            with refused_at(host.port), mock.patch("targets.srd1.app.gateway.time.sleep") as slept, \
+                    mock.patch.object(runlog, "wait_past_lock"):
                 res = self.run_spike(host, make_settings(cap_usd=10.0))
         self.assertEqual(slept.call_count, 5)
         self.assertEqual(res.status, "stopped_error")
