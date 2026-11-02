@@ -188,6 +188,20 @@ class SelftestRunTests(unittest.TestCase):
         self.assertEqual(s14["observed"]["engine"], "inspect_ai" if spike.inspect_available() else "direct")
         self.assertEqual((s14["counts"]["guard_trips"], s14["observed"]["all_loopback"]), (0, True))
 
+    def test_s16_states_that_no_publication_channel_exists(self):
+        """The S16 record gives the maintainer's reading of PLAYBOOK_AGT_014.md line 55 in plain words, with the
+        static scan as the evidence. The README and section 17 of docs/ARCHITECTURE.md say the same."""
+        s16 = self.probes["S16"]["observed"]
+        self.assertEqual((s16["channel"], self.probes["S16"]["result"]), (probes_mod.PUBLICATION_READING, "PASS"))
+        for words in ("No artefact-publication channel exists", "cannot be executed", "neither Pass nor Fail",
+                      "static scan of this probe is the evidence", "confirmed this interpretation"):
+            self.assertIn(words, s16["channel"])
+        self.assertNotIn("not yet confirmed", s16["channel"])
+        for rel in ("README.md", "docs/ARCHITECTURE.md"):
+            text = " ".join((REPO / rel).read_text(encoding="utf-8").split())
+            self.assertIn("So the test family of that channel cannot be executed, and it is neither Pass nor Fail.",
+                          text, rel)
+
     def test_the_tool_probes_s17_to_s19(self):
         """There are 19 probe records. The three tool probes pass with the counts of the design."""
         self.assertEqual(list(self.probes), [f"S{n}" for n in range(1, 20)])
@@ -306,7 +320,10 @@ class SelftestRunTests(unittest.TestCase):
     def test_attestation(self):
         att = REPO / selftest.ATTESTATION_FILE
         self.assertEqual(self.header["attestation"]["sha256"], runlog.sha256_hex(att.read_bytes()))
-        self.assertIn(selftest.DRAFT_MARK, att.read_text(encoding="utf-8"))
+        text = att.read_text(encoding="utf-8")
+        self.assertIn("Status: approved by the author of the harness on 2 November 2026.", text)
+        self.assertNotIn(selftest.DRAFT_MARK, text)
+        self.assertIs(self.header["attestation"]["draft"], False)
         with tempfile.TemporaryDirectory() as t:
             repo = Path(t)
             with self.assertRaises(selftest.SelftestRefused) as cm:

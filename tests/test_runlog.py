@@ -1,6 +1,10 @@
 """S5: the run log header, the lock, the Ed25519 signature and its verification."""
 import contextlib
 import io
+import json
+import re
+import subprocess
+import sys
 import tempfile
 import unittest
 from pathlib import Path
@@ -112,6 +116,21 @@ class SignatureTests(unittest.TestCase):
 
     def tearDown(self):
         self.tmp.cleanup()
+
+    def test_the_key_file_and_the_signature_file_give_the_same_fingerprint(self):
+        """README, "The run-signing key of the maintainer". The key file of make-key is a PEM file of 113 bytes.
+        The field public_key_pem of a signature file holds the same text. The README command prints its SHA-256."""
+        key = self.pub.read_bytes()
+        self.assertEqual(len(key), 113)
+        sig = json.loads(self.sig.read_text(encoding="utf-8"))
+        self.assertEqual(sig["public_key_pem"].encode("ascii"), key)
+        readme = (REPO / "README.md").read_text(encoding="utf-8")
+        self.assertRegex(readme, r"fingerprint of the maintainer's run-signing public key file is "
+                                 r"`(?:[0-9a-f]{8} ){7}[0-9a-f]{8}`")      # groups: the sweep refuses 40 hex in a row
+        code = re.search(r'^py -3\.14 -c "(import hashlib[^"]+)" <public key file>$', readme, re.M).group(1)
+        out = subprocess.run([sys.executable, "-c", code, str(self.pub)], capture_output=True, text=True, check=True)
+        digest = runlog.sha256_hex(key)
+        self.assertEqual(out.stdout.strip(), " ".join(digest[i:i + 8] for i in range(0, 64, 8)))
 
     def test_the_signature_verifies(self):
         ok, msg = runlog.verify_log(self.log, self.sig)

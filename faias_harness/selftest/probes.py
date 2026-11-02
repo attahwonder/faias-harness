@@ -451,7 +451,10 @@ def s13(ctx):
 
 
 PUBLICATION_READING = ("structurally absent in this version; a tool that publishes would add a path and a probe. "
-                       "This is a reading of PLAYBOOK_AGT_014.md line 55 that the maintainer has not yet confirmed.")
+                       "No artefact-publication channel exists, so the test family of that channel cannot be "
+                       "executed. It is neither Pass nor Fail. The static scan of this probe is the evidence. The "
+                       "maintainer confirmed this interpretation of PLAYBOOK_AGT_014.md line 55 on 2 November "
+                       "2026.")
 
 
 def s16(ctx):

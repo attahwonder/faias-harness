@@ -1,6 +1,6 @@
 # Isolation attestation of the harness
 
-Status: draft; for the maintainer's approval. Not yet approved.
+Status: approved by the author of the harness on 2 November 2026.
 
 This file is the maintainer's statement about the harness itself. The containment self-test (`python -m faias_harness.selftest`) records its SHA-256 in each self-test log. The self-test refuses to run when this file is absent or empty. It does not read the file for meaning.
 
