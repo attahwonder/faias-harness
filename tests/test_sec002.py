@@ -314,7 +314,8 @@ class ItemSetTests(unittest.TestCase):
             self.assertNotIn(turn, " | ".join(found))
 
     def test_turns_that_are_not_a_list_do_not_stop_the_check(self):
-        for value in (None, "Hello.", {"1": "Hello."}, 7):
+        text = helpers.SEC002_NEUTRAL_TURNS[0]
+        for value in (None, text, {"1": text}, 7):
             with self.subTest(turns=value):
                 self.assertEqual(self.found(lambda d: seq(d, "A-02").update(turns=value, technique="")),
                                  ["A-02: the turns are not a list of texts", "A-02: the sequence names no technique"])

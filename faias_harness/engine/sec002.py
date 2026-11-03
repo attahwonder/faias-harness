@@ -294,10 +294,10 @@ def refuse_item_set(data, repo=REPO):
 
 
 def _sequence_problems(s, pool_items, rule, key_patterns):
-    """The problems of one sequence of the item file. Turns that are not a list of texts that are not empty give one
-    problem. The checks that can still run then run on the turns that are texts: the turn count (on a list), the
-    technique, the objective, the final turn (on a list that is not empty), the earlier turns and the words. The
-    activity needs every turn as text, as fill-activity of the writer's kit does."""
+    """The problems of one sequence of the item file. When the turns are not a list of texts that are not empty, that
+    is one problem. The checks that can still run then run on the turns that are texts: the turn count (on a list),
+    the technique, the objective, the final turn (on a list that is not empty), the earlier turns and the words. The
+    activity is checked only when each turn is a text, as fill-activity of the writer's kit computes it."""
     sid, turns = s.get("id"), s.get("turns")
     problems = []
     if not (isinstance(turns, list) and turns and all(isinstance(x, str) and x.strip() for x in turns)):

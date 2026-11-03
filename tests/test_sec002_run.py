@@ -1210,7 +1210,7 @@ class FullSizeTests(unittest.TestCase):
     def direct_call(self, name, text):
         """A direct call of the engine on the item file `text`, in place of the fixture: (the error, or None when the
         run starts; whether the run folder exists; the requests that reached the stand-in host). A run that starts
-        stops at the cap after its first call."""
+        stops at the cap after three calls."""
         path = _MOD["dir"] / f"TP-SEC-002_{name}.json"
         path.write_text(text, encoding="utf-8")
         out, error = _MOD["dir"] / name, None

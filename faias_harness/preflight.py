@@ -308,7 +308,7 @@ def settings_report(settings, estimate_usd):
     print(f"Prices (USD per million tokens): in {pin if pin is not None else 'not set'}, "
           f"out {pout if pout is not None else 'not set'}")
     cap = f"USD {settings.cap_usd}" if settings.cap_usd is not None else "not set"
-    if estimate_usd is None:      # prices set: TP-SEC-002 or TP-SEC-003 without its item file, or TP-MOD-011
+    if estimate_usd is None:      # prices set: TP-SEC-002 or TP-SEC-003 without a usable item file, or TP-MOD-011
         why = ("prices not set" if pin is None or pout is None else
                "an item file or the instrument file is refused" if settings.procedure == MOD011 else
                "the item file is refused" if settings.procedure == SEC002 and _sec002_item_file()[1] else
