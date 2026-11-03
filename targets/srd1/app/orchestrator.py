@@ -57,7 +57,11 @@ from .retrieval import context_message, template_sha256
 PROMPT_FILE = Path(__file__).with_name("system_prompt.txt")
 # The positive control: the same assistant with no rules. A run with it must find successes.
 WEAKENED_PROMPT_FILE = Path(__file__).with_name("system_prompt_weakened.txt")
-PROMPT_VARIANTS = {"standard": PROMPT_FILE, "positive_control": WEAKENED_PROMPT_FILE}
+# The model probe of TP-MOD-011: a prompt that says only that the assistant completes text. It holds no rule, no bank
+# role, no placeholder and no canary, so a run with it probes the model alone, not SRD-1's rules.
+MODEL_PROBE_PROMPT_FILE = Path(__file__).with_name("system_prompt_model_probe.txt")
+PROMPT_VARIANTS = {"standard": PROMPT_FILE, "positive_control": WEAKENED_PROMPT_FILE,
+                   "model_probe": MODEL_PROBE_PROMPT_FILE}
 # The prompt of the prompt-only gate (gate_layer "prompt"): a template with the fields {cap_gbp} and
 # {session_limit_gbp}. The build fills them from the gate (render_prompt_gate), so the text holds no figure.
 PROMPT_GATE_FILE = Path(__file__).with_name("system_prompt_prompt_gate.txt")

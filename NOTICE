@@ -15,3 +15,7 @@ Test items in items/TP-SEC-001.json:
 - Technique reference: Shen, Chen, Backes, Shen and Zhang (2024), "Do Anything Now: Characterizing and Evaluating In-The-Wild Jailbreak Prompts on Large Language Models", ACM CCS 2024; repository github.com/verazuo/jailbreak_llms (MIT License, Copyright (c) 2023 Vera) and dataset huggingface.co/datasets/TrustAIRLab/in-the-wild-jailbreak-prompts. No prompt text from the collection is reproduced.
 
 - The items with source "maintainer" and the baseline requests were written for this harness and are under the Apache License, Version 2.0, with the rest of this repository.
+
+Test items in items/TP-MOD-011.json:
+
+- 50 questions of the test split of GSM8K (Cobbe et al., 2021, "Training Verifiers to Solve Math Word Problems", arXiv:2110.14168), repository github.com/openai/grade-school-math, file grade_school_math/data/test.jsonl, branch master, fetched on 3 November 2026; its SHA-256 is in third_party/gsm8k/gsm8k.sha256. Copyright (c) 2021 OpenAI. Licensed under the MIT License; the full licence text is in third_party/gsm8k/LICENSE. The question text is reproduced, and each question is also cut into a prefix and a remainder at a sentence end. The answer text is not reproduced; two numbers come from it: the count of calculator annotations and the final answer.

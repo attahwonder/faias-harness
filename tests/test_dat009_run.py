@@ -574,7 +574,7 @@ class SettingsTests(unittest.TestCase):
             ({**DAT, "arms": ["pipeline", "pipeline"]}, "arms must be"),
             ({**DAT, "arms": "pipeline"}, "arms must be"),
             ({**DAT, "halt_on_crossing": "yes"}, "halt_on_crossing must be"),
-            ({**DAT, "store_replies": "full"}, "applies to the procedures TP-SEC-006 and TP-SEC-002 only"),
+            ({**DAT, "store_replies": "full"}, "applies to the procedures TP-SEC-006, TP-SEC-002 and TP-MOD-011 only"),
             ({"retrieval_filter": "pre_retrieval"}, "applies to the procedures TP-DAT-009 and TP-SEC-003 only"),
             ({"halt_on_crossing": True}, "applies to the procedure TP-DAT-009 only"),
         ]

@@ -70,7 +70,21 @@ The hash of a TP-SEC-003 file takes the arms in the order of the engine (clean, 
 in the file does not change it.
 In evidence mode it needs no reviewer value, because the thresholds of M1 to M7 come from the record. The engine checks
 the same rules again (run_sec003.settings_problems).
+
+The procedure TP-MOD-011 (benchmark contamination, Component 1) takes the settings of MOD011_KEYS and `store_replies`.
+`benchmarks` is a list of IDs of the allow-list of the engine (engine/mod011.ALLOW_LIST; gsm8k by default). A settings
+file cannot add a benchmark, so an ID that is not on the list is refused. `comparator_file` and `comparator_sha256` name
+the private comparator file and its SHA-256, and `overlap_result` the result of tools/mod011_overlap.py for it. `cited`
+is the operator's list of the benchmarks that the approval papers cite, each with its source and score. `declared`
+holds the training cut-off of the model with its source, and the model family of the target, as the operator declares
+them. `sme_record_sha256` is the SHA-256 of the SME's record of the check of each comparator pair. `reviewer_values`
+takes M1 (the bar of a material differential), tau (the bar of a near-exact match) and match_tolerance (the tolerance
+of the match features: a number, or a number for each feature), each with a reason. The run probes the model alone, so
+`tools_enabled: true` is refused, and so are `retrieval_filter` and `arms`. In evidence mode it needs the three reviewer
+values with their reasons, the cut-off with its source, the target family and the SME record hash. The settings enter
+the settings hash only for a TP-MOD-011 run, so every other file keeps its settings hash.
 """
+import datetime
 import hashlib
 import json
 import os
@@ -87,14 +101,15 @@ TOP_REQUIRED = ["provider", "model_id", "mode", "routing", "price_in_per_m", "pr
 TOP_OPTIONAL = ["max_tokens", "reviewer_values", "temperature", "seed", "runs_per_item", "item_set", "kind",
                 "procedure", "store_replies", "m4_baseline_log", "m4_baseline_pubkey", "tools_enabled",
                 "tool_key_env", "containment", "halt_on_bypass", "selftest_pubkey", "retrieval_filter",
-                "delegation_credential", "arms", "halt_on_crossing", "baseline_log", "baseline_pubkey"]
+                "delegation_credential", "arms", "halt_on_crossing", "baseline_log", "baseline_pubkey", "benchmarks",
+                "comparator_file", "comparator_sha256", "overlap_result", "cited", "declared", "sme_record_sha256"]
 RUNS_MIN, RUNS_MAX, RUNS_DEFAULT = 3, 20, 3     # three is the FAIAS minimum (PLAYBOOK_SEC_001.md line 27)
 # The item set of a run: the full set in items/TP-SEC-001.json (the default), or the 20 items of the engine spike.
 ITEM_SETS, ITEM_SET_DEFAULT = ("TP-SEC-001", "spike"), "TP-SEC-001"
 # The procedure of an SRD-1 run (version 0.6). TP-SEC-006 runs its own item set, and only it takes m4_baseline_log,
 # m4_baseline_pubkey and a reviewer value for M3. It and TP-SEC-002 take store_replies.
-PROCEDURES, PROCEDURE_DEFAULT, SEC006, AGT012 = ("TP-SEC-001", "TP-SEC-006", "TP-AGT-012", "TP-DAT-009",
-                                                 "TP-SEC-002", "TP-SEC-003"), "TP-SEC-001", "TP-SEC-006", "TP-AGT-012"
+PROCEDURES, PROCEDURE_DEFAULT, SEC006, AGT012 = ("TP-SEC-001", "TP-SEC-006", "TP-AGT-012", "TP-DAT-009", "TP-SEC-002",
+                                                 "TP-SEC-003", "TP-MOD-011"), "TP-SEC-001", "TP-SEC-006", "TP-AGT-012"
 DAT009 = "TP-DAT-009"
 # TP-SEC-002 runs its own item set. Its baseline settings fill the fields m4_baseline_log and m4_baseline_pubkey.
 SEC002 = "TP-SEC-002"
@@ -114,6 +129,19 @@ DAT009_KEYS = ("retrieval_filter", "delegation_credential", "arms", "halt_on_cro
 SEC003 = "TP-SEC-003"
 SEC003_ITEM_SET = "TP-SEC-003"
 SEC003_KEYS = ("retrieval_filter", "arms")
+# TP-MOD-011 runs its own item file. Its settings, its reviewer values and its declared values (engine/mod011.py).
+MOD011 = "TP-MOD-011"
+MOD011_ITEM_SET = "TP-MOD-011"
+MOD011_KEYS = ("benchmarks", "comparator_file", "comparator_sha256", "overlap_result", "cited", "declared",
+               "sme_record_sha256")
+MOD011_REVIEWER = {"M1": "the bar of a material differential", "tau": "the bar of a near-exact match",
+                   "match_tolerance": "the tolerance of the match features"}
+MOD011_DECLARED = {"training_cutoff": "the training cut-off of the model, YYYY-MM-DD",
+                   "training_cutoff_source": "where the model card states the cut-off",
+                   "target_family": "the model family of the target"}
+SHA256_HEX = re.compile(r"[0-9a-f]{64}")
+# The procedures that take store_replies.
+STORE_PROCEDURES = (SEC006, SEC002, MOD011)
 STORE_REPLIES = ("full", "hash_only")
 ROUTING_KEYS = ["only", "allow_fallbacks", "zdr", "data_collection", "quantizations"]
 FORBIDDEN = {"api_key", "key", "secret", "token", "password"}
@@ -170,6 +198,19 @@ class Settings:
     delegation_credential: str = "user"         # the principal of the tool path (TP-DAT-009 only)
     arms: tuple = ARMS                          # the arms of the run (TP-DAT-009; TP-SEC-003 has clean and seeded)
     halt_on_crossing: bool = False              # with true, the run stops at the first `crossing` (TP-DAT-009 only)
+    benchmarks: tuple = ()                      # TP-MOD-011 only, as the rest of this block
+    comparator_file: object = None
+    comparator_sha256: object = None
+    overlap_result: object = None
+    cited: tuple = ()
+    training_cutoff: object = None              # YYYY-MM-DD, as declared
+    training_cutoff_source: object = None
+    target_family: object = None
+    sme_record_sha256: object = None
+    tau_value: object = None
+    tau_reason: object = None
+    match_tolerance_value: object = None
+    match_tolerance_reason: object = None
     kind = "srd1"           # a class attribute: not in the canonical content, so the settings hash is unchanged
 
     def routing(self):
@@ -223,6 +264,18 @@ class Settings:
             order = {a: n for n, a in enumerate(sec003_log.ARMS)}
             out.update(procedure=self.procedure, retrieval_filter=self.retrieval_filter,
                        arms=sorted(self.arms, key=lambda a: order.get(a, len(order))))
+        if self.procedure == MOD011:
+            out.update(procedure=self.procedure, store_replies=self.store_replies, benchmarks=list(self.benchmarks),
+                       comparator_file=self.comparator_file, comparator_sha256=self.comparator_sha256,
+                       overlap_result=self.overlap_result, cited=[dict(c) for c in self.cited],
+                       declared={"training_cutoff": self.training_cutoff,
+                                 "training_cutoff_source": self.training_cutoff_source,
+                                 "target_family": self.target_family},
+                       sme_record_sha256=self.sme_record_sha256)
+            out["reviewer_values"].update(M1={"value": self.m1_value, "reason": self.m1_reason},
+                                          tau={"value": self.tau_value, "reason": self.tau_reason},
+                                          match_tolerance={"value": self.match_tolerance_value,
+                                                           "reason": self.match_tolerance_reason})
         if self.selftest_pubkey is not None:
             out["selftest_pubkey"] = self.selftest_pubkey
         return out
@@ -296,6 +349,66 @@ def _validate_sec003(raw):
     return out
 
 
+def _iso_date(v):
+    """The YYYY-MM-DD text of a date, or of a text in that form; None for any other value."""
+    if isinstance(v, datetime.date) and not isinstance(v, datetime.datetime):
+        return v.isoformat()
+    if isinstance(v, str) and re.fullmatch(r"\d{4}-\d{2}-\d{2}", v):
+        try:
+            return datetime.date.fromisoformat(v).isoformat()
+        except ValueError:
+            return None
+    return None
+
+
+def _text(v):
+    return isinstance(v, str) and bool(v.strip())
+
+
+def _validate_mod011(raw):
+    """Problems in the settings of a TP-MOD-011 file (empty if each is absent or valid). The benchmarks are those of the
+    allow-list of the engine (mod011.ALLOW_LIST)."""
+    from .engine import mod011
+    out, allowed = [], ", ".join(mod011.ALLOW_LIST)
+    b = raw.get("benchmarks", list(mod011.ALLOW_LIST))
+    if not (isinstance(b, list) and b and all(isinstance(x, str) for x in b) and len(set(b)) == len(b)):
+        out.append("benchmarks must be a non-empty list of benchmark IDs, each once")
+    elif any(x not in mod011.ALLOW_LIST for x in b):
+        out.append(f"benchmarks: an ID is not on the allow-list of TP-MOD-011 ({allowed}); a settings file cannot add "
+                   "one")
+    for k in ("comparator_file", "overlap_result"):
+        if raw.get(k) is not None and not _text(raw[k]):
+            out.append(f"{k} must be the path of a file outside the repository, or null")
+    for k in ("comparator_sha256", "sme_record_sha256"):
+        if raw.get(k) is not None and not (isinstance(raw[k], str) and SHA256_HEX.fullmatch(raw[k])):
+            out.append(f"{k} must be a SHA-256 (64 lower-case hexadecimal characters), or null")
+    cited = raw.get("cited")
+    if cited is not None and not (isinstance(cited, list) and all(
+            isinstance(c, dict) and set(c) == {"benchmark", "source", "score"} and _text(c["benchmark"])
+            and _text(c["source"]) and _num(c["score"]) for c in cited)):
+        out.append("cited must be a list of entries, each with benchmark, source (where the approval papers cite it) "
+                   "and score (a number)")
+    dec = raw.get("declared")
+    if dec is not None:
+        if not isinstance(dec, dict) or set(dec) - set(MOD011_DECLARED):
+            out.append(f"declared may hold {', '.join(MOD011_DECLARED)} only")
+        else:
+            if dec.get("training_cutoff") is not None and _iso_date(dec["training_cutoff"]) is None:
+                out.append("declared.training_cutoff must be a date (YYYY-MM-DD) or null")
+            for k in ("training_cutoff_source", "target_family"):
+                if dec.get(k) is not None and not _text(dec[k]):
+                    out.append(f"declared.{k} must be a non-empty string or null")
+    return out
+
+
+def _tolerance_ok(v):
+    """A match tolerance: a number of 0 or more, or a mapping of match features (mod011.FEATURES) to such numbers."""
+    from .engine import mod011
+    if isinstance(v, dict):
+        return bool(v) and set(v) <= set(mod011.FEATURES) and all(_num(x) and x >= 0 for x in v.values())
+    return _num(v) and v >= 0
+
+
 def validate(raw):
     """Return the list of problems in a loaded settings mapping (empty if none)."""
     if not isinstance(raw, dict):
@@ -341,6 +454,7 @@ def validate(raw):
     dat009 = proc == DAT009
     sec002 = proc == SEC002
     sec003 = proc == SEC003
+    mod011 = proc == MOD011
     if not (dat009 or sec003):
         problems += [f"{k} applies to the procedures TP-DAT-009 and TP-SEC-003 only" for k in SEC003_KEYS if k in raw]
     if not dat009:
@@ -348,8 +462,11 @@ def validate(raw):
                      if k in raw and k not in SEC003_KEYS]
     if not sec002:
         problems += [f"{k} applies to the procedure TP-SEC-002 only" for k in SEC002_KEYS if k in raw]
-    if "store_replies" in raw and not (sec006 or sec002):
-        problems.append("store_replies applies to the procedures TP-SEC-006 and TP-SEC-002 only")
+    if not mod011:
+        problems += [f"{k} applies to the procedure TP-MOD-011 only" for k in MOD011_KEYS if k in raw]
+    if "store_replies" in raw and proc not in STORE_PROCEDURES:
+        problems.append(f"store_replies applies to the procedures {', '.join(STORE_PROCEDURES[:-1])} and "
+                        f"{STORE_PROCEDURES[-1]} only")
     if dat009:
         if "item_set" in raw and raw["item_set"] != DAT009_ITEM_SET:
             problems.append(f"item_set must be {DAT009_ITEM_SET} for the procedure TP-DAT-009")
@@ -394,6 +511,17 @@ def validate(raw):
             if k in raw:
                 problems.append(f"{k} applies to the procedure TP-SEC-006 only")
         problems += _validate_sec003(raw)
+    elif mod011:
+        if "item_set" in raw and raw["item_set"] != MOD011_ITEM_SET:
+            problems.append(f"item_set must be {MOD011_ITEM_SET} for the procedure TP-MOD-011")
+        if raw.get("tools_enabled") is True:
+            problems.append("TP-MOD-011 probes the model alone, with no tool (set tools_enabled to false)")
+        if "store_replies" in raw and raw["store_replies"] not in STORE_REPLIES:
+            problems.append(f"store_replies must be one of {', '.join(STORE_REPLIES)}")
+        for k in ("m4_baseline_log", "m4_baseline_pubkey"):
+            if k in raw:
+                problems.append(f"{k} applies to the procedure TP-SEC-006 only")
+        problems += _validate_mod011(raw)
     elif agt012:
         if "item_set" in raw and raw["item_set"] != AGT012_ITEM_SET:
             problems.append(f"item_set must be {AGT012_ITEM_SET} for the procedure TP-AGT-012")
@@ -463,20 +591,28 @@ def validate(raw):
 
     rv = raw.get("reviewer_values")
     m4 = m3 = m1 = None
-    # TP-SEC-002 takes the bar of M1 only: its M3 and M4 thresholds are 0 cells, from the record.
-    allowed = {"M3", "M4"} if sec006 else {"M1"} if sec002 else {"M4"}
+    mod_values = {}
+    # TP-SEC-002 takes the bar of M1 only: its M3 and M4 thresholds are 0 cells, from the record. TP-MOD-011 takes the
+    # bar of M1, tau and the match tolerance.
+    allowed = {"M3", "M4"} if sec006 else {"M1"} if sec002 else set(MOD011_REVIEWER) if mod011 else {"M4"}
     if "reviewer_values" in raw and rv is not None:
         if not isinstance(rv, dict) or set(rv) - allowed:
             problems.append(f"reviewer_values may hold {' and '.join(sorted(allowed))} only")
         else:
             m4, m3, m1 = rv.get("M4"), rv.get("M3"), rv.get("M1")
-            for name, m in (("M1", m1), ("M3", m3), ("M4", m4)):
+            mod_values = {k: rv.get(k) for k in MOD011_REVIEWER} if mod011 else {}
+            for name, m in (("M1", m1), ("M3", m3), ("M4", m4), ("tau", rv.get("tau")),
+                            ("match_tolerance", rv.get("match_tolerance"))):
                 if m is None:
                     continue
                 if not isinstance(m, dict) or set(m) - {"value", "reason"}:
                     problems.append(f"reviewer_values.{name} must hold 'value' and 'reason'")
                 else:
-                    if m.get("value") is not None and not (_num(m["value"]) and 0 <= m["value"] <= 1):
+                    if name == "match_tolerance":
+                        if m.get("value") is not None and not _tolerance_ok(m["value"]):
+                            problems.append("reviewer_values.match_tolerance.value must be a number of 0 or more, or "
+                                            "a mapping of match features to such numbers")
+                    elif m.get("value") is not None and not (_num(m["value"]) and 0 <= m["value"] <= 1):
                         problems.append(f"reviewer_values.{name}.value must be a number from 0 to 1")
                     if m.get("reason") is not None and not (isinstance(m["reason"], str) and m["reason"].strip()):
                         problems.append(f"reviewer_values.{name}.reason must be a non-empty string")
@@ -503,6 +639,18 @@ def validate(raw):
         if not raw.get("baseline_pubkey"):
             problems.append("evidence mode: baseline_pubkey is not set (the public key file that verifies the "
                             "signature of the baseline log)")
+    if evidence and mod011:
+        for name, what in MOD011_REVIEWER.items():
+            m = mod_values.get(name)
+            if not isinstance(m, dict) or m.get("value") is None or m.get("reason") is None:
+                problems.append(f"evidence mode: reviewer_values.{name} needs a value and a reason ({what})")
+        dec = raw.get("declared") if isinstance(raw.get("declared"), dict) else {}
+        for k, what in MOD011_DECLARED.items():
+            if dec.get(k) is None:
+                problems.append(f"evidence mode: declared.{k} is not set ({what})")
+        if not raw.get("sme_record_sha256"):
+            problems.append("evidence mode: sme_record_sha256 is not set (the SHA-256 of the SME's record of the check "
+                            "of each comparator pair)")
     if evidence:
         # The five routing locks: each must be set, and set to the locked value.
         only = routing.get("only")
@@ -532,11 +680,11 @@ def validate(raw):
         for k in ("temperature", "seed"):
             if raw.get(k) is None:
                 problems.append(f"evidence mode: {k} is not set")
-        if not (agt012 or dat009 or sec002 or sec003) and (not isinstance(m4, dict) or m4.get("value") is None
-                                                           or m4.get("reason") is None):
+        if not (agt012 or dat009 or sec002 or sec003 or mod011) and (
+                not isinstance(m4, dict) or m4.get("value") is None or m4.get("reason") is None):
             # TP-AGT-012 takes M1 and M4 from the record (both 0 with a reason), not from the settings. TP-DAT-009
             # takes M1 to M6 from the record. TP-SEC-002 takes M2 to M6 from the record. TP-SEC-003 takes the
-            # thresholds of M1 to M7 from the record.
+            # thresholds of M1 to M7 from the record. TP-MOD-011 takes its reviewer values above.
             problems.append("evidence mode: reviewer_values.M4 needs a value and a reason")
     return problems
 
@@ -551,6 +699,13 @@ def from_raw(raw):
     cont = raw.get("containment") or {}
     # The baseline of a TP-SEC-002 file is named baseline_log and baseline_pubkey (SEC002_KEYS).
     base = {old: raw.get(k) for k, old in SEC002_KEYS.items()} if proc == SEC002 else raw
+    rv = raw.get("reviewer_values") or {}
+    tau, tol, dec = rv.get("tau") or {}, rv.get("match_tolerance") or {}, raw.get("declared") or {}
+    if proc == MOD011:
+        from .engine import mod011
+        benchmarks = tuple(raw.get("benchmarks") or mod011.ALLOW_LIST)
+    else:
+        benchmarks = ()
     return Settings(
         provider=raw["provider"], model_id=raw["model_id"], mode=raw["mode"],
         only=tuple(r.get("only") or ()), allow_fallbacks=r.get("allow_fallbacks"), zdr=r.get("zdr"),
@@ -571,12 +726,18 @@ def from_raw(raw):
         retrieval_filter=raw.get("retrieval_filter", "pre_retrieval"),
         delegation_credential=raw.get("delegation_credential", "user"),
         arms=tuple(raw.get("arms") or _default_arms(proc)), halt_on_crossing=raw.get("halt_on_crossing", False),
+        benchmarks=benchmarks, comparator_file=raw.get("comparator_file"),
+        comparator_sha256=raw.get("comparator_sha256"), overlap_result=raw.get("overlap_result"),
+        cited=tuple(dict(c) for c in raw.get("cited") or ()), training_cutoff=_iso_date(dec.get("training_cutoff")),
+        training_cutoff_source=dec.get("training_cutoff_source"), target_family=dec.get("target_family"),
+        sme_record_sha256=raw.get("sme_record_sha256"), tau_value=tau.get("value"), tau_reason=tau.get("reason"),
+        match_tolerance_value=tol.get("value"), match_tolerance_reason=tol.get("reason"),
     )
 
 
 def _default_item_set(proc):
     return {SEC006: SEC006, AGT012: AGT012_ITEM_SET, DAT009: DAT009_ITEM_SET, SEC002: SEC002_ITEM_SET,
-            SEC003: SEC003_ITEM_SET}.get(proc, ITEM_SET_DEFAULT)
+            SEC003: SEC003_ITEM_SET, MOD011: MOD011_ITEM_SET}.get(proc, ITEM_SET_DEFAULT)
 
 
 def _default_arms(proc):

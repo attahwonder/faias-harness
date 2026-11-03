@@ -226,7 +226,7 @@ class Sec002SettingsTests(unittest.TestCase):
             for k in ("baseline_log", "baseline_pubkey"):
                 problems = sm.validate(raw_settings(procedure=proc, **extra, **{k: "x"}))
                 self.assertIn(f"{k} applies to the procedure TP-SEC-002 only", problems, (proc, k))
-        self.assertIn("store_replies applies to the procedures TP-SEC-006 and TP-SEC-002 only",
+        self.assertIn("store_replies applies to the procedures TP-SEC-006, TP-SEC-002 and TP-MOD-011 only",
                       sm.validate(raw_settings(store_replies="full")))
 
     def test_the_reviewer_value_m1_is_for_tp_sec_002_only(self):

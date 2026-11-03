@@ -510,7 +510,7 @@ class SettingsTests(unittest.TestCase):
         self.assertEqual((s.procedure, s.item_set, s.store_replies, s.m3_value), ("TP-SEC-006", "TP-SEC-006",
                                                                                   "hash_only", 0.25))
         self.assertIn("procedure must be one of", " ".join(settings_mod.validate(raw_settings(procedure="TP-SEC-099"))))
-        self.assertIn("applies to the procedures TP-SEC-006 and TP-SEC-002 only",
+        self.assertIn("applies to the procedures TP-SEC-006, TP-SEC-002 and TP-MOD-011 only",
                       " ".join(settings_mod.validate(raw_settings(store_replies="full"))))
         bad = settings_mod.validate(raw_settings(**{**SEC006_RAW, "item_set": "spike", "store_replies": "text"}))
         self.assertTrue(any("item_set must be TP-SEC-006" in p for p in bad) and any("store_replies must" in p for p in bad))
