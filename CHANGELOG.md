@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.9.0 (3 November 2026 — date of the push)
 
 A seventh procedure, TP-MOD-011, Component 1, on SRD-1 minimal: the guided-prompting probe for benchmark contamination. Its ★ is 3. The model gets the first piece of a benchmark item and is asked for the second piece. A comparator arm of new items of the same form is the chance basis. Each run is labelled "uncalibrated match rule, not a finding", with the limit of line 74, "model probe: SRD-1's rules are off; SRD-1's controls are not on the path", "benchmarks declared by the operator; no approval paper" and "one person directs the build and the review of SRD-1, so an SME check by that person is not independent". No comparator file ships, so no run can start from this checkout alone. No live run has used the engine. It is tested against a local stand-in only.
 
@@ -14,6 +14,7 @@ A seventh procedure, TP-MOD-011, Component 1, on SRD-1 minimal: the guided-promp
 - The preflight prints the TP-MOD-011 lines. `--start` refuses each start problem of the engine (`run_mod011.start_problems`). TP-MOD-011 joins the procedures of the self-test gate (`selftest.GATED`).
 - The form-only rate of the shipped remainders: the nearest final sentence of another GSM8K question reaches ROUGE-L 0.6 for 1 of 50, and 0.8 for 0 of 50. The measure is approximate and gives a lower bound; two runs gave the same counts.
 - Docs: README section "TP-MOD-011", `docs/ARCHITECTURE.md` section 22, and the sentence of section 11 on the placeholders, which now names the standard and positive-control prompts. The model-probe prompt holds none.
+- The two example logs in `examples/logs/` were made again at the 0.9.0 code with a new throw-away key. Each label still ends with "example from a local stand-in; not a finding". No example log of TP-AGT-012, TP-DAT-009, TP-SEC-002, TP-SEC-003 or TP-MOD-011 ships.
 
 ## 0.8.0 (3 November 2026)
 

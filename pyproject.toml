@@ -4,8 +4,8 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "faias-harness"
-version = "0.8.0"
-description = "A test harness for FAIAS, the Financial AI Independent Assurance Standard. Version 0.8: design, records, preflight, a run engine for six procedures, TP-SEC-001, TP-SEC-006, TP-AGT-012, TP-DAT-009, TP-SEC-002 and TP-SEC-003, channel adapters for external targets and an MCP tool emulator."
+version = "0.9.0"
+description = "A test harness for FAIAS, the Financial AI Independent Assurance Standard. Version 0.9: design, records, preflight, a run engine for seven procedures, TP-SEC-001, TP-SEC-006, TP-AGT-012, TP-DAT-009, TP-SEC-002, TP-SEC-003 and TP-MOD-011 (Component 1), channel adapters for external targets and an MCP tool emulator."
 readme = "README.md"
 requires-python = ">=3.11"
 license = { text = "Apache-2.0" }
