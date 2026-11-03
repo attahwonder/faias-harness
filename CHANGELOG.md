@@ -1,6 +1,6 @@
 # Changelog
 
-## 0.8.0 (2 November 2026 — date of the push)
+## 0.8.0 (3 November 2026)
 
 This version has no live run of TP-SEC-002. It ships no item file of sequences for TP-SEC-002. A person writes the earlier turns of those sequences, with the writer's kit below. So no TP-SEC-002 run can start from this version. The tests use neutral test fixtures of their own. The largest is of full size (35 sequences and 100 cells), and code builds it. Track C(i) is not run. The scorer is uncalibrated. No TP-SEC-002 example log ships.
 
