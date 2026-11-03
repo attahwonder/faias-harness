@@ -644,6 +644,11 @@ class ExternalSec002Tests(unittest.TestCase):
         (d / "TP-SEC-002.json").write_text(json.dumps(item_file()), encoding="utf-8")
         cls.patcher = mock.patch.object(sec002, "ITEM_FILE", str(d / "TP-SEC-002.json"))
         cls.patcher.start()
+        # The test item file is not the full set. So the item check of the engine (sec002.refuse_item_set) is left
+        # out for the runs of this class, as `pf` leaves out the item check of --start. direct_call runs it.
+        # create=True: the class also loads at an older commit.
+        cls.item_check = mock.patch.object(sec002, "refuse_item_set", lambda data, repo=None: None, create=True)
+        cls.item_check.start()
         # The declaration of the runs: the two families of the test item file, declared by the product owner, as
         # evidence mode needs. The other files: not declared (false), no field, and the five families.
         cells = E2_TEXT.replace(", ".join(sec002_families.FAMILIES), ", ".join(CELL_FAMILIES))
@@ -671,6 +676,7 @@ class ExternalSec002Tests(unittest.TestCase):
     @classmethod
     def tearDownClass(cls):
         cls.host.__exit__(None, None, None)
+        cls.item_check.stop()
         cls.patcher.stop()
         cls.tmp.cleanup()
 
@@ -1013,6 +1019,59 @@ class ExternalSec002Tests(unittest.TestCase):
                                    "  - the item file: A-03: the sequence names no technique",
                                    "  - the item file: B-04: banned stem 'film'"])
         self.assert_no_turn(out, data)
+
+    def test_start_refuses_an_item_file_with_a_repeated_key_on_an_external_target(self):
+        """The key turns twice in one sequence. The external --start refuses the file in one problem line, before the
+        probe, and the report gives no call count. The output holds no turn of the file."""
+        data, path = self.full_size_file("TP-SEC-002_repeated_key.json")
+        path.write_text(json.dumps(data).replace('"turns": [', '"turns": [], "turns": [', 1), encoding="utf-8")
+        first = len(self.host.requests)
+        rc, out, asked = self.start_with_item_file(path)
+        self.assertEqual((rc, asked, len(self.host.requests)), (2, [], first), out[-1500:])
+        refused = out.split("START REFUSED. No run starts. Fix these points first:\n")[1].splitlines()
+        self.assertEqual(refused, ["  - the item file: a JSON object holds the key 'turns' more than once"])
+        self.assertIn("Calls in the run: not available (the item file is refused)", out)
+        self.assertNotIn("Traceback", out)
+        self.assert_no_turn(out, data)
+
+    def direct_call(self, name, text):
+        """A direct call of the external engine, with its item check, on the item file `text`: (the error, or None when
+        the run starts; whether the run folder exists; the requests that reached the stand-in). A run that starts stops
+        at the cap after two calls."""
+        path = self.dir / f"TP-SEC-002_{name}.json"
+        path.write_text(text, encoding="utf-8")
+        run_dir, error, first = self.dir / name, None, len(self.host.requests)
+        self.item_check.stop()
+        self.addCleanup(self.item_check.start)
+        with no_outside_network(), mock.patch.object(sec002, "ITEM_FILE", str(path)):
+            try:
+                external.execute(self.settings(channel_inputs=str(self.e2_five), cap_usd=0.02),
+                                 load_profile(self.profile_path), run_dir=run_dir, sign_key=self.priv,
+                                 confirmation=CONFIRM, probes={"channel": {"session_state": "observed"}},
+                                 engine="direct", env=ENV)
+            except ValueError as e:
+                error = str(e)
+        return error, run_dir.exists(), len(self.host.requests) - first
+
+    def test_a_direct_call_of_the_external_engine_refuses_a_repeated_key_before_any_file(self):
+        data = sec002_neutral_fixture(REPO)
+        text = json.dumps(data).replace('"turns": [', '"turns": [], "turns": [', 1)
+        self.assertEqual(self.direct_call("repeated_key", text),
+                         ("a JSON object holds the key 'turns' more than once", False, 0))
+
+    def test_a_direct_call_of_the_external_engine_runs_the_item_check_before_any_file_with_no_turn_text(self):
+        """The preflight runs the item check at --start. A direct call of the external engine runs it too, and refuses
+        before the run folder exists, with the count and each problem. No call reaches the channel."""
+        d = sec002_neutral_fixture(REPO)
+        d["sizes"]["A"] = 21
+        d["tracks"]["A"][2]["technique"] = ""
+        d["tracks"]["B"][3]["turns"][0] += " film"
+        error, made, sent = self.direct_call("item_check", json.dumps(d))
+        self.assertEqual(error, "the item file does not pass the item check (sec002.check_item_set): 3 problems: the "
+                                "field sizes does not match the counts; A-03: the sequence names no technique; B-04: "
+                                "banned stem 'film'")
+        self.assertEqual((made, sent), (False, 0))
+        self.assert_no_turn(error, d)
 
     def test_evidence_mode_refuses_a_baseline_that_differs_in_one_declared_field_and_names_it(self):
         t = external.target_block(load_profile(self.profile_path), self.settings())

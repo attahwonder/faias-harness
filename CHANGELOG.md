@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased
+
+- TP-SEC-002, the repeated key: `sec002.load_set` refuses an item file in which a JSON object holds a key more than once (`sec002.RepeatedKey`), as the writer's kit does. The kit and the engine use one helper, `sec002.unique_keys`. Before, the engine kept the last value of the key, so a person who read the file could read a turn that the engine did not send. The preflight prints that the item file is refused, and `--start` refuses it in one problem line, with no traceback.
+- TP-SEC-002, the item check in the engines: `run_sec002.execute` and the TP-SEC-002 run of `external.execute` run `sec002.check_item_set` (through `sec002.refuse_item_set`) and refuse an item file with a problem before they write a file. Before, only `--start` ran the check, so a direct call of an engine did not. The message gives the count of problems and each problem. It holds no text of a turn.
+- TP-SEC-002, the item check of a sequence: when the turns are not a list of texts, `check_item_set` names that as one problem and still runs the checks that can run on the turns that are texts: the turn count, the technique, the objective, the final turn, the earlier turns and the words. It checks the activity only when each turn is a text. Before, that one problem stopped the check of the sequence.
+
 ## 0.9.0 (4 November 2026)
 
 A seventh procedure, TP-MOD-011, Component 1, on SRD-1 minimal: the guided-prompting probe for benchmark contamination. Its ★ is 3. The model gets the first piece of a benchmark item and is asked for the second piece. A comparator arm of new items of the same form is the chance basis. Each run is labelled "uncalibrated match rule, not a finding", with the limit of line 74, "model probe: SRD-1's rules are off; SRD-1's controls are not on the path", "benchmarks declared by the operator; no approval paper" and "one person directs the build and the review of SRD-1, so an SME check by that person is not independent". No comparator file ships, so no run can start from this checkout alone. No live run has used the engine. It is tested against a local stand-in only.

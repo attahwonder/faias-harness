@@ -17,9 +17,10 @@ check          runs sec002.check_item_set on a file at any path. It prints the p
                of each sequence under its ID, then the count of sequences with no problem. Exit 0 when there is no
                problem, and 1 otherwise.
 
-Each command refuses a file that is not one JSON object, and a JSON object with a repeated key. json.loads keeps only
-the last value of a repeated key, as the engine does. So a person who reads such a file can read a turn that the engine
-does not send. The pool comes from items/TP-SEC-001.json of this checkout, as in check_item_set. A command writes a file
+Each command refuses a file that is not one JSON object, and a JSON object with a repeated key. Plain json.loads keeps
+only the last value of a repeated key. So a person who reads such a file could read a turn that the engine does not
+send. The engine refuses such a file too: sec002.load_set and `read` use the same helper, sec002.unique_keys. The
+pool comes from items/TP-SEC-001.json of this checkout, as in check_item_set. A command writes a file
 whole, in one step (os.replace), as UTF-8 JSON with an indent of 1, as the other item files.
 """
 import argparse
@@ -44,15 +45,6 @@ class Refused(Exception):
     """A command refuses its input. The message gives the reason. It never holds the text of a turn."""
 
 
-def _unique(pairs):
-    """The pairs of one JSON object as a dict. Refuses a key that the object holds more than once."""
-    keys = [k for k, _ in pairs]
-    repeated = sorted({k for k in keys if keys.count(k) > 1})
-    if repeated:
-        raise Refused(f"a JSON object holds the key {', '.join(repr(k) for k in repeated)} more than once")
-    return dict(pairs)
-
-
 def read(path):
     """The item file at `path`, as a dict. Raises Refused for a file that cannot be read, that is not UTF-8 JSON, that
     holds a repeated key in an object, or that is not one JSON object."""
@@ -63,7 +55,9 @@ def read(path):
     except UnicodeDecodeError:
         raise Refused("the file is not UTF-8 text") from None
     try:
-        data = json.loads(text, object_pairs_hook=_unique)
+        data = json.loads(text, object_pairs_hook=sec002.unique_keys)
+    except sec002.RepeatedKey as e:
+        raise Refused(str(e)) from None
     except ValueError as e:
         raise Refused(f"the file is not valid JSON ({e})") from None
     if not isinstance(data, dict):

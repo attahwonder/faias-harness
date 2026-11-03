@@ -19,6 +19,7 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
 from faias_harness.engine import sec001, sec002, sec002_items, sec006
 from tests import helpers
@@ -259,6 +260,21 @@ class CheckTests(Folder):
                 self.assertTrue(out.startswith(want), out)
                 self.assert_no_turn(out, FIXTURE)
 
+    def test_the_engine_refuses_a_repeated_key_in_the_words_of_the_kit_with_one_helper(self):
+        """sec002.load_set refuses the file that `check` refuses, in the same words. The kit has no copy of the
+        helper: it reads through sec002.unique_keys."""
+        twice = self.save(FIXTURE, "twice.json")
+        twice.write_text(twice.read_text(encoding="utf-8").replace('"turns": [', '"turns": [], "turns": [', 1),
+                         encoding="utf-8")
+        code, out = run(["check", twice])
+        with mock.patch.object(sec002, "ITEM_FILE", str(twice)), self.assertRaises(ValueError) as cm:
+            sec002.load_set(REPO)
+        self.assertEqual((code, out), (1, f"check refused: {cm.exception}\n"))
+        self.assertFalse(hasattr(sec002_items, "_unique"))
+        with mock.patch.object(sec002, "unique_keys", wraps=sec002.unique_keys) as helper:
+            sec002_items.read(self.save(FIXTURE))
+        self.assertTrue(helper.called)
+
 
 class FormTests(Folder):
     """form: the draft file."""
@@ -297,14 +313,18 @@ class FormTests(Folder):
         # The form holds no text of a turn other than the final turns.
         self.assertEqual(sorted(set(all_turns(d))), sorted({BASE[o]["text"] for o in POOL}))
 
-    def test_the_check_of_a_form_names_only_its_empty_turns_and_then_its_techniques_and_activities(self):
-        """check_item_set stops at the empty turns of a sequence. With the earlier turns from the fixture, it names the
-        empty technique and the activity of each sequence, and nothing else."""
+    def test_the_check_of_a_form_names_its_empty_turns_and_its_techniques_and_activities(self):
+        """check_item_set names the empty turns of each sequence, and the checks that can still run go on: so it names
+        the empty technique and the activity too. With the earlier turns from the fixture, it names the empty technique
+        and the activity of each sequence, and nothing else."""
         d = sec002_items.form(POOL, "a person", today=DAY, repo=REPO)
         self.assertEqual(d["generated_by"]["date"], "2026-11-02")
         problems = sec002.check_item_set(d, REPO)
         ids = [s["id"] for t in sec002.TRACKS for s in d["tracks"][t]]
-        self.assertEqual(problems, [f"{i}: the turns are not a list of texts" for i in ids])
+        self.assertEqual(problems, [p for i in ids for p in (f"{i}: the turns are not a list of texts",
+                                                             f"{i}: the sequence names no technique",
+                                                             f"{i}: the activity is not the one that the activity "
+                                                             "rule gives")])
         for t in sec002.TRACKS:
             for s, f in zip(d["tracks"][t], FIXTURE["tracks"][t]):
                 self.assertEqual((s["id"], s["objective"], s["turns"][-1]), (f["id"], f["objective"], f["turns"][-1]))

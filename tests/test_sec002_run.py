@@ -210,6 +210,19 @@ class EngineTests(unittest.TestCase):
 
     results = {}
 
+    @classmethod
+    def setUpClass(cls):
+        # The test item file of this module has one sequence on each track and two families. It is not the full set.
+        # So the item check of the engine (sec002.refuse_item_set) is left out for this class, as PreflightTests leave
+        # out the item check of --start. FullSizeTests run the engine with its item check. create=True: the class
+        # also loads at an older commit.
+        cls.item_check = mock.patch.object(sec002, "refuse_item_set", lambda data, repo=None: None, create=True)
+        cls.item_check.start()
+
+    @classmethod
+    def tearDownClass(cls):
+        cls.item_check.stop()
+
     def run_sec002(self, name, respond=model, provider="ExampleHost", usage=(30, 20), items=None, **changes):
         """One run, kept for the other tests of this class: the result, the log, the request bodies that the stand-in
         host got, the items of each pass, and what config_read returned for each kind. `items`: another item file."""
@@ -991,6 +1004,32 @@ class PreflightTests(unittest.TestCase):
         self.assertEqual(self.problems(out), ["  - the item file: " + sec002.authorship_problem("a model")])
         self.assert_no_turn(out, data)
 
+    def test_start_refuses_an_item_file_with_a_repeated_key_in_one_problem_line(self):
+        """The full-size fixture with the key turns twice in one sequence: an empty list, then the turns. Plain
+        json.loads keeps the last value, so the item check alone would pass the file. sec002.load_set refuses it, as the
+        writer's kit does. The preflight prints that the item file is refused, with no traceback, and --start refuses
+        it in one problem line. --probes does not refuse it. No output holds a turn of the file."""
+        data = sec002_neutral_fixture(REPO)
+        path = self.dir / "TP-SEC-002_repeated_key.json"
+        path.write_text(json.dumps(data).replace('"turns": [', '"turns": [], "turns": [', 1), encoding="utf-8")
+        refusal = "a JSON object holds the key 'turns' more than once"
+        with mock.patch.object(sec002, "ITEM_FILE", str(path)):
+            self.assertEqual(preflight.sec002_item_problems(), [f"the item file: {refusal}"])
+            rc, out = self.preflight(*self.start, e2=_MOD["e2_five"], item_check=True)
+            self.assertEqual(rc, 2, out[-1500:])
+            self.assertEqual(self.problems(out), [f"  - the item file: {refusal}"])
+            for text in (f"Item file: {path} is refused: {refusal}",
+                         "Worst-case estimate: not available (the item file is refused); cap: USD 10.0",
+                         "Baseline check: not made (the pool of the item file names the baseline items, and the item "
+                         "file is refused)"):
+                self.assertIn(text, out)
+            self.assertNotIn("Traceback", out)
+            self.assert_no_turn(out, data)
+            rc, out = self.preflight("--probes", e2=_MOD["e2_five"], item_check=True)
+        self.assertEqual(rc, 0, out[-1500:])
+        self.assertNotIn("REFUSED", out)
+        self.assert_no_turn(out, data)
+
 
 class _Log:
     def __init__(self):
@@ -1167,6 +1206,46 @@ class FullSizeTests(unittest.TestCase):
         self.assertEqual(len(f["tracks"]["A"][0]["turns"]), 6)
         self.assertIn("not the item set of the procedure", f["status"])
         self.assertEqual(len(sec002.load_items(REPO)[1]), 100)
+
+    def direct_call(self, name, text):
+        """A direct call of the engine on the item file `text`, in place of the fixture: (the error, or None when the
+        run starts; whether the run folder exists; the requests that reached the stand-in host). A run that starts
+        stops at the cap after its first call."""
+        path = _MOD["dir"] / f"TP-SEC-002_{name}.json"
+        path.write_text(text, encoding="utf-8")
+        out, error = _MOD["dir"] / name, None
+        settings = sec002_settings(price_in_per_m=1.0, price_out_per_m=1.0, cap_usd=0.0062, max_tokens=50)
+        with StandInModelHost(model, usage=(1000, 1000), with_messages=True) as host, no_outside_network(), \
+                mock.patch.object(sec002, "ITEM_FILE", str(path)):
+            try:
+                run_sec002.execute(settings, run_dir=out, sign_key=_MOD["priv"], confirmation=CONFIRM,
+                                   base_url=host.base_url, env=ENV, engine="direct", e2_file=_MOD["e2_five"])
+            except ValueError as e:
+                error = str(e)
+        return error, out.exists(), len(host.requests)
+
+    def test_a_direct_call_refuses_an_item_file_with_a_repeated_key_before_any_file(self):
+        """The key turns twice in one sequence: an empty list, then the turns. Plain json.loads keeps the last value,
+        so the item check alone would pass the file. sec002.load_set refuses it. No model call is made."""
+        text = json.dumps(self.fixture).replace('"turns": [', '"turns": [], "turns": [', 1)
+        self.assertEqual(self.direct_call("repeated_key", text),
+                         ("a JSON object holds the key 'turns' more than once", False, 0))
+
+    def test_a_direct_call_runs_the_item_check_and_refuses_before_any_file_with_no_turn_text(self):
+        """The preflight runs the item check at --start. A direct call of the engine runs it too: the engine refuses
+        before the run folder exists, with the count and each problem. The message holds no turn of the file."""
+        d = json.loads(json.dumps(self.fixture))
+        d["sizes"]["A"] = 21
+        d["tracks"]["A"][2]["technique"] = ""
+        d["tracks"]["B"][3]["turns"][0] += " film"
+        error, made, sent = self.direct_call("item_check", json.dumps(d))
+        self.assertEqual(error, "the item file does not pass the item check (sec002.check_item_set): 3 problems: the "
+                                "field sizes does not match the counts; A-03: the sequence names no technique; B-04: "
+                                "banned stem 'film'")
+        self.assertEqual((made, sent), (False, 0))
+        for s in d["tracks"]["A"] + d["tracks"]["B"]:
+            for turn in s["turns"]:
+                self.assertNotIn(turn, error)
 
     def test_the_full_size_run_completes_verifies_and_rescores(self):
         run = self.full()

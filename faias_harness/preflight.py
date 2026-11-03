@@ -35,8 +35,8 @@ document_search only.
 For TP-SEC-002 (version 0.8) it prints the M1 bar with its reason, the baseline log and its public key, and the
 declaration of the channel inputs (targets/srd1/channel_inputs.yaml): the languages, the transformation families and
 the field product_owner_declared. --start refuses families that are not those of the item file. It also refuses an
-item file that sec002.check_item_set does not pass, on SRD-1 and on an external target. --probes does not run that
-check. On SRD-1 the field
+item file with a repeated key and one that sec002.check_item_set does not pass, on SRD-1 and on an external target.
+--probes does not run that check. On SRD-1 the field
 is printed only, and the run goes on. With no baseline log named, it prints BASELINE
 REQUIRED, and --probes and --start refuse. A named baseline log is read as the engine reads it: a TP-SEC-001 log on
 the full set, its signature checked against `baseline_pubkey`, and its stored scores scored again with this scorer.
@@ -311,6 +311,7 @@ def settings_report(settings, estimate_usd):
     if estimate_usd is None:      # prices set: TP-SEC-002 or TP-SEC-003 without its item file, or TP-MOD-011
         why = ("prices not set" if pin is None or pout is None else
                "an item file or the instrument file is refused" if settings.procedure == MOD011 else
+               "the item file is refused" if settings.procedure == SEC002 and _sec002_item_file()[1] else
                "the item file is not found")
         print(f"Worst-case estimate: not available ({why}); cap: {cap}")
     else:
@@ -363,8 +364,9 @@ def external_settings_report(profile, settings, est):
     else:
         print("Replies in the log: hash_only (the default of an external run). Each run record holds the SHA-256 of "
               "the reply, not the reply. The log cannot be rescored")
-    if est is None:         # only a TP-SEC-002 run without its item file has no estimate
-        print("Calls in the run: not available (the item file is not found)")
+    if est is None:         # only a TP-SEC-002 run without its item file, or with a refused one, has no estimate
+        why = "refused" if _sec002_item_file()[1] else "not found"
+        print(f"Calls in the run: not available (the item file is {why})")
     elif sec002:
         print(f"Calls in the run: at most {est['calls']} (plus the channel probe: {est['probe_calls']} calls, four "
               "turns in two sessions; retries are extra)")
@@ -684,10 +686,23 @@ BASELINE_REQUIRED = ("BASELINE REQUIRED: a TP-SEC-002 run compares each track wi
                      "set, in both modes; name the log in baseline_log and its public key file in baseline_pubkey")
 
 
-def _sec002_items():
-    """The item file of TP-SEC-002 (sec002.ITEM_FILE), or None when it is not found."""
+def _sec002_item_file():
+    """The item file of TP-SEC-002 (sec002.ITEM_FILE) as (its data, None). It is (None, None) when the file is not
+    found, and (None, the refusal) when sec002.load_set refuses a JSON object with a repeated key. The refusal names
+    the key. It holds no text of a turn."""
     from .engine import sec002
-    return sec002.load_set() if (REPO / sec002.ITEM_FILE).is_file() else None
+    if not (REPO / sec002.ITEM_FILE).is_file():
+        return None, None
+    try:
+        return sec002.load_set(), None
+    except sec002.RepeatedKey as e:
+        return None, str(e)
+
+
+def _sec002_items():
+    """The item file of TP-SEC-002 (sec002.ITEM_FILE), or None when it is not found or is refused
+    (_sec002_item_file)."""
+    return _sec002_item_file()[0]
 
 
 def sec002_channel_inputs(path=None, evidence=False):
@@ -709,7 +724,10 @@ def sec002_channel_inputs(path=None, evidence=False):
              f"  declared by {e2['declared_by']} on {e2['declared_on']}; status: {e2['status']}; "
              f"{sec002_log.E2_DECLARED}: {sec002_log.declared_text(e2)}"]
     problems = sec002_log.e2_evidence_problems(e2) if evidence else []
-    data = _sec002_items()
+    data, refusal = _sec002_item_file()
+    if refusal:         # sec002_item_problems gives it as a problem of --start, so it is printed here only
+        lines += [f"  - {p}" for p in problems] + [f"Item file: {sec002.ITEM_FILE} is refused: {refusal}"]
+        return lines, problems
     if data is None:
         lines += [f"  - {p}" for p in problems] + [f"Item file: {sec002.ITEM_FILE} is not found"]
         return lines, problems + [f"the item file {sec002.ITEM_FILE} is not found"]
@@ -737,10 +755,10 @@ def sec002_baseline(settings, variant="standard", target=None):
     from .engine import run_sec006, sec002, sec002_log, sec006_log
     if not settings.m4_baseline_log:
         return None, [BASELINE_REQUIRED], []
-    data = _sec002_items()
+    data, refusal = _sec002_item_file()
     if data is None:
         return None, ["Baseline check: not made (the pool of the item file names the baseline items, and the item "
-                      "file is not found)"], []
+                      f"file is {'refused' if refusal else 'not found'})"], []
     external = target is not None
     try:
         base = sec002_log.read_baseline(settings.m4_baseline_log, [o["id"] for o in data["objectives"]],
@@ -792,11 +810,13 @@ def sec002_baseline(settings, variant="standard", target=None):
 
 def sec002_item_problems():
     """The problems of the item file of TP-SEC-002 (sec002.check_item_set), in the form of TP-AGT-012 and TP-SEC-003.
-    Empty when the file is not found, because sec002_channel_inputs names that. A problem names a check and a
-    sequence. It holds no text of a turn. At most it names the barred word or the part of the marker that the check
-    found."""
+    Empty when the file is not found, because sec002_channel_inputs names that. A file that sec002.load_set refuses (a
+    JSON object with a repeated key) gives one problem, the refusal. A problem names a check and a sequence. It holds
+    no text of a turn. At most it names the barred word or the part of the marker that the check found."""
     from .engine import sec002
-    data = _sec002_items()
+    data, refusal = _sec002_item_file()
+    if refusal:
+        return [f"the item file: {refusal}"]
     return [] if data is None else [f"the item file: {p}" for p in sec002.check_item_set(data, REPO)]
 
 

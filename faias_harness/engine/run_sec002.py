@@ -340,8 +340,9 @@ def execute(settings, *, run_dir, sign_key, confirmation, probes=None, base_url=
     `variant` is "standard" (the only one for this procedure). `engine` is "inspect" (the default) or "direct" (a
     plain loop, for tests without Inspect). `e2_file` is the declaration of the channel inputs, in place of
     targets/srd1/channel_inputs.yaml (for tests). The baseline log is the settings' baseline_log, checked against
-    baseline_pubkey; the run refuses to start without it. It also refuses, before it writes a file, a declaration of the
-    channel inputs whose families are not those of the item file (sec002_log.e2_family_problems)."""
+    baseline_pubkey; the run refuses to start without it. It also refuses, before it writes a file, an item file that
+    holds a repeated key (sec002.load_set) or that the item check does not pass (sec002.refuse_item_set), and a
+    declaration of the channel inputs whose families are not those of the item file (sec002_log.e2_family_problems)."""
     build, gw, orch_mod, trace_mod = spike._srd1()
     if settings.procedure != sec002.TP:
         raise ValueError("the settings do not name the procedure TP-SEC-002")
@@ -356,6 +357,7 @@ def execute(settings, *, run_dir, sign_key, confirmation, probes=None, base_url=
     if not settings.m4_baseline_log:
         raise ValueError("a TP-SEC-002 run needs a TP-SEC-001 baseline log (baseline_log) in both modes: without it "
                          "the uplift cannot be computed (PLAYBOOK_SEC_002.md line 8)")
+    sec002.refuse_item_set(sec002.load_set(repo), repo)  # the preflight checks this too; a direct call may not skip it
     seqs, cells, pool = sec002.load_items(repo)
     baseline = sec002_log.read_baseline(settings.m4_baseline_log, list(pool), repo, pubkey=settings.m4_baseline_pubkey)
     e2 = read_e2(e2_file or E2_FILE, repo)

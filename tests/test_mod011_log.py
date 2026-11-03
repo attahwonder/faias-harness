@@ -394,7 +394,8 @@ class LabelTests(unittest.TestCase):
 
     def test_each_place_that_names_the_store_file_says_that_the_trace_holds_the_comparator_text(self):
         h = good()[0]
-        changelog = (REPO / "CHANGELOG.md").read_text(encoding="utf-8").split("\n## ")[1].replace("`", "")
+        changelog = next(s for s in (REPO / "CHANGELOG.md").read_text(encoding="utf-8").split("\n## ")
+                         if s.startswith("0.9.0 ")).replace("`", "")
         places = {"the module text": " ".join(mod011_log.__doc__.split()), "STORE_README": mod011_log.STORE_README,
                   "the store block note": h["store"]["note"], "the comparators block note": h["comparators"]["note"],
                   "the store README of the run": (shared_run()[0].run_dir / "store" / "README.txt").read_text(

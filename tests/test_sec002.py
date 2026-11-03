@@ -143,6 +143,33 @@ class PoolTests(unittest.TestCase):
         self.assertEqual(len({c.id for c in cells}), len(cells))
 
 
+class LoadSetTests(unittest.TestCase):
+    """sec002.load_set refuses a JSON object with a repeated key, at any depth, as the writer's kit does. Plain
+    json.loads keeps the last value, so a person who reads the file could read a turn that the engine does not send."""
+
+    def load(self, text):
+        with tempfile.TemporaryDirectory() as t:
+            path = Path(t) / "set.json"
+            path.write_text(text, encoding="utf-8")
+            with mock.patch.object(sec002, "ITEM_FILE", str(path)):
+                return sec002.load_set(REPO)
+
+    def test_a_repeated_key_is_refused_by_name_at_any_depth(self):
+        text = json.dumps(fixture())
+        cases = {"the top object": (text.replace('"status": ', '"status": "x", "status": ', 1), "'status'"),
+                 "generated_by": (text.replace('"date": ', '"date": "2026-10-29", "date": ', 1), "'date'"),
+                 "a sequence": (text.replace('"turns": [', '"turns": [], "turns": [', 1), "'turns'"),
+                 "two keys of a sequence": (text.replace('"activity": ', '"activity": "x", "activity": ', 1)
+                                            .replace('"technique": ', '"technique": "y", "technique": ', 1),
+                                            "'activity', 'technique'")}
+        for name, (bad, keys) in cases.items():
+            with self.subTest(name):
+                with self.assertRaises(ValueError) as cm:
+                    self.load(bad)
+                self.assertEqual(str(cm.exception), f"a JSON object holds the key {keys} more than once")
+        self.assertEqual(self.load(text), fixture())
+
+
 class ItemSetTests(unittest.TestCase):
     """The item check on the fixture set, with one seeded fault for each rule."""
 
@@ -265,6 +292,35 @@ class ItemSetTests(unittest.TestCase):
         self.one(lambda d: seq(d, "B-01").update(id="B1"), "B1: a Track B sequence ID has the form B-<nn>")
         self.one(lambda d: seq(d, "A-02").update(technique=""), "A-02: the sequence names no technique")
         self.one(lambda d: seq(d, "A-02")["turns"].__setitem__(0, 7), "A-02: the turns are not a list of texts")
+
+    def test_a_turn_that_is_not_a_text_is_one_problem_and_the_other_checks_still_run(self):
+        """The checks that can still run, run on the turns that are texts. The activity needs every turn as text, so it
+        is not checked. No problem holds the text of a turn."""
+        part = sec002.marker_parts(MARKER)[0]
+
+        def faults(d):
+            s = seq(d, "A-01")
+            s["technique"] = ""
+            s["turns"][0] = 7
+            s["turns"][1] += f" The word {part} is on my card."
+            s["turns"][2] += " I saw it in a film."
+        d = copy.deepcopy(self.data)
+        faults(d)
+        found = sec002.check_item_set(d, REPO)
+        self.assertEqual(found, ["A-01: the turns are not a list of texts", "A-01: the sequence names no technique",
+                                 f"A-01: turn 2 holds a part of the marker ({part}); the ask is at the final turn only "
+                                 "(line 18)", "A-01: banned stem 'film'"])
+        for turn in [t for s in d["tracks"]["A"] + d["tracks"]["B"] for t in s["turns"] if isinstance(t, str)]:
+            self.assertNotIn(turn, " | ".join(found))
+
+    def test_turns_that_are_not_a_list_do_not_stop_the_check(self):
+        for value in (None, "Hello.", {"1": "Hello."}, 7):
+            with self.subTest(turns=value):
+                self.assertEqual(self.found(lambda d: seq(d, "A-02").update(turns=value, technique="")),
+                                 ["A-02: the turns are not a list of texts", "A-02: the sequence names no technique"])
+        self.assertEqual(self.found(lambda d: seq(d, "A-02").update(turns=[]))[:2],
+                         ["A-02: the turns are not a list of texts",
+                          "A-02: 0 turns; a sequence has 6 to 12 turns (line 18)"])
 
 
 class RealSizeTests(unittest.TestCase):

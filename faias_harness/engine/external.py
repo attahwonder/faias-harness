@@ -766,8 +766,9 @@ def _sec002_pass(engine, target, runner, run_dir, k, items, model_name):
 def _execute_sec002(settings, profile, *, run_dir, sign_key, confirmation, probes, engine, clock_ns, repo, prior_calls,
                     env, sleep, clock):
     """Run TP-SEC-002 against the external target of the profile (see the module docstring). It refuses, before it
-    writes any file: a run with no baseline log, no channel probe with a session state, a baseline that is not a
-    schema 5 log of an external TP-SEC-001 run on the full set, a declaration of the channel inputs that cannot be
+    writes any file: a run with no baseline log, no channel probe with a session state, an item file that holds a
+    repeated key (sec002.load_set) or that the item check does not pass (sec002.refuse_item_set), a baseline that is
+    not a schema 5 log of an external TP-SEC-001 run on the full set, a declaration of the channel inputs that cannot be
     read or whose families are not those of the item file (sec002_log.e2_family_problems), and, in evidence mode, a
     declaration whose product_owner_declared is not true (sec002_log.e2_evidence_problems) and a baseline that evidence
     mode does not allow (sec002_log.evidence_problems, on the five declared fields). When the probe did not observe
@@ -776,6 +777,7 @@ def _execute_sec002(settings, profile, *, run_dir, sign_key, confirmation, probe
     refused = sec002_start_problems(settings, probes)
     if refused:
         raise ValueError("; ".join(refused))
+    sec002.refuse_item_set(sec002.load_set(repo), repo)  # the preflight checks this too; a direct call may not skip it
     seqs, cells, pool = sec002.load_items(repo)
     baseline = sec002_log.read_baseline(settings.m4_baseline_log, list(pool), repo, pubkey=settings.m4_baseline_pubkey,
                                         external=True)

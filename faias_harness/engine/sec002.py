@@ -105,8 +105,26 @@ class Item:
     source: str = ""
 
 
+class RepeatedKey(ValueError):
+    """An item file holds a JSON object with a repeated key. The message names the key. It holds no value."""
+
+
+def unique_keys(pairs):
+    """The pairs of one JSON object as a dict: the object_pairs_hook of load_set and of the writer's kit
+    (sec002_items.read). Raises RepeatedKey for a key that the object holds more than once. Plain json.loads keeps
+    only the last value of such a key, so a person who reads the file could read a turn that the engine does not
+    send."""
+    keys = [k for k, _ in pairs]
+    repeated = sorted({k for k in keys if keys.count(k) > 1})
+    if repeated:
+        raise RepeatedKey(f"a JSON object holds the key {', '.join(repr(k) for k in repeated)} more than once")
+    return dict(pairs)
+
+
 def load_set(repo=REPO):
-    return json.loads((Path(repo) / ITEM_FILE).read_text(encoding="utf-8"))
+    """The item file as read from JSON. Raises RepeatedKey (a ValueError) for a JSON object with a repeated key, as
+    the writer's kit does."""
+    return json.loads((Path(repo) / ITEM_FILE).read_text(encoding="utf-8"), object_pairs_hook=unique_keys)
 
 
 def authorship_problem(authors):
@@ -265,35 +283,50 @@ def check_item_set(data, repo=REPO):
     return problems
 
 
+def refuse_item_set(data, repo=REPO):
+    """Raise ValueError when check_item_set finds a problem in `data`. The message gives the count of problems and
+    each problem. A problem names a check and a sequence, and it holds no text of a turn. Both engines call this
+    before they write a file (run_sec002.execute and the TP-SEC-002 run of external.execute)."""
+    problems = check_item_set(data, repo)
+    if problems:
+        raise ValueError(f"the item file does not pass the item check (sec002.check_item_set): {len(problems)} "
+                         f"problem{'' if len(problems) == 1 else 's'}: " + "; ".join(problems))
+
+
 def _sequence_problems(s, pool_items, rule, key_patterns):
-    """The problems of one sequence of the item file."""
+    """The problems of one sequence of the item file. Turns that are not a list of texts that are not empty give one
+    problem. The checks that can still run then run on the turns that are texts: the turn count (on a list), the
+    technique, the objective, the final turn (on a list that is not empty), the earlier turns and the words. The
+    activity needs every turn as text, as fill-activity of the writer's kit does."""
     sid, turns = s.get("id"), s.get("turns")
-    if not (isinstance(turns, list) and turns and all(isinstance(x, str) and x.strip() for x in turns)):
-        return [f"{sid}: the turns are not a list of texts"]
     problems = []
-    if not MIN_TURNS <= len(turns) <= MAX_TURNS:
+    if not (isinstance(turns, list) and turns and all(isinstance(x, str) and x.strip() for x in turns)):
+        problems.append(f"{sid}: the turns are not a list of texts")
+    texts = [x for x in turns if isinstance(x, str)] if isinstance(turns, list) else []
+    if isinstance(turns, list) and not MIN_TURNS <= len(turns) <= MAX_TURNS:
         problems.append(f"{sid}: {len(turns)} turns; a sequence has {MIN_TURNS} to {MAX_TURNS} turns (line 18)")
     if not str(s.get("technique") or "").strip():
         problems.append(f"{sid}: the sequence names no technique")
     item = pool_items.get(s.get("objective"))
     if item is None:
         problems.append(f"{sid}: the objective {s.get('objective')} is not in the pool")
-    else:
+    elif isinstance(turns, list) and turns:
         if turns[-1] != item.text:
             problems.append(f"{sid}: the final turn is not the TP-SEC-001 text of {item.id}, byte for byte")
         for n, turn in enumerate(turns[:-1], 1):
-            found = _early_ask(turn, item)
+            found = _early_ask(turn, item) if isinstance(turn, str) else None
             if found:
                 problems.append(f"{sid}: turn {n} holds {found}; the ask is at the final turn only (line 18)")
-    joined = " ".join(turns)
-    if s.get("activity") != sec006.activity_of(joined, rule):
+    joined = " ".join(texts)
+    if (isinstance(turns, list) and len(texts) == len(turns)
+            and s.get("activity") != sec006.activity_of(joined, rule)):
         problems.append(f"{sid}: the activity is not the one that the activity rule gives")
     m = sec006.BANNED_STEMS.search(joined)
     if m:
         problems.append(f"{sid}: banned stem '{m.group(0)}'")
-    if any(rx.search(x) for rx in key_patterns for x in turns):
+    if any(rx.search(x) for rx in key_patterns for x in texts):
         problems.append(f"{sid}: a key-like string")
-    if sec006.find_placeholders(turns) or "placeholder" in joined.lower():
+    if sec006.find_placeholders(texts) or "placeholder" in joined.lower():
         problems.append(f"{sid}: a placeholder or its marking")
     if sec006._alnum(sec001.CANARY) in sec006._alnum(joined):
         problems.append(f"{sid}: the canary of the system prompt")
