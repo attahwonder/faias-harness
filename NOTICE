@@ -19,3 +19,7 @@ Test items in items/TP-SEC-001.json:
 Test items in items/TP-MOD-011.json:
 
 - 50 questions of the test split of GSM8K (Cobbe et al., 2021, "Training Verifiers to Solve Math Word Problems", arXiv:2110.14168), repository github.com/openai/grade-school-math, file grade_school_math/data/test.jsonl, branch master, fetched on 3 November 2026; its SHA-256 is in third_party/gsm8k/gsm8k.sha256. Copyright (c) 2021 OpenAI. Licensed under the MIT License; the full licence text is in third_party/gsm8k/LICENSE. The question text is reproduced, and each question is also cut into a prefix and a remainder at a sentence end. The answer text is not reproduced; two numbers come from it: the count of calculator annotations and the final answer.
+
+Passages in items/TP-MOD-011-instrument.json:
+
+- The openings of ten works in the public domain: Pride and Prejudice (Jane Austen, 1813); A Tale of Two Cities (Charles Dickens, 1859); Moby Dick; Or, The Whale (Herman Melville, 1851); Alice's Adventures in Wonderland (Lewis Carroll, 1865); A Christmas Carol in Prose; Being a Ghost Story of Christmas (Charles Dickens, 1843); Jane Eyre: An Autobiography (Charlotte Brontë, 1847); The Declaration of Independence of the United States of America (Thomas Jefferson, 1776); Frankenstein; or, The modern Prometheus (Mary Wollstonecraft Shelley, 1818); Great Expectations (Charles Dickens, 1861); Lincoln's Gettysburg Address (Abraham Lincoln, 1863). The year is the year of first publication. The file holds the openings only. Its SHA-256 is in third_party/public_domain/instrument.sha256.

@@ -30,7 +30,8 @@ Its --start refuses without a self-test that passes. It also refuses the display
 It checks the shipped TP-SEC-002 file too. The preflight accepts it and prints BASELINE REQUIRED. Its --start refuses
 without a baseline log. It checks the shipped TP-SEC-003 file too. The preflight accepts it and prints the stage, the
 arms and that the item file is not found, with no estimate. Its --start refuses without the item file and without a
-self-test that passes.
+self-test that passes. It checks the shipped TP-MOD-011 file too. The preflight accepts it and prints that the
+comparator file is not named. Its --start refuses without the comparator file and without a self-test that passes.
 
 Steps 1 and 2 run first, one after the other. Step 1 rewrites records/, and the later steps read it. Steps 3
 to 8 then run at the same time, one thread each. Each step keeps its output in its own buffer, and run_all prints the
@@ -155,6 +156,7 @@ def settings_checks(tmp, att):
     dat009_checks(tmp, base, env_no_runs)
     sec002_checks(base)
     sec003_checks(base, env_no_runs)
+    mod011_checks(base, env_no_runs)
 
 
 def sec002_checks(base):
@@ -191,6 +193,25 @@ def sec003_checks(base, env_no_runs):
            f"{p.stdout[-400:]}")
     print("   TP-SEC-003: explore file accepted; the item file is not found, so no estimate; --start refuses without "
           "the item file and without a passing self-test")
+
+
+def mod011_checks(base, env_no_runs):
+    """The checks of the shipped TP-MOD-011 settings. The preflight accepts them, prints that the comparator file is
+    not named, and exits 0. Then --start refuses: no comparator file is named, and no self-test log passes
+    (FAIAS_HARNESS_RUNS is emptied). No model call, no key."""
+    shipped = "targets/srd1/settings_mod011.yaml"
+    rc, out = preflight(base, "--settings", shipped)
+    expect(rc == 0 and "Engine run: TP-MOD-011 on SRD-1 minimal, item set TP-MOD-011" in out
+           and "Comparator file: not named" in out,
+           f"the shipped TP-MOD-011 settings were not accepted: exit {rc}, {out[-400:]}")
+    p = subprocess.run(PY + ["-m", "faias_harness.preflight", "--profile", str(base), "--settings", shipped, "--start"],
+                       cwd=REPO, env=env_no_runs, capture_output=True, text=True, encoding="utf-8", input="")
+    expect(p.returncode == 2 and "START REFUSED" in p.stdout and "no comparator file is named (comparator_file)"
+           in p.stdout and "isolation self-test log" in p.stdout,
+           f"TP-MOD-011 --start without the comparator file and a self-test was not refused: exit {p.returncode}, "
+           f"{p.stdout[-400:]}")
+    print("   TP-MOD-011: explore file accepted; the comparator file is not named; --start refuses without the "
+          "comparator file and without a passing self-test")
 
 
 def dat009_checks(tmp, base, env_no_runs):

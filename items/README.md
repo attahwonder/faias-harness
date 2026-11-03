@@ -191,3 +191,37 @@ Each command refuses a file that is not one JSON object. It also refuses a JSON 
 - The preflight with `targets/srd1/settings_sec002.yaml` reads the file at `items/TP-SEC-002.json`. It does not print that the item file is not found. It prints that the item file has the same transformation families as the declaration of the channel inputs.
 
 `--start` runs `sec002.check_item_set` on `items/TP-SEC-002.json`, on SRD-1 minimal and on an external target. It refuses a file with a problem, and it prints each problem as `check` does. A problem holds no text of a turn. It can name the barred word or the part of the marker that it found. `--probes` and the engine do not run the check. So the acceptance still needs exit 0 from `check` before the file goes into the repository.
+
+## TP-MOD-011.json and TP-MOD-011-instrument.json
+
+The item files of TP-MOD-011, Component 1 (benchmark contamination), after 0.8.0. The setting `procedure: TP-MOD-011` runs them. No live run has used them. A run is labelled "uncalibrated match rule, not a finding", with the limit of line 74, the notes of the model probe and the note that one person directs the build and the review of SRD-1.
+
+**TP-MOD-011.json.** 50 questions of the test split of GSM8K (Cobbe et al., 2021, arXiv:2110.14168), from the file `grade_school_math/data/test.jsonl` of github.com/openai/grade-school-math. The licence is MIT. Its text is in `third_party/gsm8k/LICENSE`. `third_party/gsm8k/gsm8k.sha256` pins the source file, the item file and the licence file. GSM8K is the one entry of the allow-list of the engine (`faias_harness/engine/mod011.py`). The question text is reproduced. The answer text is not. Two numbers come from it: the count of calculator annotations (`steps`) and the final answer.
+
+| Part | Value |
+|---|---|
+| Items | 50, from the 1,319 questions of the test split |
+| Rule | a cut at a sentence end (".", "?" or "!" followed by a space) that leaves a remainder of 15 words or more; 1,192 questions have one |
+| Selection | `tools/mod011_items.py`, version 1, seed 20261103: the seed picks 50 qualifying questions, in the order of the source, and one qualifying cut for each |
+| Each item | its ID (`gsm8k-test-<line>`), the line in the source (from 0), the question, the cut, the prefix, the remainder, `steps` and `answer` |
+
+The objective of each item is the second piece of its own question. No item holds attack text. The rule does not tell a sentence end from an abbreviation.
+
+**The comparators.** The comparator arm uses new items that the operator writes, one for each benchmark item (its pair), 50 or more for each benchmark. They are private and never in this repository: a comparator stays new only while it stays private. `tools/mod011_overlap.py` checks each against the question text of GSM8K (train and test), with a limit of 8 words. On GSM8K itself, 95 of the 1,319 test questions (7.2%) share a run of 8 words of question text with another question. So about 3 or 4 of 50 comparators in the style of GSM8K can need a rewrite. The tests use neutral arithmetic sentences of their own (`tests/test_mod011.py`).
+
+**TP-MOD-011-instrument.json.** The openings of ten public-domain works, for the instrument check of the engine: one probe of each before the arms, with the template of the items. The data set name is "public-domain works", and the split is the title of the work. The maintainer made the file offline from the openings of the works, with a tool that is not in this repository. `third_party/public_domain/instrument.sha256` pins the file, and `faias_harness/engine/mod011.py` pins a prefix of the SHA-256 of that digest file. Each passage is the first words of its work, so a reader can check it against any edition by its title.
+
+| ID | Title | Author | Year |
+|---|---|---|---|
+| pride-and-prejudice | Pride and Prejudice | Jane Austen | 1813 |
+| a-tale-of-two-cities | A Tale of Two Cities | Charles Dickens | 1859 |
+| moby-dick | Moby Dick; Or, The Whale | Herman Melville | 1851 |
+| alices-adventures-in-wonderland | Alice's Adventures in Wonderland | Lewis Carroll | 1865 |
+| a-christmas-carol-in-prose | A Christmas Carol in Prose; Being a Ghost Story of Christmas | Charles Dickens | 1843 |
+| jane-eyre | Jane Eyre: An Autobiography | Charlotte Brontë | 1847 |
+| the-declaration-of-independence-of-the-united-states-of-america | The Declaration of Independence of the United States of America | Thomas Jefferson | 1776 |
+| frankenstein | Frankenstein; or, The modern Prometheus | Mary Wollstonecraft Shelley | 1818 |
+| great-expectations | Great Expectations | Charles Dickens | 1861 |
+| lincolns-gettysburg-address | Lincoln's Gettysburg Address | Abraham Lincoln | 1863 |
+
+The ID is the short title (the title before its first ";" or ":") in lower case. The year is the year of first publication, from general reference. The opening of each work starts after the front matter (a title page or a table of contents). It is cut by the rule of the items. The passage ends at the first later sentence end with 15 words or more before it. In two passages the cut stops at an abbreviation: the remainders of Jane Eyre and Great Expectations end at "Mrs.". The prefix of Alice is its first two paragraphs. The prefix of A Tale of Two Cities is its long first sentence.

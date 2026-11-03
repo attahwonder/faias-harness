@@ -6,9 +6,11 @@ This module does not import `inspect_ai`. It makes no network call and no model 
 The allow-list. ALLOW_LIST is a fixed map of the benchmarks that a run may probe. A settings file cannot add an entry.
 Each entry names its source, its split, its kind, its licence and licence file, its item file and its digest file. The
 digest file is in sha256sum form. It holds the SHA-256 of the source files as fetched (not shipped) and of the shipped
-licence file and item file. benchmark_problems refuses, each with its reason: an ID that is not in the map; an absent
-or changed licence file; an absent digest file; an absent item file, or one whose SHA-256 differs from the digest file;
-and an item file that names another split.
+licence file and item file. The entry pins the digest file in turn: digest_prefix is the first DIGEST_PREFIX_HEX
+characters of its SHA-256, so a change to the digest file is a change to this module. benchmark_problems refuses, each
+with its reason: an ID that is not in the map; an absent or changed licence file; an absent digest file, or one whose
+SHA-256 does not start with digest_prefix; an absent item file, or one whose SHA-256 differs from the digest file; and
+an item file that names another split.
 
 The item file (items/TP-MOD-011.json). tools/mod011_items.py makes it from a copy of the source and a seed. Each item
 is a question of the test split, cut at a sentence end into a prefix and a remainder. A sentence ends at ".", "?" or
@@ -45,6 +47,15 @@ its ID, its benchmark, the benchmark item that it is matched with (pair), the qu
 remainder, the creation date (YYYY-MM-DD), the writer's model family, the steps and the answer. check_comparators gives
 one problem for each fault. tools/mod011_overlap.py makes the overlap result that it reads. match_features gives the
 match features of each arm and each pair; the harness refuses no pair on them.
+
+The instrument check (a rule of this harness). INSTRUMENT_FILE holds ten short passages of public-domain text: the
+opening of ten works. The maintainer made it offline from the openings of the works, with a tool that is not in this
+repository. Each passage is cut by the rule of the items (a sentence end, a remainder of MIN_REMAINDER_WORDS words or
+more). The run probes each one with PROBE_TEMPLATE before the arms, with the data set name INSTRUMENT_DATASET and the
+title of the work as the split, and scores the reply with score_completion. A probe and a scorer that work give a high
+exact rate on such well-known text; a low rate points to a refusal or a broken probe. The result is a reading in the
+header, not part of M1. instrument_problems refuses an absent file, a digest file whose SHA-256 does not start with
+INSTRUMENT_DIGEST_PREFIX, a SHA-256 that differs from INSTRUMENT_DIGEST_FILE, and a passage of the wrong form.
 """
 import hashlib
 import json
@@ -65,6 +76,7 @@ ITEM_FILE = "items/TP-MOD-011.json"
 MIN_ITEMS = 50              # PLAYBOOK_MOD_011.md line 18: "n≥50 benchmark items and n≥50 matched novel comparators"
 MIN_REMAINDER_WORDS = 15    # a rule of this harness
 OVERLAP_LIMIT = 8           # a rule of this harness: a comparator shares no run of 8 words with GSM8K question text
+DIGEST_PREFIX_HEX = 16      # the pin of a digest file: the first 16 hex characters of its SHA-256 (the sweep bars 40)
 # A new entry is a code change, with its own licence fetch and the owner's approval.
 ALLOW_LIST = {
     "gsm8k": {"name": "GSM8K", "kind": "capability", "split": "test",
@@ -72,7 +84,7 @@ ALLOW_LIST = {
                          "test.jsonl"),
               "source_file": "test.jsonl", "overlap_files": ("train.jsonl", "test.jsonl"),
               "licence": "MIT", "licence_file": "third_party/gsm8k/LICENSE", "item_file": ITEM_FILE,
-              "digest_file": "third_party/gsm8k/gsm8k.sha256"},
+              "digest_file": "third_party/gsm8k/gsm8k.sha256", "digest_prefix": "b6cc025d3ee522b9"},
 }
 SENTENCE_END = re.compile(r"[.?!](?= )")
 NUMBER = re.compile(r"\d+(?:[.,]\d+)*")
@@ -143,6 +155,11 @@ def _sha256(data):
     return hashlib.sha256(data).hexdigest()
 
 
+def pin_matches(path, prefix):
+    """True when the SHA-256 of the file at `path` starts with the pinned `prefix` of DIGEST_PREFIX_HEX characters."""
+    return len(prefix) == DIGEST_PREFIX_HEX and _sha256(Path(path).read_bytes()).startswith(prefix)
+
+
 def read_digests(path):
     """{file name: SHA-256} from a digest file in sha256sum form. None if the file is absent. A line in another form
     is left out."""
@@ -180,6 +197,9 @@ def benchmark_problems(benchmark, repo=REPO):
     digests = read_digests(repo / e["digest_file"])
     if digests is None:
         return [f"{benchmark}: the digest file {e['digest_file']} is absent, so no file of the entry can be checked"]
+    if not pin_matches(repo / e["digest_file"], e["digest_prefix"]):
+        return [f"{benchmark}: the digest file {e['digest_file']} does not have the SHA-256 that mod011.py pins "
+                f"({e['digest_prefix']}...); a changed digest file is a code change"]
     problems = []
     licence = repo / e["licence_file"]
     if not licence.is_file():
@@ -499,3 +519,95 @@ def match_features(items, comparators):
     return {"features": list(FEATURES), "benchmark": _stats(list(item_f.values())),
             "comparator": _stats(list(comp_f.values())), "pairs": pairs,
             "largest_pair_difference": {f: max((p["difference"][f] for p in pairs), default=None) for f in FEATURES}}
+
+
+# ---------- the instrument check ----------
+
+INSTRUMENT_FILE = "items/TP-MOD-011-instrument.json"
+INSTRUMENT_DIGEST_FILE = "third_party/public_domain/instrument.sha256"
+INSTRUMENT_DIGEST_PREFIX = "0963b471b84b26db"  # the pin of the digest file (DIGEST_PREFIX_HEX characters)
+INSTRUMENT_DATASET = "public-domain works"  # the data set name of the probe; the split is the title of the work
+INSTRUMENT_COUNT = 10
+INSTRUMENT_READING = "instrument check, outside M1 (a reading, not a measure)"
+
+
+@dataclass(frozen=True)
+class Passage:
+    id: str
+    title: str
+    author: str
+    year: int
+    passage: str
+    cut: int
+    prefix: str
+    remainder: str
+
+
+def check_instrument(data):
+    """The problems of an instrument file (empty if none): the procedure, the data set name, the count, unique IDs,
+    and the form and cut of each passage."""
+    problems = []
+    if data.get("procedure") != TP:
+        problems.append(f"the instrument file does not name the procedure {TP}")
+    if data.get("dataset") != INSTRUMENT_DATASET:
+        problems.append(f"the instrument file does not name the data set {INSTRUMENT_DATASET}")
+    rows = data.get("passages") if isinstance(data.get("passages"), list) else []
+    if len(rows) != INSTRUMENT_COUNT:
+        problems.append(f"the instrument file holds {len(rows)} passages; the check uses {INSTRUMENT_COUNT}")
+    ids = Counter(p.get("id") for p in rows if isinstance(p, dict))
+    problems += [f"the passage ID {k} is in the file more than once" for k, n in ids.items() if n > 1]
+    for p in rows:
+        if not (isinstance(p, dict) and all(isinstance(p.get(k), str) and p[k].strip()
+                                            for k in ("id", "title", "author", "passage", "prefix", "remainder"))
+                and all(_whole(p.get(k)) for k in ("year", "cut"))):
+            problems.append(f"{p.get('id') if isinstance(p, dict) else p!r}: a passage key is missing or has the "
+                            "wrong form")
+            continue
+        problems += _cut_problems(p["id"], p["passage"], p["cut"], p["prefix"], p["remainder"])
+    return problems
+
+
+def instrument_problems(repo=REPO):
+    """Why the run may not use the instrument file (empty if it may): an absent digest file or instrument file, a
+    digest file whose SHA-256 does not start with INSTRUMENT_DIGEST_PREFIX, an instrument file whose SHA-256 differs
+    from the digest file, and the problems of check_instrument."""
+    repo = Path(repo)
+    digests = read_digests(repo / INSTRUMENT_DIGEST_FILE)
+    if digests is None:
+        return [f"the instrument digest file {INSTRUMENT_DIGEST_FILE} is absent"]
+    if not pin_matches(repo / INSTRUMENT_DIGEST_FILE, INSTRUMENT_DIGEST_PREFIX):
+        return [f"the instrument digest file {INSTRUMENT_DIGEST_FILE} does not have the SHA-256 that mod011.py pins "
+                f"({INSTRUMENT_DIGEST_PREFIX}...); a changed digest file is a code change"]
+    path = repo / INSTRUMENT_FILE
+    if not path.is_file():
+        return [f"the instrument file {INSTRUMENT_FILE} is absent"]
+    raw = path.read_bytes()
+    if _sha256(raw) != digests.get(path.name):
+        return [f"the instrument file {INSTRUMENT_FILE} does not have the SHA-256 of {INSTRUMENT_DIGEST_FILE}"]
+    return check_instrument(json.loads(raw.decode("utf-8")))
+
+
+def load_instrument(repo=REPO):
+    """The passages of the instrument file. Raises ValueError with each problem of instrument_problems."""
+    problems = instrument_problems(repo)
+    if problems:
+        raise ValueError("; ".join(problems))
+    data = json.loads((Path(repo) / INSTRUMENT_FILE).read_text(encoding="utf-8"))
+    return tuple(Passage(p["id"], p["title"], p["author"], p["year"], p["passage"], p["cut"], p["prefix"],
+                         p["remainder"]) for p in data["passages"])
+
+
+def instrument_probe_text(passage):
+    """The probe message for a passage: PROBE_TEMPLATE with the data set INSTRUMENT_DATASET and the title as the
+    split."""
+    return PROBE_TEMPLATE.format(split=passage.title, dataset=INSTRUMENT_DATASET, first_piece=passage.prefix)
+
+
+def instrument_summary(classes):
+    """The result of the instrument check from the class of each passage: the counts of the four classes, and the
+    exact rate over the passages with a result, with a Wilson 95% interval. It is a reading, not a measure."""
+    n = sum(c != "no_result" for c in classes)
+    exact = sum(c == "exact" for c in classes)
+    return {"reading": INSTRUMENT_READING, "passages": len(classes),
+            "counts": {c: sum(x == c for x in classes) for c in CLASSES}, "with_result": n,
+            "exact_rate": sec001._rate(exact, n), "exact_wilson95": sec001._wilson95(exact, n)}

@@ -26,8 +26,8 @@ With a settings file of SRD-1 it also prints one line on the containment self-te
 time and commit of the newest self-test log (--selftest-log, or the folders of FAIAS_HARNESS_RUNS, or runs/), and
 whether its code manifest matches this checkout. The signature verifies against the public key that
 --selftest-pubkey or the setting `selftest_pubkey` names; with neither, the line says "(key not pinned)". For
-TP-AGT-012, TP-DAT-009 and TP-SEC-003, --start refuses without a verified, passing log of this code. In evidence mode
-it also refuses them without a pinned key. For other procedures the line is information only.
+TP-AGT-012, TP-DAT-009, TP-SEC-003 and TP-MOD-011, --start refuses without a verified, passing log of this code. In
+evidence mode it also refuses them without a pinned key. For other procedures the line is information only.
 For TP-DAT-009 (version 0.7) it also prints the filter stage, the delegation credential, the arms and the halt
 setting. The positive control (--positive-control) uses the display filter and the service credential. So --start
 refuses the standard variant with either of them. The refund gate is not read, because the tool arm serves
@@ -49,6 +49,14 @@ For TP-SEC-003 (version 0.8) it prints the filter stage and the arms (clean and 
 items/TP-SEC-003.json is not found, it says so and gives no estimate, and --start refuses. When the file is found,
 --start refuses an item file that the item check of the engine does not pass. --start also refuses a variant other
 than standard, because the engine runs SRD-1 minimal with its system prompt only.
+For TP-MOD-011 (benchmark contamination, Component 1) it prints the benchmarks, the reviewer values M1, tau and
+match_tolerance, the comparator file and the overlap result (the path or "not named", never the comparator text), the
+declared values, the count of cited benchmarks, the variant and the instrument check. The variant is model_probe by
+default, and --variant model_probe applies to TP-MOD-011 only. --start refuses what run_mod011.start_problems
+finds: a benchmark that is not on the allow-list, an item, licence or instrument file that fails its digest, a
+comparator file that is not named, inside the repository, absent or of another SHA-256, a comparator file that
+mod011.check_comparators refuses (an overlap result that is absent or not for the named files, and in evidence mode an
+absent SME record hash, among its checks), and a variant other than model_probe.
 
 With --settings <settings.yaml> of `kind: external` (version 0.5), it checks an external run instead: TP-SEC-001
 against a deployed staging agent, through the channel adapter that the profile names (docs/ARCHITECTURE.md,
@@ -80,7 +88,7 @@ from pathlib import Path
 
 from . import yamlio
 from .profile import REPO, ProfileError, load_profile
-from .settings import AGT012, DAT009, SEC002, SEC003, SEC006, SettingsError, load_settings
+from .settings import AGT012, DAT009, MOD011, SEC002, SEC003, SEC006, SettingsError, load_settings
 
 NEEDS_FILE = REPO / "records" / "capability_needs.yaml"
 RECORDS_DIR = REPO / "records"
@@ -292,14 +300,18 @@ def settings_report(settings, estimate_usd):
         print(f"Retrieval: filter stage {settings.retrieval_filter}; arms {', '.join(settings.arms)}")
         if not _sec003_item_file():
             print(f"Item file: {sec003.ITEM_FILE} is not found")
+    elif settings.procedure == MOD011:
+        mod011_report(settings)
     else:
         print(f"M4 bar: {m4}; reason: {settings.m4_reason or 'not set'}")
     pin, pout = settings.price_in_per_m, settings.price_out_per_m
     print(f"Prices (USD per million tokens): in {pin if pin is not None else 'not set'}, "
           f"out {pout if pout is not None else 'not set'}")
     cap = f"USD {settings.cap_usd}" if settings.cap_usd is not None else "not set"
-    if estimate_usd is None:      # prices set: only TP-SEC-002 or TP-SEC-003 without its item file has no estimate
-        why = "prices not set" if pin is None or pout is None else "the item file is not found"
+    if estimate_usd is None:      # prices set: TP-SEC-002 or TP-SEC-003 without its item file, or TP-MOD-011
+        why = ("prices not set" if pin is None or pout is None else
+               "an item file or the instrument file is refused" if settings.procedure == MOD011 else
+               "the item file is not found")
         print(f"Worst-case estimate: not available ({why}); cap: {cap}")
     else:
         note = "  WARNING: the estimate is above the cap; the run may stop at the cap" \
@@ -564,6 +576,9 @@ def _default_executor(**kw):
     if proc == SEC003:
         from .engine import run_sec003
         return run_sec003.execute(**kw)
+    if proc == MOD011:
+        from .engine import run_mod011
+        return run_mod011.execute(**kw)
     from .engine import spike
     return spike.execute(**kw)
 
@@ -849,6 +864,59 @@ def sec003_sends(settings):
     return f"opens {sessions} sessions on {len(settings.arms)} arms and sends at most {calls} model calls"
 
 
+def _value(v):
+    return "not set" if v is None else v
+
+
+def mod011_report(settings):
+    """The TP-MOD-011 lines of the settings block. It prints the path of the comparator file, never its text."""
+    from .engine import mod011, mod011_log
+    print(f"Benchmarks: {', '.join(settings.benchmarks) or 'none'} (the allow-list: {', '.join(mod011.ALLOW_LIST)})")
+    print(f"M1 bar (material differential): {_value(settings.m1_value)}; reason: {settings.m1_reason or 'not set'}")
+    print(f"tau (near-exact match): {_value(settings.tau_value)}; reason: {settings.tau_reason or 'not set'}")
+    print(f"match_tolerance (the match features): {_value(settings.match_tolerance_value)}; reason: "
+          f"{settings.match_tolerance_reason or 'not set'}")
+    print("M2 to M5: not in this run (Component 2 and the document reviews are not built)")
+    print(f"Comparator file: {settings.comparator_file or 'not named'} (private; its text is never printed); "
+          f"overlap result: {settings.overlap_result or 'not named'}")
+    print(f"Declared by the operator, not observed: training cut-off {_value(settings.training_cutoff)} (source: "
+          f"{settings.training_cutoff_source or 'not set'}); target family {settings.target_family or 'not set'}; "
+          f"SME record hash {'set' if settings.sme_record_sha256 else 'not set'}")
+    print(f"Cited benchmarks: {len(settings.cited)} declared (no approval paper is read)")
+    print(f"Variant: {mod011_log.VARIANT} (the model-probe prompt; SRD-1's rules are off)")
+    print(f"Instrument check: {mod011.INSTRUMENT_COUNT} passages of {mod011.INSTRUMENT_DATASET}, one attempt each "
+          "before the lock; a reading, outside M1")
+    print(f"Replies in the log: {settings.store_replies} (benchmark records); a comparator record holds the SHA-256 of "
+          f"the reply only; the store file {mod011_log.STORE_FILE} holds every reply")
+
+
+def mod011_estimate(settings):
+    """The worst-case cost of a TP-MOD-011 run, or None when the prices are not set or a file is refused."""
+    from .engine import run_mod011
+    try:
+        return run_mod011.estimate(settings, repo=REPO)
+    except ValueError:
+        return None
+
+
+def mod011_start_problems(settings, variant="model_probe"):
+    """What a TP-MOD-011 run needs besides the SRD-1 conditions and the self-test gate (run_mod011.start_problems): the
+    settings that the engine takes, the item, licence and instrument files with their digests, the private comparator
+    file with its SHA-256 and mod011.check_comparators, and the variant model_probe."""
+    from .engine import run_mod011
+    return run_mod011.start_problems(settings, variant, repo=REPO)
+
+
+def mod011_sends(settings):
+    """The count part of the start line, and the label, of a TP-MOD-011 run. Call it after the start problems pass."""
+    from .engine import mod011_log, run_mod011
+    items = run_mod011.load_items(settings, repo=REPO)[0]
+    comps = run_mod011.comparator_problems(settings, items, repo=REPO)[1] or []
+    label = mod011_log.label_for(sorted({str(c["writer_family"]) for c in comps}), settings.temperature)
+    return (f"opens one session for each model call and sends at most {run_mod011.plan(settings, items)} model calls "
+            "(the instrument check first)"), label
+
+
 def _inspect_missing():
     from .engine import spike
     return None if spike.inspect_available() else "the run engine inspect_ai is not installed"
@@ -869,8 +937,9 @@ def main(argv=None, *, input_fn=input, gateway_factory=_default_gateway, executo
                          "harness must find failing (TP-AGT-012: run the prompt-only gate, which a bypass must pass; "
                          "TP-DAT-009: run the display-layer filter and the service credential, which must give "
                          "crossings)")
-    ap.add_argument("--variant", choices=("standard", "positive_control", "prompt_free_gate"),
-                    help="with --settings: the run variant; prompt_free_gate applies to TP-AGT-012 only")
+    ap.add_argument("--variant", choices=("standard", "positive_control", "prompt_free_gate", "model_probe"),
+                    help="with --settings: the run variant; prompt_free_gate applies to TP-AGT-012 only, and "
+                         "model_probe (the default of TP-MOD-011) to TP-MOD-011 only")
     ap.add_argument("--selftest-log", help="with --settings: a containment self-test log, or a folder that holds one "
                                            "(default: the folders of FAIAS_HARNESS_RUNS, or runs/)")
     ap.add_argument("--selftest-pubkey", help="with --settings: the public key file that the self-test log's signature "
@@ -904,9 +973,13 @@ def main(argv=None, *, input_fn=input, gateway_factory=_default_gateway, executo
         return run_external(a, profile, settings, input_fn=input_fn, executor=external_executor,
                             inspect_check=inspect_check)
     est = None
-    variant = a.variant or ("positive_control" if a.positive_control else "standard")
+    mod = settings is not None and settings.procedure == MOD011
+    variant = a.variant or ("positive_control" if a.positive_control else "model_probe" if mod else "standard")
     if variant == "prompt_free_gate" and (settings is None or settings.procedure != AGT012):
         print("--variant prompt_free_gate applies to the procedure TP-AGT-012 only")
+        return 2
+    if variant == "model_probe" and not mod:
+        print("--variant model_probe applies to the procedure TP-MOD-011 only")
         return 2
     sec006_label, sec002_label, base_problems, isolation = None, None, [], None
     if settings is not None:
@@ -923,6 +996,8 @@ def main(argv=None, *, input_fn=input, gateway_factory=_default_gateway, executo
             est = run_sec002.estimate(settings) if _sec002_items() is not None else None
         elif settings.procedure == SEC003:
             est = run_sec003.estimate(settings) if _sec003_item_file() else None
+        elif mod:
+            est = mod011_estimate(settings)
         else:
             est = spike.estimate(settings)
         settings_report(settings, est)
@@ -969,8 +1044,10 @@ def main(argv=None, *, input_fn=input, gateway_factory=_default_gateway, executo
             problems += sec002_start_problems(settings, variant)
         if settings.procedure == SEC003:
             problems += sec003_start_problems(settings, variant)
+        if mod:
+            problems += mod011_start_problems(settings, variant)
         from . import selftest
-        # TP-AGT-012, TP-DAT-009 and TP-SEC-003 (selftest.GATED)
+        # TP-AGT-012, TP-DAT-009, TP-SEC-003 and TP-MOD-011 (selftest.GATED)
         problems += selftest.gate_problems(settings.procedure, isolation, settings.mode)
     if a.probes and not a.start:
         problems = [p for p in problems if "attestation" not in p and "signing" not in p]
@@ -1008,6 +1085,8 @@ def main(argv=None, *, input_fn=input, gateway_factory=_default_gateway, executo
     elif settings.procedure == SEC003:
         from .engine import sec003_log
         sends, label = sec003_sends(settings), sec003_log.LABELS[sec003_log.ITEM_SET]
+    elif mod:
+        sends, label = mod011_sends(settings)
     else:
         sends = f"sends {len(spike.run_items(settings)) * settings.runs_per_item} model calls"
         label = spike.sec001.LABELS[settings.item_set]
@@ -1037,6 +1116,8 @@ def main(argv=None, *, input_fn=input, gateway_factory=_default_gateway, executo
         exec_kwargs.update(selftest_log=a.selftest_log, selftest_pubkey=a.selftest_pubkey)
     if settings.procedure == SEC003:        # the engine takes no variant (sec003_start_problems refuses the others)
         del exec_kwargs["variant"]
+        exec_kwargs.update(selftest_log=a.selftest_log, selftest_pubkey=a.selftest_pubkey)
+    if mod:
         exec_kwargs.update(selftest_log=a.selftest_log, selftest_pubkey=a.selftest_pubkey)
     result = executor(**exec_kwargs)
     s = result.summary

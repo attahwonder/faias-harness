@@ -258,6 +258,8 @@ def execute(settings, *, run_dir, sign_key, confirmation, probes=None, base_url=
     build, gw, orch_mod, trace_mod = _srd1()
     if variant not in runlog.VARIANTS:
         raise ValueError(f"unknown variant: {variant}")
+    if variant == "model_probe":        # the variant of TP-MOD-011 only (engine/run_mod011.py)
+        raise ValueError("the variant model_probe applies to the procedure TP-MOD-011 only")
     if engine not in ("inspect", "direct"):
         raise ValueError(f"unknown engine: {engine}")
     if engine == "inspect" and not inspect_available():

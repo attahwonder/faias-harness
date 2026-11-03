@@ -16,6 +16,7 @@ import tempfile
 import unittest
 from contextlib import redirect_stdout
 from pathlib import Path
+from unittest import mock
 
 from faias_harness import settings as sm
 from faias_harness.engine import mod011, sec001, sec006
@@ -64,12 +65,20 @@ def fixture_comparator(n, pair):
 
 class AllowListTests(unittest.TestCase):
     def setUp(self):
+        self.unpin()
+        self.addCleanup(self.unpin)
         tmp = tempfile.TemporaryDirectory()
         self.addCleanup(tmp.cleanup)
         self.repo = Path(tmp.name)
         for rel in (ENTRY["item_file"], ENTRY["licence_file"], ENTRY["digest_file"]):
             (self.repo / rel).parent.mkdir(parents=True, exist_ok=True)
             shutil.copyfile(REPO / rel, self.repo / rel)
+
+    def unpin(self):
+        """Stop the pin of a rewritten digest file, if one is active. Each subTest calls setUp again."""
+        while getattr(self, "pins", None):
+            self.pins.pop().stop()
+        self.pins = []
 
     def test_the_shipped_entry_passes_and_its_digests_are_those_of_the_files(self):
         self.assertEqual(mod011.benchmark_problems("gsm8k"), [])
@@ -94,6 +103,10 @@ class AllowListTests(unittest.TestCase):
         lines = [f"{raw_sha}  {name}" for name, raw_sha in mod011.read_digests(digests).items()]
         lines = [x if not x.endswith("  TP-MOD-011.json") else f"{sha(raw)}  TP-MOD-011.json" for x in lines]
         digests.write_text("\n".join(lines) + "\n", encoding="utf-8", newline="\n")
+        # The new digest file needs a new pin in the code (mod011.DIGEST_PREFIX_HEX characters of its SHA-256).
+        pin = mock.patch.dict(ENTRY, {"digest_prefix": sha(digests.read_bytes())[:mod011.DIGEST_PREFIX_HEX]})
+        pin.start()
+        self.pins.append(pin)
 
     def test_each_refusal_is_one_problem_with_its_reason(self):
         def item_bytes_changed():
@@ -132,6 +145,15 @@ class AllowListTests(unittest.TestCase):
         problems = mod011.benchmark_problems("gsm8k", self.repo)
         self.assertEqual(len(problems), 1, problems)
         self.assertIn("are not the question cut at", problems[0])
+
+    def test_a_pin_of_another_length_matches_no_file(self):
+        digests = REPO / ENTRY["digest_file"]
+        full = sha(digests.read_bytes())
+        self.assertTrue(mod011.pin_matches(digests, full[:mod011.DIGEST_PREFIX_HEX]))
+        for name, prefix in {"an empty pin": "", "a pin one character short": full[:mod011.DIGEST_PREFIX_HEX - 1],
+                             "a pin one character long": full[:mod011.DIGEST_PREFIX_HEX + 1]}.items():
+            with self.subTest(name):
+                self.assertFalse(mod011.pin_matches(digests, prefix))
 
 
 class ItemFileTests(unittest.TestCase):

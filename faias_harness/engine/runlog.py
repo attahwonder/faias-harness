@@ -49,6 +49,8 @@ log to engine/sec006_log.py.
 Schema 7 (version 0.7) is the log of a TP-AGT-012 run (engine/agt012_log.py). Schema 8 (version 0.7) is the log of a
 TP-DAT-009 run (engine/dat009_log.py). Schema 9 (version 0.8) is the log of a TP-SEC-002 run (engine/sec002_log.py).
 Schema 10 (version 0.8) is the log of a TP-SEC-003 run (engine/sec003_log.py).
+Schema 11 is the log of a TP-MOD-011 run (engine/mod011_log.py). Its comparator records hold the reply hash only, so
+its `rescore` needs `--replies <store>`, and its `verify --no-repo` says that comparator text is checked by hash only.
 Each has the frame of schema 4, and `check_log`, `rescore` and `verify --no-repo` hand it to its module. `results`
 gives a schema 9 log its sequences and cells as the items, and the uplift of each sequence track as M1. It gives a
 schema 10 log, as M2, the override rate, upper95 and paired count of each marker class, with k and the incomplete
@@ -70,8 +72,9 @@ Four more commands, none of which makes a network call:
 
 `rescore` takes `--replies <store>` for a TP-SEC-006 or TP-SEC-002 log with store_replies hash_only. The store file
 holds the replies as received (sec006_log.rescore_from_store, sec002_log.rescore_from_store). Without it, such a log
-gives exit 2. `results` runs `verify` on each log and prints one table, with a row for each log that passes. A log
-that fails is refused and named under the table, and the exit code is 1.
+gives exit 2. A TP-MOD-011 log always needs `--replies`: its store file holds the comparator text and the replies
+(mod011_log.rescore). `results` runs `verify` on each log and prints one table, with a row for each log that passes.
+A log that fails is refused and named under the table, and the exit code is 1.
 
 When the header of the log holds a label, `verify`, `rescore` and `stamp` print it on a line `label: <label>`. For
 `verify`, that line comes after the PASS or FAIL line. For `rescore` and `stamp`, it is the first line. `results`
@@ -109,10 +112,12 @@ SCHEMA_AGT012 = "faias-harness-run-log/7"   # 7 (version 0.7): TP-AGT-012 on SRD
 SCHEMA_DAT009 = "faias-harness-run-log/8"   # 8 (version 0.7), for TP-DAT-009 on SRD-1 minimal (dat009_log.py)
 SCHEMA_SEC002 = "faias-harness-run-log/9"   # 9 (version 0.8), for TP-SEC-002 on SRD-1 minimal (sec002_log.py)
 SCHEMA_SEC003 = "faias-harness-run-log/10"  # 10 (version 0.8), for TP-SEC-003 on SRD-1 minimal (sec003_log.py)
+SCHEMA_MOD011 = "faias-harness-run-log/11"  # 11, for TP-MOD-011 on SRD-1 minimal (mod011_log.py)
 SCHEMA_SELFTEST = "faias-harness-selftest-log/1"    # the containment self-test of the harness (selftest/__init__.py)
 EXTERNAL_SCHEMAS = (SCHEMA_V3, SCHEMA_EXTERNAL)
 # the logs with the code block and the wider lock
-CODE_SCHEMAS = (SCHEMA, SCHEMA_EXTERNAL, SCHEMA_SEC006, SCHEMA_AGT012, SCHEMA_DAT009, SCHEMA_SEC002, SCHEMA_SEC003)
+CODE_SCHEMAS = (SCHEMA, SCHEMA_EXTERNAL, SCHEMA_SEC006, SCHEMA_AGT012, SCHEMA_DAT009, SCHEMA_SEC002, SCHEMA_SEC003,
+                SCHEMA_MOD011)
 KNOWN_SCHEMAS = (SCHEMA_V1, SCHEMA_V2, SCHEMA_V3, SCHEMA, SCHEMA_EXTERNAL)    # the TP-SEC-001 schemas
 SCORER_FILE = "faias_harness/engine/sec001.py"
 RECORD_FILE = "records/TP-SEC-001.yaml"
@@ -129,6 +134,8 @@ VARIANTS = {
                         "find successes in every class",
     "external": "a deployed staging agent, reached through its own channel by an adapter; the harness changes "
                 "nothing in the agent",
+    "model_probe": "SRD-1 minimal with the model-probe prompt (the assistant completes text; no rule, no bank role, no "
+                   "placeholder), for TP-MOD-011 only; SRD-1's rules are off, so the run probes the model alone",
 }
 NOT_IN_EXTERNAL = [
     "the model, the host that served it, the token use and the cost, unless the channel names them (the harness "
@@ -434,6 +441,9 @@ def lock_fixed(header):
     if schema == SCHEMA_SEC003:
         from . import sec003_log
         fixed.update(sec003_log.lock_extra(header))
+    if schema == SCHEMA_MOD011:
+        from . import mod011_log
+        fixed.update(mod011_log.lock_extra(header))
     if "tools" in header:       # since 0.6, only when the run had tools on, so every earlier log still verifies
         fixed["tools_sha256"] = sha256_hex(canonical(header["tools"]))
     if schema in EXTERNAL_SCHEMAS and "store_replies" in header:    # since 0.8, so every earlier log still verifies
@@ -463,6 +473,9 @@ def lock_header(header, clock_ns=None):
     if header.get("schema") == SCHEMA_SEC003:
         from . import sec003_log
         covers = sec003_log.LOCK_COVERS
+    if header.get("schema") == SCHEMA_MOD011:
+        from . import mod011_log
+        covers = mod011_log.LOCK_COVERS
     if header.get("schema") in CODE_SCHEMAS:
         code = header.get("code") or {}
         covers += (f", scorer file hash ({code.get('scorer_file', SCORER_FILE)}), record file hash "
@@ -645,6 +658,9 @@ def check_log(path, repo=REPO, use_repo=True):
     if h.get("schema") == SCHEMA_SEC003:
         from . import sec003_log
         return sec003_log.check(recs, repo=repo, use_repo=use_repo)
+    if h.get("schema") == SCHEMA_MOD011:
+        from . import mod011_log
+        return mod011_log.check(recs, repo=repo, use_repo=use_repo)
     if h.get("schema") == SCHEMA_SELFTEST:
         from .. import selftest
         return selftest.check(path, recs, repo=repo, use_repo=use_repo)
@@ -838,6 +854,9 @@ def _no_repo_lines(log_path):
         elif recs[0].get("schema") == SCHEMA_SEC003:
             from . import sec003_log
             items_line = sec003_log.summary_line(recs)
+        elif recs[0].get("schema") == SCHEMA_MOD011:
+            from . import mod011_log
+            items_line = mod011_log.summary_line(recs)
         elif recs[0].get("schema") == SCHEMA_SELFTEST:
             items_line = f"probe records: {sum(1 for r in recs if r.get('type') == 'probe')} (a self-test log has no item set)"
         else:
@@ -858,7 +877,8 @@ def rescore_log(log_path, repo=REPO, replies=None):
     Returns (lines to print, mismatches). Makes no network call. A TP-SEC-006 log (schema 6) is rescored by
     sec006_log.rescore, and a TP-SEC-002 log (schema 9) by sec002_log.rescore. When such a log holds the reply hashes
     only, `replies` names the store file of the replies. Without it, mismatches is None. Only such a log takes
-    `replies`. A schema 5 log with store_replies hash_only holds no reply, so it is not rescored (mismatches None)."""
+    `replies`, and a TP-MOD-011 log (schema 11, mod011_log.rescore), which always needs it. A schema 5 log with
+    store_replies hash_only holds no reply, so it is not rescored (mismatches None)."""
     recs = read_log(log_path)
     if recs[0].get("schema") == SCHEMA_SEC006:
         from . import sec006_log
@@ -866,9 +886,12 @@ def rescore_log(log_path, repo=REPO, replies=None):
     if recs[0].get("schema") == SCHEMA_SEC002:
         from . import sec002_log
         return sec002_log.rescore(recs, repo=repo, replies=replies)
+    if recs[0].get("schema") == SCHEMA_MOD011:
+        from . import mod011_log
+        return mod011_log.rescore(recs, repo=repo, replies=replies)
     if replies is not None:
-        return [f"not rescored: --replies is for a TP-SEC-006 or TP-SEC-002 log with store_replies hash_only, and "
-                f"this log is of schema {recs[0].get('schema')}"], None
+        return [f"not rescored: --replies is for a TP-SEC-006 or TP-SEC-002 log with store_replies hash_only, or a "
+                f"TP-MOD-011 log, and this log is of schema {recs[0].get('schema')}"], None
     if recs[0].get("schema") == SCHEMA_AGT012:
         from . import agt012_log
         return agt012_log.rescore(recs, repo=repo)
@@ -1064,6 +1087,18 @@ def result_row(recs, name):
                                   + [f"runs_per_item {_fmt(m2.get('runs_per_item'))}",
                                      f"items_incomplete seeded {_fmt(inc.get('seeded'))}, clean "
                                      f"{_fmt(inc.get('clean'))}"])
+    if h.get("schema") == SCHEMA_MOD011:
+        # A TP-MOD-011 log: M1 has a block for each benchmark. The cell gives the primary form (exact only), its
+        # one-sided Fisher p and materially_higher, and the comparator arm's exact rate (the comparator reading).
+        m1 = (s.get("measures") or {}).get("M1")
+        if isinstance(m1, dict):
+            row["M1"] = "; ".join(
+                f"{b}: exact differential {_fmt(v['primary'].get('differential'))}, fisher_p "
+                f"{_fmt(v['primary'].get('fisher_p_one_sided'))}, materially_higher "
+                f"{_fmt(v['primary'].get('materially_higher'))}, comparator exact_rate "
+                f"{_fmt(v['comparator_reading'].get('exact_rate'))}" for b, v in m1.items()
+                if isinstance(v, dict) and isinstance(v.get("primary"), dict)
+                and isinstance(v.get("comparator_reading"), dict))
     return row
 
 
@@ -1116,7 +1151,8 @@ def main(argv=None):
                                        "with store_replies hash_only and no --replies)")
     d.add_argument("--log", required=True)
     d.add_argument("--replies", help="for a TP-SEC-006 or TP-SEC-002 log with store_replies hash_only: the store "
-                                     "file of the replies as received (docs/ARCHITECTURE.md, section 16)")
+                                     "file of the replies as received (docs/ARCHITECTURE.md, section 16); for a "
+                                     "TP-MOD-011 log: the store file of the run (section 22)")
     e = sub.add_parser("stamp", help="write <log>.sha256 and print the OpenTimestamps command (no network call)")
     e.add_argument("--log", required=True)
     f = sub.add_parser("results", help="verify N run logs and print one table, a row for each log that passes "

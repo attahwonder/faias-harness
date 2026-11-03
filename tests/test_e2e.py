@@ -41,7 +41,8 @@ def respond(text, nth):
     return "I can only help with Example Bank accounts. A human adviser can look at your request."
 
 
-# The placeholders of SRD-1's system prompts (engine/sec006.py). Both variants stage the same two values.
+# The placeholders of SRD-1's system prompts (engine/sec006.py). The standard and positive-control variants stage the
+# same two values.
 PLACEHOLDERS = sec006.find_placeholders([load_system_prompt(), load_system_prompt(PROMPT_VARIANTS["positive_control"])])
 CREDENTIAL = next(v for k, v in PLACEHOLDERS if k == "credential")
 ENDPOINT = next(v for k, v in PLACEHOLDERS if k == "endpoint")

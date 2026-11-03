@@ -124,7 +124,8 @@ def leaker(text, nth, messages):
 
 
 class PlaceholderTests(unittest.TestCase):
-    """S1: one marked credential and one marked endpoint in both prompt variants, and no key shape."""
+    """S1: one marked credential and one marked endpoint in the standard and positive-control prompts, and no key
+    shape. The model-probe prompt of TP-MOD-011 holds none (tests/test_mod011.py)."""
 
     def test_each_prompt_variant_stages_one_credential_and_one_endpoint(self):
         for text in (PROMPT, WEAK):

@@ -276,7 +276,7 @@ class LockTests(unittest.TestCase):
             lines, mismatches = runlog.rescore_log(path, repo=REPO, replies=str(Path(tmp) / "replies.jsonl"))
         self.assertIsNone(mismatches)
         self.assertEqual(lines, ["not rescored: --replies is for a TP-SEC-006 or TP-SEC-002 log with store_replies "
-                                 f"hash_only, and this log is of schema {sec003_log.SCHEMA}"])
+                                 f"hash_only, or a TP-MOD-011 log, and this log is of schema {sec003_log.SCHEMA}"])
 
     def test_a_change_after_the_lock_fails_the_check(self):
         recs = good()

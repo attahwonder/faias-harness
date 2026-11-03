@@ -1,0 +1,58 @@
+# Settings for a TP-MOD-011 run (benchmark contamination, Component 1) on SRD-1 minimal.
+# This file holds no key. The key is the environment variable named in api_key_env.
+# This copy is in explore mode with the model, host, precision, prices, cap and comparator file not yet chosen.
+# The run builds SRD-1 minimal with the model-probe prompt (the variant model_probe): SRD-1's rules are off, so the
+# run probes the model behind the gateway. Tools stay off (tools_enabled: true is refused), and so do
+# retrieval_filter and arms.
+# The instrument check runs first: ten public-domain passages (items/TP-MOD-011-instrument.json), one attempt each,
+# before the lock. Then each item of the benchmark arm and of the comparator arm runs k times, each attempt in a new
+# session. All calls count against the one cap (cap_usd).
+# The comparator file is private. Keep it outside the repository, in the controlled evidence store, and name it here
+# with its SHA-256 and the overlap result of tools/mod011_overlap.py for it. The preflight and --start refuse a
+# comparator file that is not named, inside the repository, absent, of another SHA-256, or that the comparator check
+# of the engine refuses.
+# No run starts until the containment self-test passes on this checkout. Then each run needs the operator's `yes`.
+# An evidence-mode copy must set all five routing locks, the model, the prices and the cap, temperature and seed, the
+# three reviewer values with their reasons, the declared cut-off with its source, the target family and the SHA-256
+# of the SME record, or the preflight refuses it.
+procedure: TP-MOD-011
+provider: openrouter
+model_id: null            # the pinned model ID, for example "vendor/model-name"
+mode: explore             # explore | evidence
+routing:
+  only: []                # the endpoint that may serve the call; evidence mode needs exactly one
+  allow_fallbacks: false
+  zdr: true
+  data_collection: deny
+  quantizations: []       # the precision level(s), for example [fp8]; must be set in evidence mode
+price_in_per_m: null      # USD per million input tokens
+price_out_per_m: null     # USD per million output tokens
+cap_usd: null             # the run stops before a call that could pass this cap
+api_key_env: OPENROUTER_API_KEY
+max_tokens: 400
+runs_per_item: 3          # k: at least 3 (the FAIAS minimum), at most 20
+item_set: TP-MOD-011      # items/TP-MOD-011.json
+temperature: null         # line 21 asks for low-temperature or greedy settings; above 0 the label says so
+seed: null                # base seed; each call sends seed + call number; must be set in evidence mode
+store_replies: full       # full: a benchmark record holds the reply | hash_only: its SHA-256 only. A comparator
+                          # record always holds the SHA-256 only; the store file of the run holds every reply
+benchmarks: [gsm8k]       # IDs of the allow-list of the engine (engine/mod011.ALLOW_LIST); a file cannot add one
+comparator_file: null     # the path of the private comparator file, outside the repository
+comparator_sha256: null   # its SHA-256
+overlap_result: null      # the path of the result of tools/mod011_overlap.py for that file
+sme_record_sha256: null   # the SHA-256 of the SME's record of the check of each comparator pair
+cited: []                 # the benchmarks that the approval papers cite: benchmark, source and score of each
+declared:                 # declared by the operator, from the model card; not observed
+  training_cutoff: null         # YYYY-MM-DD
+  training_cutoff_source: null  # where the model card states it
+  target_family: null           # the model family of the target
+reviewer_values:
+  M1:                     # the bar of a material differential
+    value: null
+    reason: null
+  tau:                    # the bar of a near-exact match (ROUGE-L)
+    value: null
+    reason: null
+  match_tolerance:        # the tolerance of the match features: a number, or a number for each feature
+    value: null
+    reason: null
