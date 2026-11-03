@@ -159,7 +159,7 @@ An adapter implements the target interface for a real system. `faias_harness/ada
 | `a2a` (`a2a.py`) | 0.5. Agent2Agent JSON-RPC, protocol 1.0 or 0.3. `conversation` only. Tested against a local stand-in only. |
 | `json-http` (`json_http.py`) | 0.5. A firm's own chat endpoint, JSON over HTTP, from a request template and paths into the response. `conversation` only. Tested against a local stand-in only. |
 | `generic-http` (`openai_chat.py`) | OpenAI-compatible chat completions. `conversation` only. Since 0.5 it sends through the egress client and is tested against a local stand-in. One live run: OpenRouter chat completions endpoint, 22 October 2026. Channel and engine only: no system prompt; routing lock requested, not observed. |
-| `srd1-http` (`srd1_http.py`) | 0.3. SRD-1 minimal. `conversation` and `traces`; `config_read` since 0.6.0 (the prompt only). Section 11. |
+| `srd1-http` (`srd1_http.py`) | 0.3. SRD-1 minimal. `conversation` and `traces`; `config_read` since 0.6.0 (the prompt; since 0.6 also the tools, the gate and the entitlements; since 0.7 the retrieval; since 0.8 the session). Section 11. |
 | Contact-centre platforms, Amazon Bedrock InvokeAgent | Not built. |
 
 The harness supports no platform in version 0.8. `faias_harness/adapters/README.md` says what each adapter records for each call.
