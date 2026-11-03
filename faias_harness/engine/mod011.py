@@ -461,7 +461,7 @@ def check_comparators(data, items, *, file_sha256, overlap, training_cutoff=None
     for k, n in Counter(c["pair"] for c in valid).items():
         if n > 1:
             problems.append(f"the item {k} is the pair of more than one comparator")
-    for b in sorted(counts):
+    for b in sorted(set(counts) | {i.benchmark for i in items}):   # a benchmark of the run with no comparator has 0
         if counts[b] < MIN_ITEMS:
             problems.append(f"the benchmark {b} has {counts[b]} comparators; the minimum is {MIN_ITEMS} "
                             "(PLAYBOOK_MOD_011.md line 18)")

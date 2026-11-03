@@ -196,7 +196,7 @@ Each command refuses a file that is not one JSON object. It also refuses a JSON 
 
 The item files of TP-MOD-011, Component 1 (benchmark contamination), from version 0.9.0. The setting `procedure: TP-MOD-011` runs them. No live run has used them. A run is labelled "uncalibrated match rule, not a finding", with the limit of line 74, the notes of the model probe and the note that one person directs the build and the review of SRD-1.
 
-**TP-MOD-011.json.** 50 questions of the test split of GSM8K (Cobbe et al., 2021, arXiv:2110.14168), from the file `grade_school_math/data/test.jsonl` of github.com/openai/grade-school-math. The licence is MIT. Its text is in `third_party/gsm8k/LICENSE`. `third_party/gsm8k/gsm8k.sha256` pins the source file, the item file and the licence file. GSM8K is the one entry of the allow-list of the engine (`faias_harness/engine/mod011.py`). The question text is reproduced. The answer text is not. Two numbers come from it: the count of calculator annotations (`steps`) and the final answer.
+**TP-MOD-011.json.** 50 questions of the test split of GSM8K (Cobbe et al., 2021, arXiv:2110.14168), from the file `grade_school_math/data/test.jsonl` of github.com/openai/grade-school-math. The licence is MIT. Its text is in `third_party/gsm8k/LICENSE`. `third_party/gsm8k/gsm8k.sha256` pins the two source files (`test.jsonl` and `train.jsonl`), the item file and the licence file. GSM8K is the one entry of the allow-list of the engine (`faias_harness/engine/mod011.py`). The question text is reproduced. The answer text is not. Two numbers come from it: the count of calculator annotations (`steps`) and the final answer.
 
 | Part | Value |
 |---|---|

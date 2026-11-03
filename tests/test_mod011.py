@@ -431,6 +431,11 @@ class ComparatorTests(unittest.TestCase):
                     self.assertEqual(len(problems), 1, problems)
                 self.assertIn(want, problems[0])
 
+    def test_an_empty_comparator_list_falls_under_the_minimum(self):
+        problems = self.check({"comparators": []}, overlap=overlap_result([], self.file_sha))
+        self.assertEqual(len(problems), 1, problems)
+        self.assertIn("the benchmark gsm8k has 0 comparators; the minimum is 50", problems[0])
+
     def test_no_declared_cutoff_or_family_compares_neither(self):
         d = copy.deepcopy(self.data)
         d["comparators"][0].update(created="2020-01-01", writer_family=TARGET_FAMILY)
