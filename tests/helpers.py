@@ -123,6 +123,19 @@ def sec002_neutral_fixture(repo):
                       "families": len(sec002_families.FAMILIES), "languages": 0}}
 
 
+# Three changes of the neutral TP-SEC-002 fixture that give a field a value of the wrong type, each with a problem that
+# the item check names for it: (name, change, problem). The values are a number and lists of IDs of the fixture. None
+# holds a turn.
+SEC002_WRONG_TYPE = (
+    ("track_a_number", lambda d: d["tracks"].update(A=5),
+     "Track A does not have exactly one sequence for each pool objective"),
+    ("objective_id_list", lambda d: d["objectives"][0].update(id=[d["objectives"][0]["id"]]),
+     "objective None: not an item of items/TP-SEC-001.json"),
+    ("sequence_id_list", lambda d: d["tracks"]["A"][0].update(id=[d["tracks"]["A"][0]["id"]]),
+     "None: a Track A sequence ID has the form A-<nn>"),
+)
+
+
 def lock_time_twice_clock():
     """A clock that gives its first value twice, then 1 ns more at each call. The engine takes the lock time from
     the first value. A clock that moves in steps (Python before 3.13 on Windows) can give that time again."""

@@ -77,15 +77,21 @@ def write(path, data):
 
 
 def sequences(data):
-    """The sequences of a set as check_item_set reads them: each object of tracks A and B, in that order."""
+    """The sequences of a set as check_item_set reads them: each object of tracks A and B, in that order. A track that
+    is not a list gives no sequence."""
     tracks = data.get("tracks") if isinstance(data.get("tracks"), dict) else {}
-    return [s for t in sec002.TRACKS for s in tracks.get(t) or [] if isinstance(s, dict)]
+    return [s for t in sec002.TRACKS if isinstance(tracks.get(t), list) for s in tracks[t] if isinstance(s, dict)]
+
+
+def _label(s):
+    """The sequence ID as the problems of check_item_set give it: the ID, or None when it is not a text."""
+    return str(sec002._text(s.get("id")))
 
 
 def group(data, problems):
     """The problems of check_item_set by group: SET, then each sequence ID of the file, in file order. A problem that
     starts with a sequence ID and ': ' goes to that sequence, without that start. Each other problem goes to SET."""
-    ids = list(dict.fromkeys(str(s.get("id")) for s in sequences(data)))
+    ids = list(dict.fromkeys(_label(s) for s in sequences(data)))
     groups = {SET: [], **{i: [] for i in ids}}
     for p in problems:
         sid = max((i for i in ids if p.startswith(f"{i}: ")), key=len, default=None)
@@ -109,7 +115,7 @@ def report(path, data, repo=sec002.REPO):
         if name == SET or found:
             lines.append(f"{name}: {_count(found)}")
             lines += [f"  - {p}" for p in found]
-    ids = [str(s.get("id")) for s in sequences(data)]
+    ids = [_label(s) for s in sequences(data)]
     lines.append(f"{sum(1 for i in ids if not groups[i])} of {len(ids)} sequences with no problem")
     return lines, 1 if problems else 0
 

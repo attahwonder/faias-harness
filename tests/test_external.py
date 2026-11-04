@@ -28,8 +28,8 @@ from faias_harness.adapters.base import ChannelError
 from faias_harness.engine import external, runlog, sec001, sec002, sec002_families, sec002_log
 from faias_harness.profile import load_profile
 from faias_harness.settings import external_from_raw, load_settings, validate_external
-from tests.helpers import (FAKE_KEY_VALUE, StandInModelHost, lock_time_twice_clock, no_outside_network,
-                           sec002_neutral_fixture)
+from tests.helpers import (FAKE_KEY_VALUE, SEC002_WRONG_TYPE, StandInModelHost, lock_time_twice_clock,
+                           no_outside_network, sec002_neutral_fixture)
 from tests.standins import StandInA2A, StandInDirectLine, StandInJsonApp, StandInResponses
 from tests.test_sec002_run import A_TURNS, CELL_FAMILIES, E2_TEXT, MARKER, OBJ, POOL_TEXT, REFUSAL, item_file
 
@@ -1069,6 +1069,23 @@ class ExternalSec002Tests(unittest.TestCase):
                 refused = out.split("START REFUSED. No run starts. Fix these points first:\n")[1].splitlines()
                 self.assertEqual(refused, found)
 
+    def test_an_item_file_with_a_value_of_the_wrong_type_on_an_external_target(self):
+        """A track that is a number, an objective ID that is a list, or a sequence ID that is a list. The external
+        --start refuses each file before the probe, with the problems of the item check and no traceback. No output
+        holds a turn of the file."""
+        for name, change, problem in SEC002_WRONG_TYPE:
+            with self.subTest(name):
+                data, path = self.full_size_file(f"TP-SEC-002_{name}.json", change)
+                found = [f"  - the item file: {p}" for p in sec002.check_item_set(data, REPO)]
+                first = len(self.host.requests)
+                rc, out, asked = self.start_with_item_file(path)
+                self.assertEqual((rc, asked, len(self.host.requests)), (2, [], first), out[-1500:])
+                self.assertNotIn("Traceback", out)
+                refused = out.split("START REFUSED. No run starts. Fix these points first:\n")[1].splitlines()
+                self.assertEqual(refused, found)
+                self.assertIn(f"  - the item file: {problem}", found)
+                self.assert_no_turn(out, sec002_neutral_fixture(REPO))
+
     def direct_call(self, name, text):
         """A direct call of the external engine, with its item check, on the item file `text`: (the error, or None when
         the run starts; whether the run folder exists; the requests that reached the stand-in). A run that starts stops
@@ -1098,6 +1115,32 @@ class ExternalSec002Tests(unittest.TestCase):
         self.assertEqual(self.direct_call("not_one_object", "[1]"),
                          ("the item file does not pass the item check (sec002.check_item_set): 1 problem: the file "
                           "does not hold one JSON object", False, 0))
+
+    def direct_call_wrong_type(self, case):
+        """A direct call of the external engine on the full-size fixture with one value of the wrong type (a case of
+        SEC002_WRONG_TYPE). The engine refuses with the count and each problem of the item check, not a TypeError,
+        before the run folder exists. No call reaches the channel. The message holds no turn of the file. One call
+        for each test: direct_call stops the patch of the class and starts it again at the end of the test, so a
+        second call in one test would start it twice."""
+        name, change, problem = case
+        d = sec002_neutral_fixture(REPO)
+        change(d)
+        problems = sec002.check_item_set(d, REPO)
+        error, made, sent = self.direct_call(name, json.dumps(d))
+        self.assertEqual((error, made, sent),
+                         (f"the item file does not pass the item check (sec002.check_item_set): {len(problems)} "
+                          f"problem{'' if len(problems) == 1 else 's'}: " + "; ".join(problems), False, 0))
+        self.assertIn(problem, problems)
+        self.assert_no_turn(error, sec002_neutral_fixture(REPO))
+
+    def test_a_direct_call_of_the_external_engine_refuses_a_track_that_is_a_number_before_any_file(self):
+        self.direct_call_wrong_type(SEC002_WRONG_TYPE[0])
+
+    def test_a_direct_call_of_the_external_engine_refuses_an_objective_id_that_is_a_list_before_any_file(self):
+        self.direct_call_wrong_type(SEC002_WRONG_TYPE[1])
+
+    def test_a_direct_call_of_the_external_engine_refuses_a_sequence_id_that_is_a_list_before_any_file(self):
+        self.direct_call_wrong_type(SEC002_WRONG_TYPE[2])
 
     def test_a_direct_call_of_the_external_engine_runs_the_item_check_before_any_file_with_no_turn_text(self):
         """The preflight runs the item check at --start. A direct call of the external engine runs it too, and refuses

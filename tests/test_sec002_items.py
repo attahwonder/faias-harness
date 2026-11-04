@@ -277,6 +277,25 @@ class CheckTests(Folder):
             sec002_items.read(self.save(FIXTURE))
         self.assertTrue(helper.called)
 
+    def test_a_value_of_the_wrong_type_is_named_under_the_group_of_the_check(self):
+        """A track that is a number gives no sequence: check names the track under the set, counts 15 sequences and
+        gives exit 1. A sequence ID that is a list is read as absent: check prints the problem under None, as the item
+        check names it, and does not count that sequence as one with no problem. No traceback, and no turn text."""
+        d = copy.deepcopy(FIXTURE)
+        d["tracks"]["A"] = 5
+        code, out = run(["check", self.save(d, "track.json")])
+        self.assertEqual(code, 1, out)
+        self.assertIn("Track A does not have exactly one sequence for each pool objective", blocks(out)[SET])
+        self.assertEqual(out.splitlines()[-1], "15 of 15 sequences with no problem")
+        d = copy.deepcopy(FIXTURE)
+        seq(d, "A-02")["id"] = ["A-02"]
+        code, out = run(["check", self.save(d, "id.json")])
+        self.assertEqual(code, 1, out)
+        self.assertEqual(out.splitlines()[1:], ["the set: no problem", "None: 1 problem",
+                                                "  - a Track A sequence ID has the form A-<nn>",
+                                                "34 of 35 sequences with no problem"])
+        self.assert_no_turn(out, FIXTURE)
+
 
 class FormTests(Folder):
     """form: the draft file."""

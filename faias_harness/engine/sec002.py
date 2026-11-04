@@ -219,10 +219,20 @@ def _objective(s):
     return o if isinstance(o, str) else None
 
 
+def _text(value):
+    """`value` when it is a text, else None. The check reads each ID and each technique through this. A value of
+    another type is read as absent: a list or an object cannot be a key of a dict or a member of a set. So the check
+    names it as it names an absent value, and no problem holds it."""
+    return value if isinstance(value, str) else None
+
+
 def check_item_set(data, repo=REPO):
     """The problems in an item set of TP-SEC-002 (empty if none): the top keys, the pool, the tracks, the sizes,
     the IDs, and for each sequence its turn count, its final turn, its earlier turns, its activity and its words. Data
-    that is not a JSON object has one problem, NOT_ONE_OBJECT, because no key can be read."""
+    that is not a JSON object has one problem, NOT_ONE_OBJECT, because no key can be read. A field that is not of the
+    type that a check needs is read as absent by that check: a track that is not a list gives no sequence, and an ID
+    or a technique that is not a text is absent (_text). So the check names the field as it names an absent field. No
+    value that json.loads gives makes the check raise."""
     if not isinstance(data, dict):
         return [NOT_ONE_OBJECT]
     problems = []
@@ -240,13 +250,13 @@ def check_item_set(data, repo=REPO):
     base, base_rule = _pool_set(repo)
     listed = data.get("objectives")     # a value that is not a list gives no objective, as no key does
     objs = [o for o in listed if isinstance(o, dict)] if isinstance(listed, list) else []
-    ids = [o.get("id") for o in objs]
-    for o in objs:
-        i = base.get(o.get("id"))
+    ids = [_text(o.get("id")) for o in objs]
+    for o, oid in zip(objs, ids):
+        i = base.get(oid)
         if i is None:
-            problems.append(f"objective {o.get('id')}: not an item of items/TP-SEC-001.json")
+            problems.append(f"objective {oid}: not an item of items/TP-SEC-001.json")
         elif o.get("class") != i.cls:
-            problems.append(f"objective {o.get('id')}: the class is not {i.cls}, the class in items/TP-SEC-001.json")
+            problems.append(f"objective {oid}: the class is not {i.cls}, the class in items/TP-SEC-001.json")
     if len(ids) != len(set(ids)):
         problems.append("the objective IDs are not unique")
     pool_items = {k: base[k] for k in ids if k in base}
@@ -265,27 +275,29 @@ def check_item_set(data, repo=REPO):
     tracks = data.get("tracks") if isinstance(data.get("tracks"), dict) else {}
     if set(tracks) != set(TRACKS):
         problems.append("the tracks are not A and B")
-    seqs = {t: [s for s in tracks.get(t) or [] if isinstance(s, dict)] for t in TRACKS}
+    seqs = {t: [s for s in tracks[t] if isinstance(s, dict)] if isinstance(tracks.get(t), list) else []
+            for t in TRACKS}         # a track that is not a list gives no sequence, as no track does
     counts = {"A": len(seqs["A"]), "B": len(seqs["B"]), "objectives": len(objs),
               "families": len(families) if isinstance(families, list) else 0,
               "languages": len(languages) if isinstance(languages, list) else 0}
     if data.get("sizes") != counts:
         problems.append("the field sizes does not match the counts")
-    seq_ids = [s.get("id") for t in TRACKS for s in seqs[t]]
+    seq_ids = [_text(s.get("id")) for t in TRACKS for s in seqs[t]]
     if len(seq_ids) != len(set(seq_ids)):
         problems.append("the sequence IDs are not unique")
     for t in TRACKS:
         for s in seqs[t]:
-            if not SEQUENCE_ID[t].fullmatch(str(s.get("id"))):
-                problems.append(f"{s.get('id')}: a Track {t} sequence ID has the form {t}-<nn>")
+            sid = _text(s.get("id"))
+            if not SEQUENCE_ID[t].fullmatch(str(sid)):
+                problems.append(f"{sid}: a Track {t} sequence ID has the form {t}-<nn>")
     if Counter(_objective(s) for s in seqs["A"]) != Counter(ids):
         problems.append("Track A does not have exactly one sequence for each pool objective")
     off_class = [s for s in seqs["B"] if _objective(s) in pool_items
                  and pool_items[s["objective"]].cls not in TRACK_B_CLASSES]
     for s in off_class:
-        problems.append(f"{s.get('id')}: a Track B sequence is on a {pool_items[s['objective']].cls} objective; Track B "
-                        "takes C1, C3 and C4 objectives only, because a C2 item asserts its persona in one message "
-                        "(line 19)")
+        problems.append(f"{_text(s.get('id'))}: a Track B sequence is on a {pool_items[s['objective']].cls} "
+                        "objective; Track B takes C1, C3 and C4 objectives only, because a C2 item asserts its persona "
+                        "in one message (line 19)")
     expected_b = [k for k in sorted(pool_items) if pool_items[k].cls in TRACK_B_CLASSES][:SIZES["B"]]
     if not off_class and Counter(_objective(s) for s in seqs["B"]) != Counter(expected_b):
         problems.append(f"Track B does not have exactly one sequence for each of the first {SIZES['B']} C1, C3 and C4 "
@@ -312,15 +324,17 @@ def _sequence_problems(s, pool_items, rule, key_patterns):
     is one problem. The checks that can still run then run on the turns that are texts: the turn count (on a list),
     the technique, the objective, the final turn (on a list that is not empty), the earlier turns and the words. The
     activity is checked only on a list that holds a turn and only texts (fill-activity of the writer's kit computes it
-    on a list of texts). An objective that is not a text is one problem, and it is not looked up in the pool."""
-    sid, turns = s.get("id"), s.get("turns")
+    on a list of texts). An objective that is not a text is one problem, and it is not looked up in the pool. An ID or
+    a technique that is not a text is absent (_text): the problems name the sequence None, or say that it names no
+    technique."""
+    sid, turns = _text(s.get("id")), s.get("turns")
     problems = []
     if not (isinstance(turns, list) and turns and all(isinstance(x, str) and x.strip() for x in turns)):
         problems.append(f"{sid}: the turns are not a list of texts")
     texts = [x for x in turns if isinstance(x, str)] if isinstance(turns, list) else []
     if isinstance(turns, list) and not MIN_TURNS <= len(turns) <= MAX_TURNS:
         problems.append(f"{sid}: {len(turns)} turns; a sequence has {MIN_TURNS} to {MAX_TURNS} turns (line 18)")
-    if not str(s.get("technique") or "").strip():
+    if not (_text(s.get("technique")) or "").strip():
         problems.append(f"{sid}: the sequence names no technique")
     item = pool_items.get(_objective(s))
     if s.get("objective") is not None and _objective(s) is None:

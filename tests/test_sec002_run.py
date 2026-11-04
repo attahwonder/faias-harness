@@ -35,8 +35,8 @@ from targets.srd1.app import trace as tr
 from targets.srd1.app.build import CONFIGURED_TOOLS
 from targets.srd1.app.orchestrator import Orchestrator, load_system_prompt
 from targets.srd1.app.server import Srd1Server
-from tests.helpers import (EVIDENCE_RAW, FAKE_KEY_VALUE, KEY_ENV, SEC002_NEUTRAL_TURNS, StandInModelHost, make_settings,
-                           no_outside_network, raw_settings, sec002_neutral_fixture)
+from tests.helpers import (EVIDENCE_RAW, FAKE_KEY_VALUE, KEY_ENV, SEC002_NEUTRAL_TURNS, SEC002_WRONG_TYPE,
+                           StandInModelHost, make_settings, no_outside_network, raw_settings, sec002_neutral_fixture)
 from tests.test_srd1 import FakeGateway
 
 REPO = Path(__file__).resolve().parents[1]
@@ -1120,6 +1120,24 @@ class PreflightTests(unittest.TestCase):
                 self.assertTrue(any(p.startswith(f"  - {named[line]}") for p in found), found)
                 self.assert_no_turn(out, data)
 
+    def test_an_item_file_with_a_value_of_the_wrong_type_gives_named_problems_and_no_traceback(self):
+        """The full-size fixture with a track that is a number, an objective ID that is a list, or a sequence ID that
+        is a list. The item check reads the value as absent and names the field. --start refuses the file with the
+        problems of the item check, each once, and no traceback. Before, each stopped the preflight with a TypeError.
+        No output holds a turn of the file."""
+        for name, change, problem in SEC002_WRONG_TYPE:
+            with self.subTest(name):
+                data, path = self.full_size_file(f"TP-SEC-002_{name}.json", change)
+                found = [f"  - the item file: {p}" for p in sec002.check_item_set(data, REPO)]
+                with mock.patch.object(sec002, "ITEM_FILE", str(path)):
+                    rc, out = self.preflight(*self.start, e2=_MOD["e2_five"], item_check=True)
+                self.assertEqual(rc, 2, out[-1500:])
+                self.assertNotIn("Traceback", out)
+                self.assertIn("Worst-case estimate: not available (the item file does not pass the item check)", out)
+                self.assertEqual(self.problems(out), found)
+                self.assertIn(f"  - the item file: {problem}", found)
+                self.assert_no_turn(out, sec002_neutral_fixture(REPO))
+
 
 class _Log:
     def __init__(self):
@@ -1343,6 +1361,23 @@ class FullSizeTests(unittest.TestCase):
         self.assertEqual(self.direct_call("not_one_object", "[1]"),
                          ("the item file does not pass the item check (sec002.check_item_set): 1 problem: the file "
                           "does not hold one JSON object", False, 0))
+
+    def test_a_direct_call_refuses_an_item_file_with_a_value_of_the_wrong_type_before_any_file(self):
+        """A track that is a number, an objective ID that is a list, or a sequence ID that is a list. The engine refuses
+        with the message of sec002.refuse_item_set, not a TypeError, before the run folder exists. No model call is
+        made. The message holds no turn of the file."""
+        for name, change, problem in SEC002_WRONG_TYPE:
+            with self.subTest(name):
+                d = json.loads(json.dumps(self.fixture))
+                change(d)
+                with self.assertRaises(ValueError) as cm:
+                    sec002.refuse_item_set(d, REPO)
+                error, made, sent = self.direct_call(name, json.dumps(d))
+                self.assertEqual((error, made, sent), (str(cm.exception), False, 0))
+                self.assertIn(problem, error)
+                for s in self.fixture["tracks"]["A"] + self.fixture["tracks"]["B"]:
+                    for turn in s["turns"]:
+                        self.assertNotIn(turn, error)
 
     def test_the_full_size_run_completes_verifies_and_rescores(self):
         run = self.full()

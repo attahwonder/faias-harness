@@ -357,6 +357,67 @@ class ItemSetTests(unittest.TestCase):
                 self.assertEqual(self.found(lambda d: d.update(objectives=value)), none)
 
 
+class ShapeTests(unittest.TestCase):
+    """The item check on the neutral full-size fixture of tests/helpers.py, with one field at a time given a value of
+    each JSON type."""
+
+    VALUES = (None, 5, "x", [], {}, [5], [[1]])
+    # The top keys that the check reads (it does not read status), the keys of an objective and of a sequence.
+    TOP = ("procedure", "authors", "generated_by", "objectives", "tracks", "families", "languages", "activity_rule",
+           "sizes")
+    OBJECTIVE = ("id", "class")
+    SEQUENCE = ("id", "objective", "turns", "technique", "activity")
+    # Two values are well formed for their field, so they give no problem: a technique "x", and the languages [] of
+    # the fixture.
+    WELL_FORMED = (("technique", "x"), ("languages", []))
+
+    def test_a_field_of_any_json_type_gives_problems_and_no_exception(self):
+        """Each field in turn takes each value of VALUES: the top keys, the keys of the first and the last objective,
+        each track, and the keys of the first and the last sequence of each track. The check returns a list of texts.
+        It raises nothing. The list is not empty, except for the two well-formed values. No problem holds a turn."""
+        good = helpers.sec002_neutral_fixture(REPO)
+        turns = {t for s in good["tracks"]["A"] + good["tracks"]["B"] for t in s["turns"]}
+        fields = ([(k,) for k in self.TOP] + [("objectives", n, k) for n in (0, -1) for k in self.OBJECTIVE]
+                  + [("tracks", t) for t in sec002.TRACKS]
+                  + [("tracks", t, n, k) for t in sec002.TRACKS for n in (0, -1) for k in self.SEQUENCE])
+        for path in fields:
+            for value in self.VALUES:
+                with self.subTest(field=path, value=value):
+                    d = copy.deepcopy(good)
+                    place = d
+                    for key in path[:-1]:
+                        place = place[key]
+                    place[path[-1]] = value
+                    found = sec002.check_item_set(d, REPO)
+                    self.assertIsInstance(found, list)
+                    self.assertTrue(all(isinstance(p, str) for p in found), found)
+                    if (path[-1], value) in self.WELL_FORMED:
+                        self.assertEqual(found, [])
+                    else:
+                        self.assertNotEqual(found, [])
+                    for turn in turns:
+                        self.assertNotIn(turn, " | ".join(found))
+
+    def test_a_value_of_the_wrong_type_is_read_as_absent_and_named(self):
+        """A track that is a number, an objective ID that is a list and a sequence ID that is a list give the problems
+        of an absent value. Each problem names the field. No problem holds the value. A technique that is not a text
+        gives the problem of no technique."""
+        good = helpers.sec002_neutral_fixture(REPO)
+        for name, change, problem in helpers.SEC002_WRONG_TYPE:
+            with self.subTest(name):
+                d = copy.deepcopy(good)
+                change(d)
+                found = sec002.check_item_set(d, REPO)
+                self.assertIn(problem, found)
+                self.assertFalse(any("[" in p for p in found), found)
+        for value in (5, [5], ["x"]):
+            with self.subTest(technique=value):
+                d = copy.deepcopy(good)
+                d["tracks"]["B"][1]["technique"] = value
+                self.assertEqual(sec002.check_item_set(d, REPO),
+                                 [f"{d['tracks']['B'][1]['id']}: the sequence names no technique"])
+
+
 class RealSizeTests(unittest.TestCase):
 
     def test_the_real_sizes_refuse_the_fixture(self):
