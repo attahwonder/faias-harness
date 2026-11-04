@@ -336,6 +336,26 @@ class ItemSetTests(unittest.TestCase):
                 self.assertEqual(self.found(lambda d: seq(d, "B-01").update(objective=value)),
                                  [b, "B-01: the objective is not a text"])
 
+    def test_data_that_is_not_a_json_object_is_one_problem_and_the_engine_refuses_it(self):
+        """JSON that is not an object has no key to read. The check gives one problem, in the words of the writer's
+        kit, and refuse_item_set (which both engines call) raises ValueError with it, not AttributeError."""
+        for value in ([1], None, "text", 7):
+            with self.subTest(data=value):
+                self.assertEqual(sec002.check_item_set(value, REPO), ["the file does not hold one JSON object"])
+                with self.assertRaises(ValueError) as cm:
+                    sec002.refuse_item_set(value, REPO)
+                self.assertEqual(str(cm.exception), "the item file does not pass the item check "
+                                 "(sec002.check_item_set): 1 problem: the file does not hold one JSON object")
+
+    def test_objectives_that_are_not_a_list_give_the_problems_of_no_objectives(self):
+        """A number in place of the list of objectives does not stop the check. It gives the problems of a set with no
+        field objectives, the count of the pool first."""
+        none = self.found(lambda d: d.pop("objectives"))
+        self.assertTrue(none[0].startswith("the pool has 0 objectives"), none)
+        for value in (7, "text", {"id": C1}):
+            with self.subTest(objectives=value):
+                self.assertEqual(self.found(lambda d: d.update(objectives=value)), none)
+
 
 class RealSizeTests(unittest.TestCase):
 

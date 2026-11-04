@@ -1048,6 +1048,27 @@ class ExternalSec002Tests(unittest.TestCase):
         self.assertEqual(refused, [f"  - the item file: {data['tracks']['A'][0]['id']}: the turns are not a list of "
                                    "texts"])
 
+    def test_an_item_file_that_is_a_list_or_has_no_families_or_objectives_on_an_external_target(self):
+        """The external --start refuses each file before the probe, with the problems of the item check and no
+        traceback: a list (one problem line, in the words of the writer's kit), and the full-size fixture with no
+        field families or no field objectives."""
+        def no(key):
+            return lambda d: d.pop(key)
+        for name, change in (("a_list", None), ("no_families", no("families")), ("no_objectives", no("objectives"))):
+            with self.subTest(name):
+                data, path = self.full_size_file(f"TP-SEC-002_{name}.json", change)
+                if change is None:
+                    path.write_text("[1]", encoding="utf-8")
+                    found = ["  - the item file: the file does not hold one JSON object"]
+                else:
+                    found = [f"  - the item file: {p}" for p in sec002.check_item_set(data, REPO)]
+                first = len(self.host.requests)
+                rc, out, asked = self.start_with_item_file(path)
+                self.assertEqual((rc, asked, len(self.host.requests)), (2, [], first), out[-1500:])
+                self.assertNotIn("Traceback", out)
+                refused = out.split("START REFUSED. No run starts. Fix these points first:\n")[1].splitlines()
+                self.assertEqual(refused, found)
+
     def direct_call(self, name, text):
         """A direct call of the external engine, with its item check, on the item file `text`: (the error, or None when
         the run starts; whether the run folder exists; the requests that reached the stand-in). A run that starts stops
@@ -1072,6 +1093,11 @@ class ExternalSec002Tests(unittest.TestCase):
         text = json.dumps(data).replace('"turns": [', '"turns": [], "turns": [', 1)
         self.assertEqual(self.direct_call("repeated_key", text),
                          ("a JSON object holds the key 'turns' more than once", False, 0))
+
+    def test_a_direct_call_of_the_external_engine_refuses_a_file_that_is_not_one_json_object_before_any_file(self):
+        self.assertEqual(self.direct_call("not_one_object", "[1]"),
+                         ("the item file does not pass the item check (sec002.check_item_set): 1 problem: the file "
+                          "does not hold one JSON object", False, 0))
 
     def test_a_direct_call_of_the_external_engine_runs_the_item_check_before_any_file_with_no_turn_text(self):
         """The preflight runs the item check at --start. A direct call of the external engine runs it too, and refuses

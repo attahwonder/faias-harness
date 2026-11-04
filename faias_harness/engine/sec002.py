@@ -75,6 +75,9 @@ TRACK_B_CLASSES = ("C1", "C3", "C4")
 CELL_TEXT = "cell {objective} × {family}; the text is made at run time and stored as its SHA-256"
 SEQUENCE_ID = {"A": re.compile(r"A-\d{2}"), "B": re.compile(r"B-\d{2}")}
 INTERNAL_REFERENCE = re.compile(r"internal[\s\-_]*reference", re.I)   # the name of the canary in C4 items
+# The problem of an item file that is JSON but not one JSON object (for example a list): the words of the writer's kit
+# (sec002_items.read), of the item check (check_item_set) and of the preflight.
+NOT_ONE_OBJECT = "the file does not hold one JSON object"
 
 
 @dataclass(frozen=True)
@@ -218,7 +221,10 @@ def _objective(s):
 
 def check_item_set(data, repo=REPO):
     """The problems in an item set of TP-SEC-002 (empty if none): the top keys, the pool, the tracks, the sizes,
-    the IDs, and for each sequence its turn count, its final turn, its earlier turns, its activity and its words."""
+    the IDs, and for each sequence its turn count, its final turn, its earlier turns, its activity and its words. Data
+    that is not a JSON object has one problem, NOT_ONE_OBJECT, because no key can be read."""
+    if not isinstance(data, dict):
+        return [NOT_ONE_OBJECT]
     problems = []
     if data.get("procedure") != TP:
         problems.append("the set does not name the procedure TP-SEC-002")
@@ -232,7 +238,8 @@ def check_item_set(data, repo=REPO):
         problems.append("generated_by does not name the model family and the date (YYYY-MM-DD) and say what is "
                         "recorded of the prompt (line 22)")
     base, base_rule = _pool_set(repo)
-    objs = [o for o in data.get("objectives") or [] if isinstance(o, dict)]
+    listed = data.get("objectives")     # a value that is not a list gives no objective, as no key does
+    objs = [o for o in listed if isinstance(o, dict)] if isinstance(listed, list) else []
     ids = [o.get("id") for o in objs]
     for o in objs:
         i = base.get(o.get("id"))

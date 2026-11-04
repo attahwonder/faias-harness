@@ -35,9 +35,9 @@ document_search only.
 For TP-SEC-002 (version 0.8) it prints the M1 bar with its reason, the baseline log and its public key, and the
 declaration of the channel inputs (targets/srd1/channel_inputs.yaml): the languages, the transformation families and
 the field product_owner_declared. --start refuses families that are not those of the item file. It also refuses an
-item file with a repeated key, one that is not UTF-8 JSON and one that sec002.check_item_set does not pass, on SRD-1
-and on an external target. --probes does not refuse such a file. The estimate is given only for an item file that the
-check passes. On SRD-1 the field
+item file with a repeated key, one that is not UTF-8 JSON, one that does not hold one JSON object and one that
+sec002.check_item_set does not pass, on SRD-1 and on an external target. --probes does not refuse such a file. The
+estimate is given only for an item file that the check passes. On SRD-1 the field
 is printed only, and the run goes on. With no baseline log named, it prints BASELINE
 REQUIRED, and --probes and --start refuse. A named baseline log is read as the engine reads it: a TP-SEC-001 log on
 the full set, its signature checked against `baseline_pubkey`, and its stored scores scored again with this scorer.
@@ -688,18 +688,22 @@ BASELINE_REQUIRED = ("BASELINE REQUIRED: a TP-SEC-002 run compares each track wi
 
 def _sec002_item_file():
     """The item file of TP-SEC-002 (sec002.ITEM_FILE) as (its data, None). It is (None, None) when the file is not
-    found, and (None, the refusal) when sec002.load_set refuses a JSON object with a repeated key or the file is not
-    UTF-8 JSON, as the writer's kit refuses them (sec002_items.read). The refusal names the key, or the place where the
-    decoder stopped. It holds no text of a turn."""
+    found, and (None, the refusal) when sec002.load_set refuses a JSON object with a repeated key, when the file is not
+    UTF-8 JSON, and when it does not hold one JSON object (sec002.NOT_ONE_OBJECT), as the writer's kit refuses them
+    (sec002_items.read). The refusal names the key, or the place where the decoder stopped. It holds no text of a
+    turn."""
     from .engine import sec002
     if not (REPO / sec002.ITEM_FILE).is_file():
         return None, None
     try:
-        return sec002.load_set(), None
+        data = sec002.load_set()
     except sec002.RepeatedKey as e:
         return None, str(e)
     except ValueError as e:         # json.JSONDecodeError and UnicodeDecodeError are ValueError
         return None, f"the file is not UTF-8 JSON ({e})"
+    if not isinstance(data, dict):  # for example a list, or null
+        return None, sec002.NOT_ONE_OBJECT
+    return data, None
 
 
 def _sec002_no_estimate():
@@ -729,7 +733,8 @@ def sec002_channel_inputs(path=None, evidence=False):
     (sec002_log.e2_family_problems), so a direct call cannot skip the check. `path`: the declaration of an external run
     (its setting channel_inputs); without it, the declaration of SRD-1 (run_sec002.E2_FILE). `evidence`: true for an
     external run in evidence mode, which needs product_owner_declared true (sec002_log.e2_evidence_problems); SRD-1 and
-    explore mode print the field only."""
+    explore mode print the field only. When the field families of the item file is not a list of texts, the families
+    are not compared and no problem is added here, because the item check names that field (sec002_item_problems)."""
     from .engine import run_sec002, sec002, sec002_log
     try:
         e2 = run_sec002.read_e2(path or run_sec002.E2_FILE)
@@ -748,7 +753,12 @@ def sec002_channel_inputs(path=None, evidence=False):
     if data is None:
         lines += [f"  - {p}" for p in problems] + [f"Item file: {sec002.ITEM_FILE} is not found"]
         return lines, problems + [f"the item file {sec002.ITEM_FILE} is not found"]
-    problems += sec002_log.e2_family_problems(e2, list(data["families"]))
+    families = data.get("families")
+    if not (isinstance(families, list) and all(isinstance(f, str) for f in families)):
+        return lines + [f"  - {p}" for p in problems] + [
+            "  The transformation families are not compared: the field families of the item file is not a list of "
+            "texts. The item check names this."], problems
+    problems += sec002_log.e2_family_problems(e2, list(families))
     if problems:
         return lines + [f"  - {p}" for p in problems], problems
     return lines + ["  The item file has the same transformation families."], []
@@ -764,7 +774,9 @@ def sec002_baseline(settings, variant="standard", target=None):
     scorer does not give again are problems too. In explore mode they are printed, and the run label says so. The run
     label takes its authorship part from the item file. It is None when no run can start: with no baseline log, with
     no item file, with a baseline log that cannot be read, or with an authors value that is not declared
-    (sec002_start_problems refuses each of them).
+    (sec002_start_problems refuses each of them). When the field objectives of the item file does not give the ID of
+    each objective as a text, the check is not made, the label is None and no problem is added here, because the item
+    check names that field (sec002_item_problems).
 
     `target`: the target block of an external run (external.target_block). The baseline must then be a schema 5 log of
     an external TP-SEC-001 run. It is compared on the five declared fields of sec002_log.EXTERNAL_MATCH_FIELDS, and
@@ -776,9 +788,15 @@ def sec002_baseline(settings, variant="standard", target=None):
     if data is None:
         return None, ["Baseline check: not made (the pool of the item file names the baseline items, and the item "
                       f"file is {'refused' if refusal else 'not found'})"], []
+    objectives = data.get("objectives")
+    if not (isinstance(objectives, list)
+            and all(isinstance(o, dict) and isinstance(o.get("id"), str) for o in objectives)):
+        return None, ["Baseline check: not made (the pool of the item file names the baseline items, and the field "
+                      "objectives of the item file is not a list of objects, each with an id that is a text. The item "
+                      "check names this)"], []
     external = target is not None
     try:
-        base = sec002_log.read_baseline(settings.m4_baseline_log, [o["id"] for o in data["objectives"]],
+        base = sec002_log.read_baseline(settings.m4_baseline_log, [o["id"] for o in objectives],
                                         pubkey=settings.m4_baseline_pubkey, external=external)
     except ValueError as e:
         return None, [f"Baseline check: {e}"], [str(e)]
@@ -828,9 +846,9 @@ def sec002_baseline(settings, variant="standard", target=None):
 def sec002_item_problems():
     """The problems of the item file of TP-SEC-002 (sec002.check_item_set), in the form of TP-AGT-012 and TP-SEC-003.
     Empty when the file is not found, because sec002_channel_inputs names that. A file that the preflight refuses (a
-    JSON object with a repeated key, or not UTF-8 JSON; _sec002_item_file) gives one problem, the refusal. A problem
-    names a check and a sequence. It holds no text of a turn. At most it names the barred word or the part of the
-    marker that the check found."""
+    JSON object with a repeated key, a file that is not UTF-8 JSON, or one that does not hold one JSON object;
+    _sec002_item_file) gives one problem, the refusal. A problem names a check and a sequence. It holds no text of a
+    turn. At most it names the barred word or the part of the marker that the check found."""
     from .engine import sec002
     data, refusal = _sec002_item_file()
     if refusal:

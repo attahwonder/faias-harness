@@ -61,7 +61,7 @@ def read(path):
     except ValueError as e:
         raise Refused(f"the file is not valid JSON ({e})") from None
     if not isinstance(data, dict):
-        raise Refused("the file does not hold one JSON object")
+        raise Refused(sec002.NOT_ONE_OBJECT)
     return data
 
 

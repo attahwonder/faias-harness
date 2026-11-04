@@ -1071,6 +1071,55 @@ class PreflightTests(unittest.TestCase):
             for turn in s["turns"]:
                 self.assertNotIn(turn, out)
 
+    def test_start_refuses_an_item_file_that_is_not_one_json_object_in_one_problem_line(self):
+        """JSON that is not an object: a list, and null. The preflight prints that the item file is refused, in the
+        words of the writer's kit (sec002_items.read), with no traceback, and --start refuses it in one problem
+        line. Before, a list stopped the preflight with an AttributeError, and null read as a file not found."""
+        refusal = "the file does not hold one JSON object"
+        for name, raw in (("a_list", b"[1]"), ("null", b"null")):
+            with self.subTest(name):
+                path = self.dir / f"TP-SEC-002_{name}.json"
+                path.write_bytes(raw)
+                with mock.patch.object(sec002, "ITEM_FILE", str(path)):
+                    self.assertEqual(preflight.sec002_item_problems(), [f"the item file: {refusal}"])
+                    rc, out = self.preflight(*self.start, item_check=True)
+                self.assertEqual(rc, 2, out[-1500:])
+                self.assertNotIn("Traceback", out)
+                self.assertEqual(self.problems(out), [f"  - the item file: {refusal}"])
+                for text in (f"Item file: {path} is refused: {refusal}",
+                             "Worst-case estimate: not available (the item file is refused); cap: USD 10.0",
+                             "Baseline check: not made (the pool of the item file names the baseline items, and the "
+                             "item file is refused)"):
+                    self.assertIn(text, out)
+
+    def test_an_item_file_with_no_usable_families_or_objectives_gives_no_traceback(self):
+        """The full-size fixture with no field families or objectives, or a number in its place. The preflight does
+        not compare the families, or does not make the baseline check, and says why. --start refuses the file with
+        the problems of the item check, each once, and no traceback. No output holds a turn of the file."""
+        families = ("  The transformation families are not compared: the field families of the item file is not a "
+                    "list of texts. The item check names this.")
+        objectives = ("Baseline check: not made (the pool of the item file names the baseline items, and the field "
+                      "objectives of the item file is not a list of objects, each with an id that is a text. The item "
+                      "check names this)")
+        named = {families: "the item file: the families are not the five of sec002_families.FAMILIES, in that order",
+                 objectives: "the item file: the pool has 0 objectives"}
+        for name, change, line in (("no_families", lambda d: d.pop("families"), families),
+                                   ("families_a_number", lambda d: d.update(families=5), families),
+                                   ("no_objectives", lambda d: d.pop("objectives"), objectives),
+                                   ("objectives_a_number", lambda d: d.update(objectives=5), objectives)):
+            with self.subTest(name):
+                data, path = self.full_size_file(f"TP-SEC-002_{name}.json", change)
+                found = [f"  - the item file: {p}" for p in sec002.check_item_set(data, REPO)]
+                with mock.patch.object(sec002, "ITEM_FILE", str(path)):
+                    rc, out = self.preflight(*self.start, e2=_MOD["e2_five"], item_check=True)
+                self.assertEqual(rc, 2, out[-1500:])
+                self.assertNotIn("Traceback", out)
+                self.assertIn(line, out)
+                self.assertIn("Worst-case estimate: not available (the item file does not pass the item check)", out)
+                self.assertEqual(self.problems(out), found)
+                self.assertTrue(any(p.startswith(f"  - {named[line]}") for p in found), found)
+                self.assert_no_turn(out, data)
+
 
 class _Log:
     def __init__(self):
@@ -1287,6 +1336,13 @@ class FullSizeTests(unittest.TestCase):
         for s in d["tracks"]["A"] + d["tracks"]["B"]:
             for turn in s["turns"]:
                 self.assertNotIn(turn, error)
+
+    def test_a_direct_call_refuses_an_item_file_that_is_not_one_json_object_before_any_file(self):
+        """A list in place of the object. The item check names it in the words of the writer's kit, and the engine
+        refuses with a message, not an AttributeError, before the run folder exists. No model call is made."""
+        self.assertEqual(self.direct_call("not_one_object", "[1]"),
+                         ("the item file does not pass the item check (sec002.check_item_set): 1 problem: the file "
+                          "does not hold one JSON object", False, 0))
 
     def test_the_full_size_run_completes_verifies_and_rescores(self):
         run = self.full()
