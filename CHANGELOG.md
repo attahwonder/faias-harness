@@ -1,6 +1,6 @@
 # Changelog
 
-## 0.9.1 (4 November 2026 — date of the push)
+## 0.9.1 (4 November 2026)
 
 This release fixes how the engines, the preflight and two tools read the JSON files that an operator writes: the TP-SEC-002 and TP-SEC-003 item files, the TP-MOD-011 comparator file and the TP-MOD-011 overlap result. The harness now refuses a file with a repeated key and an item file that is not one JSON object, and the TP-SEC-002 item check reads a field of the wrong type as absent. Each refusal names the problem. Before, such files stopped the preflight or an engine with a traceback, or an engine used a value that a reader of the file did not see. Some gaps remain; the last entry lists them. No procedure, scorer, setting or log schema changes.
 
