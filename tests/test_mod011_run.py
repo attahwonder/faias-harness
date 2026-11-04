@@ -90,6 +90,32 @@ def comparator_files(name, comps=None, overlap=None, raw=None):
             "overlap_result": str(d / "overlap.json")}
 
 
+def repeated_key_files():
+    """Four pairs of files of the fixture comparators. In each, one file has a JSON object that holds a key twice, with
+    the valid value last: the comparator file at its top and in a comparator, and the overlap result at its top and in
+    a row. The first value is neutral: an empty list, an empty text or a number. Plain json.loads keeps the last value,
+    so mod011.check_comparators alone would pass each pair. Returns (the case, the settings that name the files, the
+    one start problem)."""
+    fx = fixture()
+    text = json.dumps({"comparators": fx["comps"]})
+    out = []
+    for key, old, new in (("comparators", '{"comparators": ', '{"comparators": [], "comparators": '),
+                          ("prefix", '"prefix": ', '"prefix": "", "prefix": ')):
+        assert old in text
+        files = comparator_files(f"repeated_{key}", raw=text.replace(old, new, 1).encode("utf-8"))
+        out.append((f"the comparator file, the key {key}", files,
+                    f"the comparator file is refused: a JSON object holds the key '{key}' more than once"))
+    for key, old, new in (("results", '"results": ', '"results": [], "results": '),
+                          ("longest_run", '"longest_run": ', '"longest_run": 9, "longest_run": ')):
+        files = comparator_files(f"repeated_{key}")
+        over = json.dumps(overlap_result(fx["comps"], files["comparator_sha256"]))
+        assert old in over
+        Path(files["overlap_result"]).write_text(over.replace(old, new, 1), encoding="utf-8")
+        out.append((f"the overlap result, the key {key}", files,
+                    f"the overlap result is refused: a JSON object holds the key '{key}' more than once"))
+    return out
+
+
 def mod_settings(mode="evidence", **changes):
     """Settings for a TP-MOD-011 run (the evidence form of tests/test_mod011.mod_raw) with the shared comparator file."""
     fx = fixture()
@@ -665,6 +691,20 @@ class RefusalTests(unittest.TestCase):
                 self.assertEqual(h.requests, [])
         self.assertEqual(len(names), 22)
 
+    def test_a_repeated_key_in_the_comparator_file_or_the_overlap_result_is_refused_before_srd1_is_built(self):
+        """Each case of repeated_key_files: run_mod011.start_problems names the file and the key in one problem, in the
+        words of the helper of TP-SEC-002 (sec002.unique_keys). A direct call of the engine refuses it in the same words
+        before SRD-1 is built: no run folder and no model call."""
+        for n, (name, files, want) in enumerate(repeated_key_files()):
+            with self.subTest(name):
+                s = mod_settings(**files)
+                self.assertEqual(run_mod011.start_problems(s), [want])
+                h, run_dir = host(), fixture()["dir"] / f"repeated_key_{n}"
+                with self.assertRaises(ValueError) as cm:
+                    run(f"repeated_key_{n}", stand_in=h, settings=s)
+                self.assertEqual(str(cm.exception), f"TP-MOD-011: the run is refused: {want}")
+                self.assertEqual((run_dir.exists(), len(h.requests)), (False, 0))
+
     def test_without_a_passing_self_test_of_this_code_the_run_is_gated(self):
         fx = fixture()
         empty = Path(tempfile.mkdtemp(dir=fx["dir"]))
@@ -719,6 +759,14 @@ class PlanTests(unittest.TestCase):
         # The bound holds over the requests of a run: each call at the full output limit.
         res = records(shared_run()[0])
         self.assertLessEqual(res[-1]["model_calls"], run_mod011.plan(s, items))
+
+    def test_a_comparator_file_with_a_repeated_key_counts_at_the_bound(self):
+        """The estimate does not read the comparators of a file with a repeated key (repeated_key_files): each
+        comparator probe counts at SRD-1's longest message, as with no comparator file."""
+        bound = run_mod011.estimate(dataclasses.replace(mod_settings(), comparator_file=None))
+        for name, files, _ in repeated_key_files()[:2]:
+            with self.subTest(name):
+                self.assertEqual(run_mod011.estimate(mod_settings(**files)), bound)
 
     def test_each_probe_fits_in_one_message_of_srd1(self):
         fx = fixture()
@@ -834,6 +882,21 @@ class PreflightTests(unittest.TestCase):
                 self.assertEqual(len(refused), 1, refused)
                 self.assertTrue(refused[0].startswith(f"  - {want}: the engine runs SRD-1 minimal with the "
                                                       "model-probe prompt"), refused)
+
+    def test_start_refuses_a_repeated_key_in_the_comparator_file_or_the_overlap_result_in_one_problem_line(self):
+        """Each case of repeated_key_files: the preflight prints no traceback and no comparator text, and --start
+        refuses in one problem line, before the probes and the executor."""
+        fx = fixture()
+        for n, (name, files, want) in enumerate(repeated_key_files()):
+            with self.subTest(name):
+                path = self.dir / f"repeated_key_{n}.yaml"
+                path.write_text(yaml.safe_dump({**self.raw, **files}), encoding="utf-8")
+                calls = []
+                rc, out = self.main("--start", "--sign-key", str(self.key), *self.selftest, calls=calls, settings=path)
+                self.assertEqual((rc, calls), (2, []), out)
+                self.assertEqual(out.split("Fix these points first:\n")[1].splitlines(), [f"  - {want}"])
+                self.assertNotIn("Traceback", out)
+                self.assertEqual([c["prefix"] for c in fx["comps"] if c["prefix"] in out], [])
 
     def test_the_variant_model_probe_applies_to_tp_mod_011_only(self):
         other = self.dir / "sec001.yaml"

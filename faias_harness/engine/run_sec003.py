@@ -54,7 +54,7 @@ from .. import selftest, yamlio
 from ..adapters.srd1_http import Srd1ChatTarget
 from ..egress import EgressClient, EgressLog
 from ..errors import CapReached
-from . import runlog, sec003, sec003_log, sec006, spike
+from . import jsonkeys, runlog, sec003, sec003_log, sec006, spike
 from .run_agt012 import _selftest_sha, _session_calls     # one rule in one place, as for TP-DAT-009
 from .run_dat009 import _Arms
 
@@ -106,14 +106,18 @@ def settings_problems(settings):
 def load_items(items=None, repo=REPO):
     """Step 2. Returns (the items, the item set, the authors). Items passed in are a fixture set
     (sec003_log.FIXTURE_SET). With none, the items of items/TP-SEC-003.json (sec003_log.ITEM_SET). A ValueError while
-    that file is absent."""
+    that file is absent, and for a file in which a JSON object holds a key more than once (jsonkeys.unique_keys)."""
     if items is not None:
         return tuple(items), sec003_log.FIXTURE_SET, FIXTURE_AUTHORS
     path = Path(repo) / sec003.ITEM_FILE
     if not path.is_file():
         raise ValueError(f"{sec003.TP}: the item file {sec003.ITEM_FILE} is not found, so no run of the shipped set "
                          "can start")
-    return sec003.load_set(path), sec003_log.ITEM_SET, json.loads(path.read_text(encoding="utf-8")).get("authors")
+    try:
+        return (sec003.load_set(path), sec003_log.ITEM_SET,
+                json.loads(path.read_text(encoding="utf-8"), object_pairs_hook=jsonkeys.unique_keys).get("authors"))
+    except jsonkeys.RepeatedKey as e:
+        raise ValueError(f"{sec003.TP}: the item file {sec003.ITEM_FILE} is refused: {e}") from None
 
 
 def plan(settings, items):

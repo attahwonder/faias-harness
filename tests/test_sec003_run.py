@@ -147,6 +147,16 @@ def write(recs, path):
     return path
 
 
+def repeated_key_file(folder):
+    """The fixture file in `folder` with the key turns twice in its first item: an empty list, then the turns. Returns
+    (the file, the refusal of run_sec003.load_items when sec003.ITEM_FILE names it)."""
+    path = Path(folder) / "items_repeated_key.json"
+    text = _FIXTURE["file"].read_text(encoding="utf-8")
+    assert '"turns": [' in text
+    path.write_text(text.replace('"turns": [', '"turns": [], "turns": [', 1), encoding="utf-8")
+    return path, f"TP-SEC-003: the item file {path} is refused: a JSON object holds the key 'turns' more than once"
+
+
 class RefusalTests(unittest.TestCase):
     """Each refusal comes before the lock: no run log is written and no model call is made."""
 
@@ -247,6 +257,18 @@ class RefusalTests(unittest.TestCase):
             items, item_set, authors = run_sec003.load_items(repo=REPO)
         self.assertEqual(([i.id for i in items], item_set, authors),
                          ([i["id"] for i in FIXTURE_ITEMS], sec003_log.ITEM_SET, "a test fixture"))
+
+    def test_the_default_item_load_refuses_an_item_file_with_a_repeated_key_before_any_file(self):
+        """The fixture file with the key turns twice in one item: an empty list, then the turns. Plain json.loads keeps
+        the last value, so the item check alone would pass the file. run_sec003.load_items refuses it by name, in the
+        words of its refusal of an absent file. A direct call of the engine writes no file and makes no model call."""
+        path, want = repeated_key_file(Path(_FIXTURE["tmp"].name))
+        with mock.patch.object(sec003, "ITEM_FILE", str(path)):
+            with self.assertRaises(ValueError) as cm:
+                run_sec003.load_items(repo=REPO)
+            self.assertEqual(str(cm.exception), want)
+            d = self.refused("repeated_key", ValueError, [want], items=None)
+        self.assertFalse(d.exists())
 
     def test_a_context_assembly_site_that_is_not_found_refuses_the_run(self):
         """A copy of the orchestrator file whose request line has other text, and a copy with that line twice:
@@ -844,6 +866,23 @@ class PreflightTests(unittest.TestCase):
             rc, out = self.main("--start", "--sign-key", str(self.key), *self.selftest, calls=calls)
         self.assertEqual((rc, calls), (2, []), out)
         self.assertEqual(out.split("Fix these points first:\n")[1].splitlines(), [f"  - {want}"])
+
+    def test_an_item_file_with_a_repeated_key_gives_no_estimate_and_one_problem_line(self):
+        """The fixture file with the key turns twice in one item (repeated_key_file): the item check alone would pass
+        it. The preflight gives no estimate and says that the item file is refused. --start refuses it in one problem
+        line, before the probes and the executor. No output holds a traceback."""
+        path, want = repeated_key_file(self.dir)
+        calls = []
+        with mock.patch.object(sec003, "ITEM_FILE", str(path)):
+            rc, out = self.main(*self.selftest)
+            self.assertEqual(rc, 0, out)
+            self.assertIn("Worst-case estimate: not available (the item file is refused); cap: USD 1.0", out)
+            self.assertNotIn("Traceback", out)
+            self.assertEqual(preflight.sec003_start_problems(sm.load_settings(self.settings)), [want])
+            rc, out = self.main("--start", "--sign-key", str(self.key), *self.selftest, calls=calls)
+        self.assertEqual((rc, calls), (2, []), out)
+        self.assertEqual(out.split("Fix these points first:\n")[1].splitlines(), [f"  - {want}"])
+        self.assertNotIn("Traceback", out)
 
     def test_with_the_item_file_the_run_starts_with_its_engine_and_no_variant(self):
         """With an item file (the fixture file in its place), the preflight gives an estimate and the start line, and

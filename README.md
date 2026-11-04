@@ -430,6 +430,7 @@ The label names four limits and one note. In the label and in the log, "payload"
 `--start` refuses in each of these cases. It refuses before it asks for `yes`.
 
 - The item file is not found.
+- A JSON object of the item file holds a key more than once.
 - The item file does not pass the item check of the engine. That check ranks the store and makes no model call.
 - The variant is not `standard`. The engine runs SRD-1 minimal with its system prompt only.
 - No containment self-test log of this code shows PASS. In evidence mode the key of that log must also be pinned.
@@ -518,6 +519,7 @@ The loader refuses `tools_enabled: true`, `retrieval_filter` and `arms`. In evid
 - An item file, a licence file or the instrument file does not have the SHA-256 of its digest file.
 - A digest file does not have the SHA-256 prefix that `mod011.py` pins.
 - No comparator file is named, or the file is inside the repository, absent or of another SHA-256.
+- A JSON object of the comparator file or of the overlap result holds a key more than once.
 - `mod011.check_comparators` refuses the comparator file. It refuses fewer than 50 comparators for a benchmark and a creation date on or before the declared cut-off. It refuses a writer of the declared model family of the target. With no declared family (explore mode), that check does not run. It refuses a cut that is not at a sentence end and a remainder under 15 words. It refuses an overlap result that is absent or not for the named files, and a run of 8 words or more.
 - In evidence mode, the SME record hash is not set.
 - The variant is not `model_probe`.

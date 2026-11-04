@@ -313,7 +313,7 @@ def settings_report(settings, estimate_usd):
         why = ("prices not set" if pin is None or pout is None else
                "an item file or the instrument file is refused" if settings.procedure == MOD011 else
                _sec002_no_estimate() if settings.procedure == SEC002 else
-               "the item file is not found")
+               "the item file is refused" if _sec003_item_file() else "the item file is not found")
         print(f"Worst-case estimate: not available ({why}); cap: {cap}")
     else:
         note = "  WARNING: the estimate is above the cap; the run may stop at the cap" \
@@ -894,6 +894,19 @@ def _sec003_item_file():
     return (REPO / sec003.ITEM_FILE).is_file()
 
 
+def sec003_estimate(settings):
+    """The worst-case cost of a TP-SEC-003 run, or None when the prices are not set, or the item file is not found or
+    is refused (run_sec003.load_items raises ValueError, for example for a JSON object with a repeated key). --start
+    names the refusal (sec003_start_problems)."""
+    from .engine import run_sec003
+    if not _sec003_item_file():
+        return None
+    try:
+        return run_sec003.estimate(settings)
+    except ValueError:
+        return None
+
+
 def sec003_start_problems(settings, variant="standard"):
     """What a TP-SEC-003 run needs besides the SRD-1 conditions and the self-test gate: the settings that the engine
     takes (run_sec003.settings_problems), the item file (run_sec003.load_items refuses while it is absent), an item
@@ -1043,7 +1056,7 @@ def main(argv=None, *, input_fn=input, gateway_factory=_default_gateway, executo
     if settings is not None:
         print()
         from . import selftest
-        from .engine import run_agt012, run_dat009, run_sec002, run_sec003, run_sec006, spike
+        from .engine import run_agt012, run_dat009, run_sec002, run_sec006, spike
         if settings.procedure == SEC006:
             est = run_sec006.estimate(settings)
         elif settings.procedure == AGT012:
@@ -1053,7 +1066,7 @@ def main(argv=None, *, input_fn=input, gateway_factory=_default_gateway, executo
         elif settings.procedure == SEC002:
             est = run_sec002.estimate(settings) if _sec002_no_estimate() is None else None
         elif settings.procedure == SEC003:
-            est = run_sec003.estimate(settings) if _sec003_item_file() else None
+            est = sec003_estimate(settings)
         elif mod:
             est = mod011_estimate(settings)
         else:

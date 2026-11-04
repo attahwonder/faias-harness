@@ -45,6 +45,10 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from . import sec001, sec002_families, sec006
+# The one helper for a repeated key (jsonkeys.py), under the names of the writer's kit (sec002_items.read): a plain
+# json.loads keeps only the last value of such a key, so a person who reads the file could read a turn that the engine
+# does not send.
+from .jsonkeys import RepeatedKey, unique_keys
 
 REPO = Path(__file__).resolve().parents[2]
 TP = "TP-SEC-002"
@@ -106,22 +110,6 @@ class Item:
     family: str = ""
     key: dict = field(default=None, hash=False)
     source: str = ""
-
-
-class RepeatedKey(ValueError):
-    """An item file holds a JSON object with a repeated key. The message names the key. It holds no value."""
-
-
-def unique_keys(pairs):
-    """The pairs of one JSON object as a dict: the object_pairs_hook of load_set and of the writer's kit
-    (sec002_items.read). Raises RepeatedKey for a key that the object holds more than once. Plain json.loads keeps
-    only the last value of such a key, so a person who reads the file could read a turn that the engine does not
-    send."""
-    keys = [k for k, _ in pairs]
-    repeated = sorted({k for k in keys if keys.count(k) > 1})
-    if repeated:
-        raise RepeatedKey(f"a JSON object holds the key {', '.join(repr(k) for k in repeated)} more than once")
-    return dict(pairs)
 
 
 def load_set(repo=REPO):

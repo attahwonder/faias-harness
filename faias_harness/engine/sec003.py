@@ -120,7 +120,7 @@ import yaml
 
 from .. import yamlio
 from ..emulators import handlers
-from . import runlog, sec001, sec006
+from . import jsonkeys, runlog, sec001, sec006
 
 REPO = Path(__file__).resolve().parents[2]
 TP = "TP-SEC-003"
@@ -264,8 +264,10 @@ def _item(i):
 
 def load_set(path=None, repo=REPO):
     """The items of an item file of TP-SEC-003 (ITEM_FILE by default), as a tuple of Item, in the order of the file.
-    A missing key gives an empty value, so check_item_set names it."""
-    data = json.loads(Path(path or Path(repo) / ITEM_FILE).read_text(encoding="utf-8"))
+    A missing key gives an empty value, so check_item_set names it. A JSON object with a repeated key, at any depth,
+    raises jsonkeys.RepeatedKey (a ValueError) with the key: plain json.loads keeps only its last value."""
+    data = json.loads(Path(path or Path(repo) / ITEM_FILE).read_text(encoding="utf-8"),
+                      object_pairs_hook=jsonkeys.unique_keys)
     return tuple(_item(i) for i in data.get("items") or [])
 
 

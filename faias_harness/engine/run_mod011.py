@@ -45,7 +45,7 @@ from .. import selftest
 from ..adapters.srd1_http import Srd1ChatTarget
 from ..egress import EgressClient, EgressLog
 from ..errors import CapReached
-from . import mod011, mod011_log, runlog, spike
+from . import jsonkeys, mod011, mod011_log, runlog, spike
 from .run_agt012 import _selftest_sha     # one rule in one place, as for TP-DAT-009
 
 REPO = Path(__file__).resolve().parents[2]
@@ -130,7 +130,9 @@ def comparator_problems(settings, items, repo=REPO):
     """The private comparator file of the settings: (problems, comparators, file SHA-256, overlap result, overlap
     SHA-256). The file must be named, outside the repository, present and of the SHA-256 of comparator_sha256, and
     mod011.check_comparators must find no problem. An overlap result that is absent or cannot be read counts as no
-    overlap result, which check_comparators names."""
+    overlap result, which check_comparators names. The comparator file or an overlap result in which a JSON object
+    holds a key more than once is refused, with the key (jsonkeys.unique_keys): plain json.loads keeps only the last
+    value."""
     path = settings.comparator_file
     if not path:
         return ["no comparator file is named (comparator_file)"], None, None, None, None
@@ -145,14 +147,19 @@ def comparator_problems(settings, items, repo=REPO):
         return ["the comparator file does not have the SHA-256 that the settings name (comparator_sha256)"], None, \
             None, None, None
     try:
-        data = json.loads(raw.decode("utf-8"))
+        data = json.loads(raw.decode("utf-8"), object_pairs_hook=jsonkeys.unique_keys)
+    except jsonkeys.RepeatedKey as e:
+        return [f"the comparator file is refused: {e}"], None, None, None, None
     except ValueError:
         return ["the comparator file is not JSON"], None, None, None, None
     overlap, overlap_sha = None, None
     if settings.overlap_result and Path(settings.overlap_result).is_file():
         try:
             overlap_raw = Path(settings.overlap_result).read_bytes()
-            overlap, overlap_sha = json.loads(overlap_raw.decode("utf-8")), runlog.sha256_hex(overlap_raw)
+            overlap, overlap_sha = (json.loads(overlap_raw.decode("utf-8"), object_pairs_hook=jsonkeys.unique_keys),
+                                    runlog.sha256_hex(overlap_raw))
+        except jsonkeys.RepeatedKey as e:
+            return [f"the overlap result is refused: {e}"], None, None, None, None
         except ValueError:
             overlap = None
     problems = mod011.check_comparators(
@@ -201,8 +208,9 @@ def plan(settings, items):
 def estimate(settings, repo=REPO):
     """The worst-case cost of a run in USD, or None if the prices are not set. Each call counts at the full output
     limit. Its input is the model-probe prompt and the probe message. The comparator probes are read from the
-    comparator file when it has the SHA-256 of the settings; otherwise each counts at the longest message that SRD-1
-    takes (MAX_MESSAGE_CHARS). Raises ValueError when an item file or the instrument file is refused."""
+    comparator file when it has the SHA-256 of the settings and no JSON object of it holds a key more than once
+    (jsonkeys.unique_keys); otherwise each counts at the longest message that SRD-1 takes (MAX_MESSAGE_CHARS). Raises
+    ValueError when an item file or the instrument file is refused."""
     if settings.price_in_per_m is None or settings.price_out_per_m is None:
         return None
     _, gw, orch, _ = spike._srd1()
@@ -217,7 +225,8 @@ def estimate(settings, repo=REPO):
         raw = Path(settings.comparator_file).read_bytes()
         if runlog.sha256_hex(raw) == settings.comparator_sha256:
             try:
-                comps = [c for c in json.loads(raw.decode("utf-8"))["comparators"]]
+                data = json.loads(raw.decode("utf-8"), object_pairs_hook=jsonkeys.unique_keys)
+                comps = [c for c in data["comparators"]]
             except (ValueError, KeyError, TypeError):
                 comps = None
     comp_tokens = (sum(tokens(mod011.probe_text(c["benchmark"], c["prefix"])) for c in comps) if comps

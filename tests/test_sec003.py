@@ -19,7 +19,7 @@ import yaml
 
 from faias_harness import yamlio
 from faias_harness.emulators import handlers
-from faias_harness.engine import runlog, sec001, sec003
+from faias_harness.engine import runlog, sec001, sec002, sec003
 from targets.srd1.app import retrieval as rt
 from targets.srd1.app.entitlements import DATA_FILE, Entitlements
 
@@ -247,6 +247,29 @@ class ItemSetTests(unittest.TestCase):
         self.assertEqual(sec003.check_item_set(items, CLEAN), [])
         rec = sec003.seed(sec003.pool(items), self.dir / "run")       # the pool is the payload of the seed route
         self.assertEqual(rec["payload_doc_ids"], ["SYN-S-0001", "SYN-S-0002", "SYN-S-0003", "SYN-S-0004"])
+
+    def test_a_repeated_key_is_refused_by_name_at_any_depth(self):
+        """sec003.load_set refuses a JSON object with a repeated key, at any depth, with the helper of TP-SEC-002
+        (sec002.RepeatedKey). Plain json.loads keeps the last value, so a person who reads the file could read a turn
+        or a document that the engine does not use. In each case the last value is the valid one."""
+        text = json.dumps(fixture_set(), ensure_ascii=False)
+        cases = {"the top object": ([('"authors": ', '"authors": "x", "authors": ')], "'authors'"),
+                 "an item": ([('"turns": [', '"turns": [], "turns": [')], "'turns'"),
+                 "a document": ([('"watermark": ', '"watermark": "", "watermark": ')], "'watermark'"),
+                 "two keys of an item": ([('"activity": ', '"activity": "x", "activity": '),
+                                          ('"marker": ', '"marker": [], "marker": ')], "'activity', 'marker'")}
+        path = self.dir / "items.json"
+        for name, (changes, keys) in cases.items():
+            with self.subTest(name):
+                bad = text
+                for old, new in changes:
+                    self.assertIn(old, bad)
+                    bad = bad.replace(old, new, 1)
+                path.write_text(bad, encoding="utf-8")
+                with self.assertRaises(sec002.RepeatedKey) as cm:
+                    sec003.load_set(path)
+                self.assertEqual(str(cm.exception), f"a JSON object holds the key {keys} more than once")
+        self.assertEqual([i.id for i in self.load(fixture_set())], ["P1-01", "P2-01", "P5-01", "P1-02"])
 
     def test_a_marker_outside_the_item_text_a_stray_turn_and_a_cut_trace(self):
         """The joined marker in a clean document, or across the title and the text, gives one problem; so does a

@@ -108,7 +108,7 @@ Each item has its tier, direction, customer, target documents, technique, busine
 
 ## TP-SEC-003.json
 
-The item file for TP-SEC-003 (indirect prompt injection through retrieved content), from version 0.8.0. The file is not in this repository. So no run of the item set can start from this checkout. The preflight prints "Item file: items/TP-SEC-003.json is not found", and `--start` refuses. The tests use fixture sets of benign documents with neutral markers, which they pass to the engine.
+The item file for TP-SEC-003 (indirect prompt injection through retrieved content), from version 0.8.0. The file is not in this repository. So no run of the item set can start from this checkout. The preflight prints "Item file: items/TP-SEC-003.json is not found", and `--start` refuses. The tests use fixture sets of benign documents with neutral markers, which they pass to the engine. The engine and `--start` refuse a file in which a JSON object holds a key more than once. A plain JSON reader keeps only the last value of such a key, so a person who reads the file could read a turn or a document that the engine does not use.
 
 The engine reads the file in this form (`faias_harness.engine.sec003.load_set`). It has the form of `TP-DAT-009.json`, with the keys `procedure` (`TP-SEC-003`), `status`, `authors` and `items`. Each item has these keys:
 
