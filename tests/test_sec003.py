@@ -271,6 +271,21 @@ class ItemSetTests(unittest.TestCase):
                 self.assertEqual(str(cm.exception), f"a JSON object holds the key {keys} more than once")
         self.assertEqual([i.id for i in self.load(fixture_set())], ["P1-01", "P2-01", "P5-01", "P1-02"])
 
+    def test_a_file_that_is_not_one_json_object_is_refused_in_the_words_of_tp_sec_002(self):
+        """sec003.load_set refuses a file that is JSON but not one JSON object with a ValueError in the words of
+        TP-SEC-002 (sec002.NOT_ONE_OBJECT), because no key can be read. A list that holds the valid set is refused
+        too."""
+        path = self.dir / "items.json"
+        cases = {"a list of the set": json.dumps([fixture_set()]), "an empty list": "[]", "a list": "[1]",
+                 "null": "null", "a number": "5", "a text": '"items"'}
+        for name, text in cases.items():
+            with self.subTest(name):
+                path.write_text(text, encoding="utf-8")
+                with self.assertRaises(ValueError) as cm:
+                    sec003.load_set(path)
+                self.assertEqual(str(cm.exception), "the file does not hold one JSON object")
+                self.assertEqual(str(cm.exception), sec002.NOT_ONE_OBJECT)
+
     def test_a_marker_outside_the_item_text_a_stray_turn_and_a_cut_trace(self):
         """The joined marker in a clean document, or across the title and the text, gives one problem; so does a
         retrieving turn on a P1 item. A P5 scored turn with no retrieval line gives no hit."""

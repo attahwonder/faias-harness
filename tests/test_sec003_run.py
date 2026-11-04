@@ -157,6 +157,14 @@ def repeated_key_file(folder):
     return path, f"TP-SEC-003: the item file {path} is refused: a JSON object holds the key 'turns' more than once"
 
 
+def not_one_object_file(folder, text=None):
+    """A file in `folder` that is JSON but not one JSON object: by default a list that holds the fixture set. Returns
+    (the file, the refusal of run_sec003.load_items when sec003.ITEM_FILE names it)."""
+    path = Path(folder) / "items_not_one_object.json"
+    path.write_text(json.dumps([fixture_set()]) if text is None else text, encoding="utf-8")
+    return path, f"TP-SEC-003: the item file {path} is refused: the file does not hold one JSON object"
+
+
 class RefusalTests(unittest.TestCase):
     """Each refusal comes before the lock: no run log is written and no model call is made."""
 
@@ -269,6 +277,22 @@ class RefusalTests(unittest.TestCase):
             self.assertEqual(str(cm.exception), want)
             d = self.refused("repeated_key", ValueError, [want], items=None)
         self.assertFalse(d.exists())
+
+    def test_the_default_item_load_refuses_an_item_file_that_is_not_one_json_object_before_any_file(self):
+        """A list that holds the fixture set, and null: run_sec003.load_items refuses each in the words of TP-SEC-002,
+        in the form of its refusal of a repeated key. A direct call of the engine writes no file and makes no model
+        call."""
+        for n, text in enumerate((None, "null")):
+            with self.subTest(text=text):
+                folder = Path(_FIXTURE["tmp"].name) / f"not_one_object_{n}"
+                folder.mkdir()
+                path, want = not_one_object_file(folder, text)
+                with mock.patch.object(sec003, "ITEM_FILE", str(path)):
+                    with self.assertRaises(ValueError) as cm:
+                        run_sec003.load_items(repo=REPO)
+                    self.assertEqual(str(cm.exception), want)
+                    d = self.refused(f"not_one_object_run_{n}", ValueError, [want], items=None)
+                self.assertFalse(d.exists())
 
     def test_a_context_assembly_site_that_is_not_found_refuses_the_run(self):
         """A copy of the orchestrator file whose request line has other text, and a copy with that line twice:
@@ -883,6 +907,48 @@ class PreflightTests(unittest.TestCase):
         self.assertEqual((rc, calls), (2, []), out)
         self.assertEqual(out.split("Fix these points first:\n")[1].splitlines(), [f"  - {want}"])
         self.assertNotIn("Traceback", out)
+
+    def test_an_item_file_that_is_not_one_json_object_gives_no_estimate_and_one_problem_line(self):
+        """A list that holds the fixture set (not_one_object_file): the preflight prints that the item file is refused,
+        with the words of TP-SEC-002, and gives no estimate. --start refuses it in one problem line, before the probes
+        and the executor. No output holds a traceback."""
+        path, want = not_one_object_file(self.dir)
+        calls = []
+        with mock.patch.object(sec003, "ITEM_FILE", str(path)):
+            rc, out = self.main(*self.selftest)
+            self.assertEqual(rc, 0, out)
+            self.assertIn(f"Item file: {path} is refused: the file does not hold one JSON object", out.splitlines())
+            self.assertIn("Worst-case estimate: not available (the item file is refused); cap: USD 1.0", out)
+            self.assertNotIn("Traceback", out)
+            self.assertEqual(preflight.sec003_start_problems(sm.load_settings(self.settings)), [want])
+            rc, out = self.main("--start", "--sign-key", str(self.key), *self.selftest, calls=calls)
+        self.assertEqual((rc, calls), (2, []), out)
+        self.assertEqual(out.split("Fix these points first:\n")[1].splitlines(), [f"  - {want}"])
+        self.assertNotIn("Traceback", out)
+
+    def test_the_report_names_why_the_item_file_is_refused_as_for_tp_sec_002(self):
+        """The settings block prints "Item file: <file> is refused: <reason>" once for a file that the engine refuses:
+        a repeated key (the reason names the key) and a file that is not JSON. A file that the engine reads gives no
+        such line. No output holds a traceback."""
+        bad = self.dir / "items_not_json.json"
+        bad.write_text("{not json", encoding="utf-8")
+        cases = {"a repeated key": (repeated_key_file(self.dir)[0],
+                                    "a JSON object holds the key 'turns' more than once"),
+                 "not JSON": (bad, None)}
+        for name, (path, reason) in cases.items():
+            with self.subTest(name), mock.patch.object(sec003, "ITEM_FILE", str(path)):
+                rc, out = self.main(*self.selftest)
+                self.assertEqual(rc, 0, out)
+                lines = [x for x in out.splitlines() if x.startswith("Item file: ")]
+                self.assertEqual(len(lines), 1, out)
+                self.assertTrue(lines[0].startswith(f"Item file: {path} is refused: "), lines)
+                if reason:
+                    self.assertEqual(lines[0], f"Item file: {path} is refused: {reason}")
+                self.assertNotIn("Traceback", out)
+        with mock.patch.object(sec003, "ITEM_FILE", str(_FIXTURE["file"])):
+            rc, out = self.main(*self.selftest)
+        self.assertEqual(rc, 0, out)
+        self.assertNotIn("Item file: ", out)
 
     def test_with_the_item_file_the_run_starts_with_its_engine_and_no_variant(self):
         """With an item file (the fixture file in its place), the preflight gives an estimate and the start line, and

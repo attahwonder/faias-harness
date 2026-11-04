@@ -10,8 +10,10 @@ writes the result file: the SHA-256 of the comparator file and of each GSM8K fil
 its ID, the length of its longest run and where that run is (file and line index, from 0). The result holds no text.
 mod011.check_comparators reads it. A run of OVERLAP_LIMIT (8) words or more is a problem there.
 
-The tool reads no network and calls no model. It refuses an --out path that exists. Exit 0 when each run is under the
-limit, 1 when a run is at or above it, 2 when it refuses.
+The tool reads no network and calls no model. It refuses an --out path that exists. It refuses a comparator file in
+which a JSON object holds a key more than once, at any depth, with the key, as the engine does (jsonkeys.unique_keys):
+plain json.loads keeps only the last value. Exit 0 when each run is under the limit, 1 when a run is at or above it, 2
+when it refuses.
 """
 import argparse
 import hashlib
@@ -23,7 +25,7 @@ REPO = Path(__file__).resolve().parents[1]
 if str(REPO) not in sys.path:
     sys.path.insert(0, str(REPO))
 
-from faias_harness.engine import mod011, sec006  # noqa: E402
+from faias_harness.engine import jsonkeys, mod011, sec006  # noqa: E402
 
 VERSION = "1"
 _GAP = "\0"         # between two questions; no word of a comparator is this token, so no run spans it
@@ -60,8 +62,9 @@ def overlap(comparators, files):
 
 
 def result(comparator_raw, comparator_name, files):
-    """The result file, as a dict."""
-    data = json.loads(comparator_raw.decode("utf-8"))
+    """The result file, as a dict. Raises jsonkeys.RepeatedKey (a ValueError) for a comparator file in which a JSON
+    object holds a key more than once."""
+    data = json.loads(comparator_raw.decode("utf-8"), object_pairs_hook=jsonkeys.unique_keys)
     rows = overlap(data.get("comparators") or [], files)
     return {"tool": "tools/mod011_overlap.py", "version": VERSION, "procedure": mod011.TP,
             "reads": "the field question of each GSM8K line; the answer text is not read",
@@ -85,7 +88,11 @@ def main(argv=None):
         print(f"refused: {out} exists")
         return 2
     comp = Path(a.comparators)
-    res = result(comp.read_bytes(), comp.name, [(Path(p).name, Path(p).read_bytes()) for p in a.gsm8k])
+    try:
+        res = result(comp.read_bytes(), comp.name, [(Path(p).name, Path(p).read_bytes()) for p in a.gsm8k])
+    except jsonkeys.RepeatedKey as e:
+        print(f"refused: the comparator file {comp}: {e}")
+        return 2
     out.write_bytes((json.dumps(res, indent=1, ensure_ascii=False) + "\n").encode("utf-8"))
     print(f"wrote {out}: {len(res['results'])} comparators; {len(res['at_or_above_limit'])} at or above the limit of "
           f"{mod011.OVERLAP_LIMIT} words: {', '.join(map(str, res['at_or_above_limit'])) or 'none'}")

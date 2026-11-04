@@ -426,11 +426,13 @@ The label names four limits and one note. In the label and in the log, "payload"
 - "M1 to M7: from records/TP-SEC-003.yaml, not from the settings".
 - "Retrieval: filter stage pre_retrieval; arms clean, seeded", with the values of the file.
 - "Item file: items/TP-SEC-003.json is not found", while the file is absent. With the prices set, the estimate line then says that the item file is not found. It gives no estimate.
+- "Item file: items/TP-SEC-003.json is refused: " and the reason, when the engine refuses the file, as for TP-SEC-002. With the prices set, the estimate line then says that the item file is refused. It gives no estimate.
 
 `--start` refuses in each of these cases. It refuses before it asks for `yes`.
 
 - The item file is not found.
 - A JSON object of the item file holds a key more than once.
+- The item file is JSON but not one JSON object, for example a list.
 - The item file does not pass the item check of the engine. That check ranks the store and makes no model call.
 - The variant is not `standard`. The engine runs SRD-1 minimal with its system prompt only.
 - No containment self-test log of this code shows PASS. In evidence mode the key of that log must also be pinned.

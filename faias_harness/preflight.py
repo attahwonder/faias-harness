@@ -299,8 +299,11 @@ def settings_report(settings, estimate_usd):
         from .engine import sec003
         print("M1 to M7: from records/TP-SEC-003.yaml, not from the settings")
         print(f"Retrieval: filter stage {settings.retrieval_filter}; arms {', '.join(settings.arms)}")
+        refusal = _sec003_refusal()
         if not _sec003_item_file():
             print(f"Item file: {sec003.ITEM_FILE} is not found")
+        elif refusal:
+            print(f"Item file: {sec003.ITEM_FILE} is refused: {refusal}")
     elif settings.procedure == MOD011:
         mod011_report(settings)
     else:
@@ -892,6 +895,21 @@ def _sec003_item_file():
     """True when the item file of TP-SEC-003 (sec003.ITEM_FILE) is found."""
     from .engine import sec003
     return (REPO / sec003.ITEM_FILE).is_file()
+
+
+def _sec003_refusal():
+    """Why the item file of TP-SEC-003 (sec003.ITEM_FILE) is refused, or None when it is not found or is read, in the
+    form of TP-SEC-002 (sec002_channel_inputs). sec003.load_set raises a ValueError for a JSON object with a repeated
+    key (the refusal names the key), for a file that does not hold one JSON object (sec003.NOT_ONE_OBJECT) and for a
+    file that is not UTF-8 JSON. --start names the same refusal (sec003_start_problems). It holds no text of a turn."""
+    from .engine import sec003
+    if not _sec003_item_file():
+        return None
+    try:
+        sec003.load_set(repo=REPO)
+    except ValueError as e:         # json.JSONDecodeError, UnicodeDecodeError and jsonkeys.RepeatedKey are ValueError
+        return str(e)
+    return None
 
 
 def sec003_estimate(settings):

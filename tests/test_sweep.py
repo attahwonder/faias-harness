@@ -73,6 +73,11 @@ class DigestTests(unittest.TestCase):
             with self.subTest(text=text):
                 self.assertEqual(len(hits({"run_log.jsonl": text})), 1)
 
+    def test_the_sweep_reads_a_json_line_with_the_shared_helper_for_a_repeated_key(self):
+        """The sweep keeps no copy of the helper: it uses jsonkeys.unique_keys, as the engines do."""
+        from faias_harness.engine import jsonkeys
+        self.assertIs(sweep.unique_keys, jsonkeys.unique_keys)
+
     def test_a_key_name_in_quotes_with_a_value_is_key_like(self):
         value = "QUJDREVGR0hJSktMTU5PUA=="      # base64 of a made-up text, not a key
         for name, text in (("run_log.jsonl", '{"secret":"%s"}\n' % value),

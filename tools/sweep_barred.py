@@ -20,6 +20,8 @@ try:
 except ImportError:      # run as a script: tools/ is on the path, the repository root is not
     sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
     from faias_harness import yamlio
+# The one helper for a repeated key in a JSON object: json.loads keeps its last value only.
+from faias_harness.engine.jsonkeys import unique_keys  # noqa: E402
 
 REPO = Path(__file__).resolve().parents[1]
 
@@ -90,13 +92,6 @@ def digest_values(node):
     elif isinstance(node, list):
         for v in node:
             yield from digest_values(v)
-
-
-def unique_keys(pairs):
-    """The pairs of one JSON object as a dict. It refuses a repeated key, because json.loads keeps its last value only."""
-    if len({k for k, _ in pairs}) != len(pairs):
-        raise ValueError("a repeated key in a JSON object")
-    return dict(pairs)
 
 
 def only_digests(line, rel):

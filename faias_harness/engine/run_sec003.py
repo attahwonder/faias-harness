@@ -106,7 +106,8 @@ def settings_problems(settings):
 def load_items(items=None, repo=REPO):
     """Step 2. Returns (the items, the item set, the authors). Items passed in are a fixture set
     (sec003_log.FIXTURE_SET). With none, the items of items/TP-SEC-003.json (sec003_log.ITEM_SET). A ValueError while
-    that file is absent, and for a file in which a JSON object holds a key more than once (jsonkeys.unique_keys)."""
+    that file is absent, for a file in which a JSON object holds a key more than once (jsonkeys.unique_keys), and for a
+    file that is not one JSON object (sec003.NOT_ONE_OBJECT)."""
     if items is not None:
         return tuple(items), sec003_log.FIXTURE_SET, FIXTURE_AUTHORS
     path = Path(repo) / sec003.ITEM_FILE
@@ -114,10 +115,12 @@ def load_items(items=None, repo=REPO):
         raise ValueError(f"{sec003.TP}: the item file {sec003.ITEM_FILE} is not found, so no run of the shipped set "
                          "can start")
     try:
-        return (sec003.load_set(path), sec003_log.ITEM_SET,
-                json.loads(path.read_text(encoding="utf-8"), object_pairs_hook=jsonkeys.unique_keys).get("authors"))
+        data = json.loads(path.read_text(encoding="utf-8"), object_pairs_hook=jsonkeys.unique_keys)
     except jsonkeys.RepeatedKey as e:
         raise ValueError(f"{sec003.TP}: the item file {sec003.ITEM_FILE} is refused: {e}") from None
+    if not isinstance(data, dict):      # for example a list, or null; sec003.load_set refuses it too
+        raise ValueError(f"{sec003.TP}: the item file {sec003.ITEM_FILE} is refused: {sec003.NOT_ONE_OBJECT}")
+    return sec003.load_set(path), sec003_log.ITEM_SET, data.get("authors")
 
 
 def plan(settings, items):

@@ -498,6 +498,32 @@ class OverlapToolTests(unittest.TestCase):
             for c in self.COMPARATORS + self.TRAIN + self.TEST:
                 self.assertNotIn(c["question"], text)
 
+    def test_a_comparator_file_with_a_repeated_key_is_refused_and_no_result_is_written(self):
+        """The engine refuses a comparator file in which a JSON object holds a key more than once
+        (run_mod011.comparator_problems). The tool refuses it too, with the key, and writes no result (exit 2). Plain
+        json.loads keeps the last value, which is the valid one in each case. The output holds no comparator text."""
+        text = json.dumps({"comparators": self.COMPARATORS})
+        cases = {"the top object": (('{"comparators": ', '{"comparators": [], "comparators": '), "'comparators'"),
+                 "a comparator": (('"id": ', '"id": "X", "id": '), "'id'")}
+        with tempfile.TemporaryDirectory() as d:
+            d = Path(d)
+            for name, rows in (("train.jsonl", self.TRAIN), ("test.jsonl", self.TEST)):
+                (d / name).write_text("".join(json.dumps(r) + "\n" for r in rows), encoding="utf-8")
+            for n, (name, ((old, new), key)) in enumerate(cases.items()):
+                with self.subTest(name):
+                    self.assertIn(old, text)
+                    comp, out = d / f"comparators_{n}.json", d / f"overlap_{n}.json"
+                    comp.write_text(text.replace(old, new, 1), encoding="utf-8")
+                    buf = io.StringIO()
+                    with redirect_stdout(buf):
+                        rc = OVERLAP_TOOL.main(["--comparators", str(comp), "--gsm8k", str(d / "train.jsonl"),
+                                                str(d / "test.jsonl"), "--out", str(out)])
+                    self.assertEqual((rc, out.exists()), (2, False), buf.getvalue())
+                    self.assertEqual(buf.getvalue(), f"refused: the comparator file {comp}: a JSON object holds the "
+                                                     f"key {key} more than once\n")
+                    for c in self.COMPARATORS:
+                        self.assertNotIn(c["question"], buf.getvalue())
+
     def test_a_run_never_spans_two_questions(self):
         files = [("a.jsonl", b'{"question": "one two three four"}\n{"question": "five six seven eight"}\n')]
         rows = OVERLAP_TOOL.overlap([{"id": "X", "question": "three four five six"}], files)

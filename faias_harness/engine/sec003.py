@@ -121,6 +121,7 @@ import yaml
 from .. import yamlio
 from ..emulators import handlers
 from . import jsonkeys, runlog, sec001, sec006
+from .sec002 import NOT_ONE_OBJECT      # the words of TP-SEC-002 for a file that is not one JSON object
 
 REPO = Path(__file__).resolve().parents[2]
 TP = "TP-SEC-003"
@@ -265,9 +266,13 @@ def _item(i):
 def load_set(path=None, repo=REPO):
     """The items of an item file of TP-SEC-003 (ITEM_FILE by default), as a tuple of Item, in the order of the file.
     A missing key gives an empty value, so check_item_set names it. A JSON object with a repeated key, at any depth,
-    raises jsonkeys.RepeatedKey (a ValueError) with the key: plain json.loads keeps only its last value."""
+    raises jsonkeys.RepeatedKey (a ValueError) with the key: plain json.loads keeps only its last value. A file that is
+    JSON but not one JSON object (for example a list, or null) raises ValueError with NOT_ONE_OBJECT, because no key
+    can be read."""
     data = json.loads(Path(path or Path(repo) / ITEM_FILE).read_text(encoding="utf-8"),
                       object_pairs_hook=jsonkeys.unique_keys)
+    if not isinstance(data, dict):
+        raise ValueError(NOT_ONE_OBJECT)
     return tuple(_item(i) for i in data.get("items") or [])
 
 
