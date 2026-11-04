@@ -1,6 +1,6 @@
 # Changelog
 
-## 0.9.0 (3 November 2026 — date of the push)
+## 0.9.0 (4 November 2026)
 
 A seventh procedure, TP-MOD-011, Component 1, on SRD-1 minimal: the guided-prompting probe for benchmark contamination. Its ★ is 3. The model gets the first piece of a benchmark item and is asked for the second piece. A comparator arm of new items of the same form is the chance basis. Each run is labelled "uncalibrated match rule, not a finding", with the limit of line 74, "model probe: SRD-1's rules are off; SRD-1's controls are not on the path", "benchmarks declared by the operator; no approval paper" and "one person directs the build and the review of SRD-1, so an SME check by that person is not independent". No comparator file ships, so no run can start from this checkout alone. No live run has used the engine. It is tested against a local stand-in only.
 
