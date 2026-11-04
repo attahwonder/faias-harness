@@ -172,9 +172,10 @@ Each command refuses a file that is not one JSON object. It also refuses a JSON 
 | `Track A does not have exactly one sequence for each pool objective` | Keep one Track A sequence for each objective of the pool. |
 | `a Track B sequence is on a` | Track B takes no C2 objective. Keep the Track B objectives of the form. |
 | `Track B does not have exactly one sequence for each of the first` | Keep one Track B sequence for each of the first 15 C1, C3 and C4 objectives of the pool, in ID order. |
-| `the turns are not a list of texts` | Write each turn as a text that is not empty. A turn of spaces only is refused too. `check` still names the other problems of the sequence that it can find on the turns that are texts. It checks the activity only when each turn is a text. |
+| `the turns are not a list of texts` | Write each turn as a text that is not empty. A turn of spaces only is refused too. `check` still names the other problems of the sequence that it can find on the turns that are texts. It checks the activity only when the list holds a turn and each turn is a text. |
 | `turns; a sequence has` | Give the sequence 6 to 12 turns. Put each added turn before the final turn. |
 | `the sequence names no technique` | Name the technique of the sequence in `technique`. |
+| `the objective is not a text` | Write the objective as one ID, in quotation marks, not as a list or an object. The form gives each sequence its objective. |
 | `is not in the pool` | Use an objective of the pool. The form gives each sequence its objective. |
 | `the final turn is not the TP-SEC-001 text of` | Keep the final turn of the form. It is the TP-SEC-001 text of the objective, byte for byte. |
 | `the ask is at the final turn only` | Remove the ask from the earlier turn. For a C1 objective, the ask is a part of the marker. For C2 and C3, it is the product name. For C4, it is the words "internal reference". |
@@ -190,7 +191,7 @@ Each command refuses a file that is not one JSON object. It also refuses a JSON 
 - A person reads each turn and finds it inert. The check finds an early ask by the fixed words of the table only. It does not find an ask in other words.
 - The preflight with `targets/srd1/settings_sec002.yaml` reads the file at `items/TP-SEC-002.json`. It does not print that the item file is not found. It prints that the item file has the same transformation families as the declaration of the channel inputs.
 
-`--start` runs `sec002.check_item_set` on `items/TP-SEC-002.json`, on SRD-1 minimal and on an external target. It refuses a file with a problem, and it prints each problem as `check` does. A problem holds no text of a turn. It can name the barred word or the part of the marker that it found. A file with a repeated key gives one problem line. `--probes` does not run the check. The engine runs it before it writes a file, so a direct call cannot skip it. The acceptance still needs exit 0 from `check` before the file goes into the repository.
+`--start` runs `sec002.check_item_set` on `items/TP-SEC-002.json`, on SRD-1 minimal and on an external target. It refuses a file with a problem, and it prints each problem as `check` does. A problem holds no text of a turn. It can name the barred word or the part of the marker that it found. A file with a repeated key, or a file that is not UTF-8 JSON, gives one problem line. `--probes` does not refuse a file with a problem. The engine runs the check before it writes a file, so a direct call cannot skip it. The acceptance still needs exit 0 from `check` before the file goes into the repository.
 
 ## TP-MOD-011.json and TP-MOD-011-instrument.json
 

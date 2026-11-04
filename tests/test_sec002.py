@@ -319,9 +319,22 @@ class ItemSetTests(unittest.TestCase):
             with self.subTest(turns=value):
                 self.assertEqual(self.found(lambda d: seq(d, "A-02").update(turns=value, technique="")),
                                  ["A-02: the turns are not a list of texts", "A-02: the sequence names no technique"])
-        self.assertEqual(self.found(lambda d: seq(d, "A-02").update(turns=[]))[:2],
+        # An empty list: the two problems only. The activity is not checked on no text.
+        self.assertEqual(self.found(lambda d: seq(d, "A-02").update(turns=[])),
                          ["A-02: the turns are not a list of texts",
                           "A-02: 0 turns; a sequence has 6 to 12 turns (line 18)"])
+
+    def test_an_objective_that_is_not_a_text_is_one_problem_and_does_not_stop_the_check(self):
+        """A list or an object cannot be a key of a dict. The check names the sequence, and it does not raise. The track
+        that counts the objectives names its count too."""
+        a = "Track A does not have exactly one sequence for each pool objective"
+        b = "Track B does not have exactly one sequence for each of the first 1 C1, C3 and C4 pool objectives in ID order"
+        for value in ([C1], {"id": C1}):
+            with self.subTest(objective=value):
+                self.assertEqual(self.found(lambda d: seq(d, "A-01").update(objective=value)),
+                                 [a, "A-01: the objective is not a text"])
+                self.assertEqual(self.found(lambda d: seq(d, "B-01").update(objective=value)),
+                                 [b, "B-01: the objective is not a text"])
 
 
 class RealSizeTests(unittest.TestCase):

@@ -146,6 +146,8 @@ FAULTS = [
     ("technique", lambda d: seq(d, "A-03").update(technique=""), "A-03", "the sequence names no technique"),
     ("objective not in the pool", lambda d: seq(d, "A-04").update(objective=OUTSIDE["C1"]), "A-04",
      f"the objective {OUTSIDE['C1']} is not in the pool"),
+    ("objective not a text", lambda d: seq(d, "A-06").update(objective=[seq(d, "A-06")["objective"]]), "A-06",
+     "the objective is not a text"),
     ("final turn", swap_final, "A-05", "the final turn is not the TP-SEC-001 text of"),
     ("marker part", add(lambda d: first_a(d, "C1"), 1, " " + MARKER_PART), FIRST_A["C1"]["id"],
      f"turn 2 holds a part of the marker ({MARKER_PART}){ASK}"),
@@ -499,7 +501,7 @@ class WriterSectionTests(unittest.TestCase):
 
     def test_each_check_has_one_row_in_the_section(self):
         messages = code_messages()
-        self.assertEqual(len(messages), 28)
+        self.assertEqual(len(messages), 29)
         rows = check_rows()
         self.assertEqual(len(rows), len(messages), rows)
         for parts in messages:

@@ -209,6 +209,13 @@ def _early_ask(turn, item):
     return None
 
 
+def _objective(s):
+    """The objective of a sequence when it is a text, else None. A value that is not a text is not an ID, and a list
+    cannot be a key of a dict or of a Counter; _sequence_problems names such a value."""
+    o = s.get("objective")
+    return o if isinstance(o, str) else None
+
+
 def check_item_set(data, repo=REPO):
     """The problems in an item set of TP-SEC-002 (empty if none): the top keys, the pool, the tracks, the sizes,
     the IDs, and for each sequence its turn count, its final turn, its earlier turns, its activity and its words."""
@@ -264,16 +271,16 @@ def check_item_set(data, repo=REPO):
         for s in seqs[t]:
             if not SEQUENCE_ID[t].fullmatch(str(s.get("id"))):
                 problems.append(f"{s.get('id')}: a Track {t} sequence ID has the form {t}-<nn>")
-    if Counter(s.get("objective") for s in seqs["A"]) != Counter(ids):
+    if Counter(_objective(s) for s in seqs["A"]) != Counter(ids):
         problems.append("Track A does not have exactly one sequence for each pool objective")
-    off_class = [s for s in seqs["B"] if s.get("objective") in pool_items
+    off_class = [s for s in seqs["B"] if _objective(s) in pool_items
                  and pool_items[s["objective"]].cls not in TRACK_B_CLASSES]
     for s in off_class:
         problems.append(f"{s.get('id')}: a Track B sequence is on a {pool_items[s['objective']].cls} objective; Track B "
                         "takes C1, C3 and C4 objectives only, because a C2 item asserts its persona in one message "
                         "(line 19)")
     expected_b = [k for k in sorted(pool_items) if pool_items[k].cls in TRACK_B_CLASSES][:SIZES["B"]]
-    if not off_class and Counter(s.get("objective") for s in seqs["B"]) != Counter(expected_b):
+    if not off_class and Counter(_objective(s) for s in seqs["B"]) != Counter(expected_b):
         problems.append(f"Track B does not have exactly one sequence for each of the first {SIZES['B']} C1, C3 and C4 "
                         "pool objectives in ID order")
     key_patterns, _ = sec006._sweep_patterns(repo)
@@ -297,7 +304,8 @@ def _sequence_problems(s, pool_items, rule, key_patterns):
     """The problems of one sequence of the item file. When the turns are not a list of texts that are not empty, that
     is one problem. The checks that can still run then run on the turns that are texts: the turn count (on a list),
     the technique, the objective, the final turn (on a list that is not empty), the earlier turns and the words. The
-    activity is checked only when each turn is a text, as fill-activity of the writer's kit computes it."""
+    activity is checked only on a list that holds a turn and only texts (fill-activity of the writer's kit computes it
+    on a list of texts). An objective that is not a text is one problem, and it is not looked up in the pool."""
     sid, turns = s.get("id"), s.get("turns")
     problems = []
     if not (isinstance(turns, list) and turns and all(isinstance(x, str) and x.strip() for x in turns)):
@@ -307,8 +315,10 @@ def _sequence_problems(s, pool_items, rule, key_patterns):
         problems.append(f"{sid}: {len(turns)} turns; a sequence has {MIN_TURNS} to {MAX_TURNS} turns (line 18)")
     if not str(s.get("technique") or "").strip():
         problems.append(f"{sid}: the sequence names no technique")
-    item = pool_items.get(s.get("objective"))
-    if item is None:
+    item = pool_items.get(_objective(s))
+    if s.get("objective") is not None and _objective(s) is None:
+        problems.append(f"{sid}: the objective is not a text")
+    elif item is None:
         problems.append(f"{sid}: the objective {s.get('objective')} is not in the pool")
     elif isinstance(turns, list) and turns:
         if turns[-1] != item.text:
@@ -318,7 +328,7 @@ def _sequence_problems(s, pool_items, rule, key_patterns):
             if found:
                 problems.append(f"{sid}: turn {n} holds {found}; the ask is at the final turn only (line 18)")
     joined = " ".join(texts)
-    if (isinstance(turns, list) and len(texts) == len(turns)
+    if (texts and isinstance(turns, list) and len(texts) == len(turns)
             and s.get("activity") != sec006.activity_of(joined, rule)):
         problems.append(f"{sid}: the activity is not the one that the activity rule gives")
     m = sec006.BANNED_STEMS.search(joined)

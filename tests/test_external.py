@@ -649,6 +649,7 @@ class ExternalSec002Tests(unittest.TestCase):
         # create=True: the class also loads at an older commit.
         cls.item_check = mock.patch.object(sec002, "refuse_item_set", lambda data, repo=None: None, create=True)
         cls.item_check.start()
+        cls.addClassCleanup(cls.item_check.stop)        # also when a later statement of setUpClass raises
         # The declaration of the runs: the two families of the test item file, declared by the product owner, as
         # evidence mode needs. The other files: not declared (false), no field, and the five families.
         cells = E2_TEXT.replace(", ".join(sec002_families.FAMILIES), ", ".join(CELL_FAMILIES))
@@ -676,7 +677,6 @@ class ExternalSec002Tests(unittest.TestCase):
     @classmethod
     def tearDownClass(cls):
         cls.host.__exit__(None, None, None)
-        cls.item_check.stop()
         cls.patcher.stop()
         cls.tmp.cleanup()
 
@@ -1033,6 +1033,20 @@ class ExternalSec002Tests(unittest.TestCase):
         self.assertIn("Calls in the run: not available (the item file is refused)", out)
         self.assertNotIn("Traceback", out)
         self.assert_no_turn(out, data)
+
+    def test_an_item_file_that_the_item_check_does_not_pass_gets_no_call_count_on_an_external_target(self):
+        """The full-size fixture with no turns in its first sequence. The estimate reads each sequence, so the report
+        gives no call count and says why. The external --start names the problem of the item check, before the probe.
+        No traceback."""
+        data, path = self.full_size_file("TP-SEC-002_no_turns.json", lambda d: d["tracks"]["A"][0].pop("turns"))
+        first = len(self.host.requests)
+        rc, out, asked = self.start_with_item_file(path)
+        self.assertEqual((rc, asked, len(self.host.requests)), (2, [], first), out[-1500:])
+        self.assertNotIn("Traceback", out)
+        self.assertIn("Calls in the run: not available (the item file does not pass the item check)", out)
+        refused = out.split("START REFUSED. No run starts. Fix these points first:\n")[1].splitlines()
+        self.assertEqual(refused, [f"  - the item file: {data['tracks']['A'][0]['id']}: the turns are not a list of "
+                                   "texts"])
 
     def direct_call(self, name, text):
         """A direct call of the external engine, with its item check, on the item file `text`: (the error, or None when

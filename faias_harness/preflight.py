@@ -35,8 +35,9 @@ document_search only.
 For TP-SEC-002 (version 0.8) it prints the M1 bar with its reason, the baseline log and its public key, and the
 declaration of the channel inputs (targets/srd1/channel_inputs.yaml): the languages, the transformation families and
 the field product_owner_declared. --start refuses families that are not those of the item file. It also refuses an
-item file with a repeated key and one that sec002.check_item_set does not pass, on SRD-1 and on an external target.
---probes does not run that check. On SRD-1 the field
+item file with a repeated key, one that is not UTF-8 JSON and one that sec002.check_item_set does not pass, on SRD-1
+and on an external target. --probes does not refuse such a file. The estimate is given only for an item file that the
+check passes. On SRD-1 the field
 is printed only, and the run goes on. With no baseline log named, it prints BASELINE
 REQUIRED, and --probes and --start refuse. A named baseline log is read as the engine reads it: a TP-SEC-001 log on
 the full set, its signature checked against `baseline_pubkey`, and its stored scores scored again with this scorer.
@@ -311,7 +312,7 @@ def settings_report(settings, estimate_usd):
     if estimate_usd is None:      # prices set: TP-SEC-002 or TP-SEC-003 without a usable item file, or TP-MOD-011
         why = ("prices not set" if pin is None or pout is None else
                "an item file or the instrument file is refused" if settings.procedure == MOD011 else
-               "the item file is refused" if settings.procedure == SEC002 and _sec002_item_file()[1] else
+               _sec002_no_estimate() if settings.procedure == SEC002 else
                "the item file is not found")
         print(f"Worst-case estimate: not available ({why}); cap: {cap}")
     else:
@@ -364,9 +365,8 @@ def external_settings_report(profile, settings, est):
     else:
         print("Replies in the log: hash_only (the default of an external run). Each run record holds the SHA-256 of "
               "the reply, not the reply. The log cannot be rescored")
-    if est is None:         # only a TP-SEC-002 run without its item file, or with a refused one, has no estimate
-        why = "refused" if _sec002_item_file()[1] else "not found"
-        print(f"Calls in the run: not available (the item file is {why})")
+    if est is None:         # only a TP-SEC-002 run without an item file that it can use has no estimate
+        print(f"Calls in the run: not available ({_sec002_no_estimate()})")
     elif sec002:
         print(f"Calls in the run: at most {est['calls']} (plus the channel probe: {est['probe_calls']} calls, four "
               "turns in two sessions; retries are extra)")
@@ -443,7 +443,7 @@ def run_external(a, profile, settings, *, input_fn, executor, inspect_check):
     from .engine import external
     reasons = registry.problems(profile)
     sec002 = settings.procedure == SEC002
-    est = None if sec002 and _sec002_items() is None else external.estimate(settings, profile=profile)
+    est = None if sec002 and _sec002_no_estimate() else external.estimate(settings, profile=profile)
     print()
     external_settings_report(profile, settings, est)
     if reasons:
@@ -688,8 +688,9 @@ BASELINE_REQUIRED = ("BASELINE REQUIRED: a TP-SEC-002 run compares each track wi
 
 def _sec002_item_file():
     """The item file of TP-SEC-002 (sec002.ITEM_FILE) as (its data, None). It is (None, None) when the file is not
-    found, and (None, the refusal) when sec002.load_set refuses a JSON object with a repeated key. The refusal names
-    the key. It holds no text of a turn."""
+    found, and (None, the refusal) when sec002.load_set refuses a JSON object with a repeated key or the file is not
+    UTF-8 JSON, as the writer's kit refuses them (sec002_items.read). The refusal names the key, or the place where the
+    decoder stopped. It holds no text of a turn."""
     from .engine import sec002
     if not (REPO / sec002.ITEM_FILE).is_file():
         return None, None
@@ -697,6 +698,22 @@ def _sec002_item_file():
         return sec002.load_set(), None
     except sec002.RepeatedKey as e:
         return None, str(e)
+    except ValueError as e:         # json.JSONDecodeError and UnicodeDecodeError are ValueError
+        return None, f"the file is not UTF-8 JSON ({e})"
+
+
+def _sec002_no_estimate():
+    """Why the preflight gives no estimate of a TP-SEC-002 run, or None when it can give one. The estimate reads each
+    sequence (sec002.load_items), which raises on a file that the item check names. So the estimate is made only for
+    an item file that the item check passes (sec002_item_problems)."""
+    data, refusal = _sec002_item_file()
+    if refusal:
+        return "the item file is refused"
+    if data is None:
+        return "the item file is not found"
+    if sec002_item_problems():
+        return "the item file does not pass the item check"
+    return None
 
 
 def _sec002_items():
@@ -810,9 +827,10 @@ def sec002_baseline(settings, variant="standard", target=None):
 
 def sec002_item_problems():
     """The problems of the item file of TP-SEC-002 (sec002.check_item_set), in the form of TP-AGT-012 and TP-SEC-003.
-    Empty when the file is not found, because sec002_channel_inputs names that. A file that sec002.load_set refuses (a
-    JSON object with a repeated key) gives one problem, the refusal. A problem names a check and a sequence. It holds
-    no text of a turn. At most it names the barred word or the part of the marker that the check found."""
+    Empty when the file is not found, because sec002_channel_inputs names that. A file that the preflight refuses (a
+    JSON object with a repeated key, or not UTF-8 JSON; _sec002_item_file) gives one problem, the refusal. A problem
+    names a check and a sequence. It holds no text of a turn. At most it names the barred word or the part of the
+    marker that the check found."""
     from .engine import sec002
     data, refusal = _sec002_item_file()
     if refusal:
@@ -829,8 +847,10 @@ def sec002_start_problems(settings, variant="standard", target=None):
     external run, which has no variant and no tools of SRD-1 (run_external refuses --positive-control itself), and
     whose declaration of the channel inputs is the setting channel_inputs. In evidence mode, that declaration needs
     product_owner_declared true. The run also needs an item file that the item check passes (sec002_item_problems).
-    That check names the authors value too, and that problem is named once. --probes does not run the item check. As
-    for TP-AGT-012 and TP-SEC-003, the check runs at --start only, because the probes send no item."""
+    That check names the authors value too, and that problem is named once. --probes does not refuse a file that the
+    item check names. As for TP-AGT-012 and TP-SEC-003, a problem of the check stops --start and not --probes, because
+    the probes send no item. Both engines run the check too (sec002.refuse_item_set). The preflight also runs it to
+    know if it can give the estimate (_sec002_no_estimate)."""
     from .engine import sec002
     problems = []
     if settings.m1_value is None or not settings.m1_reason:
@@ -1013,7 +1033,7 @@ def main(argv=None, *, input_fn=input, gateway_factory=_default_gateway, executo
         elif settings.procedure == DAT009:
             est = run_dat009.estimate(settings)
         elif settings.procedure == SEC002:
-            est = run_sec002.estimate(settings) if _sec002_items() is not None else None
+            est = run_sec002.estimate(settings) if _sec002_no_estimate() is None else None
         elif settings.procedure == SEC003:
             est = run_sec003.estimate(settings) if _sec003_item_file() else None
         elif mod:

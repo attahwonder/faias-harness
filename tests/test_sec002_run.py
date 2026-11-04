@@ -975,8 +975,8 @@ class PreflightTests(unittest.TestCase):
 
     def test_start_refuses_an_item_file_that_the_item_check_does_not_pass_and_probes_do_not_check_it(self):
         """A faulty copy of the full-size fixture. --start refuses it, before the operator types yes, with each problem
-        of the item check after "the item file: ". --probes does not run the item check, as for TP-AGT-012 and
-        TP-SEC-003, because the probes send no item. No output holds a turn of the file."""
+        of the item check after "the item file: ". --probes does not refuse it, as for TP-AGT-012 and TP-SEC-003,
+        because the probes send no item. No output holds a turn of the file."""
         def faults(d):
             d["sizes"]["A"] = 21
             d["tracks"]["A"][2]["technique"] = ""
@@ -1029,6 +1029,47 @@ class PreflightTests(unittest.TestCase):
         self.assertEqual(rc, 0, out[-1500:])
         self.assertNotIn("REFUSED", out)
         self.assert_no_turn(out, data)
+
+    def test_start_refuses_an_item_file_that_is_not_utf8_json_in_one_problem_line(self):
+        """A file that is not JSON, and a file that is not UTF-8. The preflight prints that the item file is refused,
+        with the place where the decoder stopped and no traceback, and --start refuses it in one problem line, as the
+        writer's kit does (sec002_items.read)."""
+        for name, raw in (("not_json", b"{ this is not json"), ("not_utf8", b"\xff\xfe{}")):
+            with self.subTest(name):
+                try:
+                    json.loads(raw.decode("utf-8"))
+                except ValueError as e:
+                    refusal = f"the file is not UTF-8 JSON ({e})"
+                path = self.dir / f"TP-SEC-002_{name}.json"
+                path.write_bytes(raw)
+                with mock.patch.object(sec002, "ITEM_FILE", str(path)):
+                    self.assertEqual(preflight.sec002_item_problems(), [f"the item file: {refusal}"])
+                    rc, out = self.preflight(*self.start, item_check=True)
+                self.assertEqual(rc, 2, out[-1500:])
+                self.assertNotIn("Traceback", out)
+                self.assertEqual(self.problems(out), [f"  - the item file: {refusal}"])
+                for text in (f"Item file: {path} is refused: {refusal}",
+                             "Worst-case estimate: not available (the item file is refused); cap: USD 10.0"):
+                    self.assertIn(text, out)
+
+    def test_an_item_file_that_the_item_check_does_not_pass_gets_no_estimate_and_start_names_the_problem(self):
+        """The full-size fixture with no turns in its first sequence. The estimate reads each sequence, so the preflight
+        gives no estimate and says why. --start names the problem of the item check. No traceback; no turn."""
+        data, path = self.full_size_file("TP-SEC-002_no_turns.json", lambda d: d["tracks"]["A"][0].pop("turns"))
+        sid = data["tracks"]["A"][0]["id"]
+        with mock.patch.object(sec002, "ITEM_FILE", str(path)):
+            rc, out = self.preflight(e2=_MOD["e2_five"], item_check=True)
+            self.assertEqual(rc, 0, out[-1500:])
+            self.assertIn("Worst-case estimate: not available (the item file does not pass the item check); "
+                          "cap: USD 10.0", out)
+            rc, out = self.preflight(*self.start, e2=_MOD["e2_five"], item_check=True)
+        self.assertEqual(rc, 2, out[-1500:])
+        self.assertNotIn("Traceback", out)
+        self.assertIn("Worst-case estimate: not available (the item file does not pass the item check)", out)
+        self.assertEqual(self.problems(out), [f"  - the item file: {sid}: the turns are not a list of texts"])
+        for s in data["tracks"]["A"][1:] + data["tracks"]["B"]:
+            for turn in s["turns"]:
+                self.assertNotIn(turn, out)
 
 
 class _Log:
