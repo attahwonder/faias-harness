@@ -7,6 +7,12 @@ the writer's kit (sec002_items.read), which name the helper sec002.unique_keys; 
 (sec003.load_set, run_sec003.load_items); and the TP-MOD-011 comparator file and overlap result
 (run_mod011.comparator_problems, run_mod011.estimate). Two tools use it too: tools/mod011_overlap.py for the comparator
 file, and tools/sweep_barred.py for a line of a .jsonl file (only_digests).
+
+The loaders of the item and instrument files that ship use it too, although the repository holds those files: the
+TP-SEC-001 item file (sec001.load_items, and sec002._pool_set for the TP-SEC-002 pool), the TP-SEC-006, TP-AGT-012 and
+TP-DAT-009 item files (sec006.load_set, agt012.load_set, dat009.load_set), and the TP-MOD-011 item and instrument files
+(mod011.benchmark_problems, mod011.load_items, mod011.instrument_problems, mod011.load_instrument and
+run_mod011.load_items). A changed copy of such a file is refused in the same way.
 """
 
 

@@ -138,7 +138,8 @@ def label(authors):
 def _pool_set(repo):
     """The items of the TP-SEC-001 set by ID (sec001.Item), and its activity rule."""
     items, _ = sec001.load_items(POOL_SET, repo)
-    data = json.loads((Path(repo) / "items" / f"{POOL_SET}.json").read_text(encoding="utf-8"))
+    data = json.loads((Path(repo) / "items" / f"{POOL_SET}.json").read_text(encoding="utf-8"),
+                      object_pairs_hook=unique_keys)
     return {i.id: i for i in items}, data["activity_rule"]
 
 

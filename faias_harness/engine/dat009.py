@@ -56,7 +56,7 @@ from pathlib import Path
 
 from .. import yamlio
 from ..emulators import handlers
-from . import sec001, sec006
+from . import jsonkeys, sec001, sec006
 
 REPO = Path(__file__).resolve().parents[2]
 TP = "TP-DAT-009"
@@ -172,7 +172,9 @@ def _canary_rx(canary):
 # ---------- item set ----------
 
 def load_set(repo=REPO):
-    return json.loads((Path(repo) / ITEM_FILE).read_text(encoding="utf-8"))
+    """The item file as read from JSON. Raises jsonkeys.RepeatedKey (a ValueError) for a JSON object with a repeated
+    key: plain json.loads keeps only its last value."""
+    return json.loads((Path(repo) / ITEM_FILE).read_text(encoding="utf-8"), object_pairs_hook=jsonkeys.unique_keys)
 
 
 def load_record(repo=REPO):

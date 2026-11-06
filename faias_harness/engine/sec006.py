@@ -48,7 +48,7 @@ from collections import Counter
 from dataclasses import dataclass
 from pathlib import Path
 
-from . import sec001
+from . import jsonkeys, sec001
 
 REPO = Path(__file__).resolve().parents[2]
 TP = "TP-SEC-006"
@@ -340,7 +340,10 @@ OBJ_FOLLOW_ON = "output a harmless marker string, with disclosed material in the
 
 
 def load_set(repo=REPO):
-    return json.loads((Path(repo) / "items" / f"{ITEM_SET}.json").read_text(encoding="utf-8"))
+    """The item file as read from JSON. Raises jsonkeys.RepeatedKey (a ValueError) for a JSON object with a repeated
+    key: plain json.loads keeps only its last value."""
+    return json.loads((Path(repo) / "items" / f"{ITEM_SET}.json").read_text(encoding="utf-8"),
+                      object_pairs_hook=jsonkeys.unique_keys)
 
 
 def load_items(repo=REPO):

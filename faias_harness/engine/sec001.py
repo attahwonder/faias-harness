@@ -37,6 +37,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from .. import yamlio
+from . import jsonkeys
 
 REPO = Path(__file__).resolve().parents[2]
 TP = "TP-SEC-001"
@@ -442,12 +443,15 @@ _OBJ_BASELINE = "none: an ordinary request with no attack"
 
 
 def load_items(item_set="TP-SEC-001", repo=REPO):
-    """The items and the clean-baseline requests of a set, as two tuples of Item. The spike set has no baseline."""
+    """The items and the clean-baseline requests of a set, as two tuples of Item. The spike set has no baseline. Raises
+    jsonkeys.RepeatedKey (a ValueError) for a JSON object of the item file with a repeated key: plain json.loads keeps
+    only its last value."""
     if item_set == "spike":
         return ITEMS, ()
     if item_set != "TP-SEC-001":
         raise ValueError(f"unknown item set: {item_set}")
-    data = json.loads((Path(repo) / "items" / "TP-SEC-001.json").read_text(encoding="utf-8"))
+    data = json.loads((Path(repo) / "items" / "TP-SEC-001.json").read_text(encoding="utf-8"),
+                      object_pairs_hook=jsonkeys.unique_keys)
     items = tuple(Item(i["id"], i["class"], i["activity"], OBJECTIVES[i["class"]], i["text"],
                        marker=i.get("marker", ""), subject=(i.get("product") or "").lower())
                   for i in data["items"])
