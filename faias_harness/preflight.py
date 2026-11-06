@@ -574,6 +574,9 @@ def _default_executor(**kw):
     if getattr(kw["settings"], "kind", None) == "tierm":      # the generic Tier M engine of bench mode
         from .engine import tierm
         return tierm.execute(**kw)
+    if getattr(kw["settings"], "kind", None) == "tiers_agt":      # the Tier S AGT engine of bench mode
+        from .engine import tiers_agt
+        return tiers_agt.execute(**kw)
     proc = kw["settings"].procedure
     if proc == SEC006:
         from .engine import run_sec006

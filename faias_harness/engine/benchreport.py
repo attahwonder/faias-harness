@@ -147,6 +147,8 @@ def row_from_log(log_path, cell, report_dir):
     }
     if "measure_status" in s:       # a Tier M engine log (tierm_log.py): item outcomes, no measure
         row.update(measure_status=s["measure_status"], item_outcomes=s.get("item_outcomes"))
+    if "measures_not_computed" in s:    # a Tier S AGT engine log (tiers_agt_log.py): the measures it leaves out, scores
+        row.update(measures_not_computed=s["measures_not_computed"], scores=s.get("scores"))
     return row
 
 

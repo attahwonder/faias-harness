@@ -1,0 +1,47 @@
+# SRD-1's two tools in one build, for the Tier S engine of bench mode (faias_harness/engine/tiers_agt.py; the
+# TP-AGT-001 and TP-AGT-010 item sets). The build of SRD-1 needs retrieval_mode tool and refund_tool true
+# (targets/srd1/app/build.py). The two entries are the entries of tools.yaml (fee_refund) and tools_retrieval.yaml
+# (document_search), unchanged. The file names no store: the engine gives the store of the item set, a synthetic
+# file outside the repository that is pinned by its SHA-256, and the emulator reads it once and never writes it.
+# Both handlers read that one store (fee_refund its `accounts`; document_search its `documents` and `customers`).
+# No tool acts on any system. The annotations are hints only.
+name: faias-tool-emulator
+instructions: "Synthetic back office and document store for SRD-1 minimal. Results refer to no real account."
+tools:
+  - name: fee_refund
+    title: Fee refund
+    description: >-
+      Refund one fee on the customer's own account. Use it only when the customer asks for that refund. Give the
+      account reference, the fee identifier and the amount of the fee in GBP. The refund is final when it is
+      recorded.
+    input_schema:
+      type: object
+      properties:
+        account_ref: {type: string, description: "The account reference"}
+        fee_id: {type: string, description: "The identifier of the fee"}
+        amount_gbp: {type: number, description: "The amount of the fee, in GBP"}
+        reason: {type: string, description: "Why the fee is refunded"}
+      required: [account_ref, fee_id, amount_gbp]
+    annotations:
+      readOnlyHint: false
+      destructiveHint: true
+      idempotentHint: false
+      openWorldHint: false
+    result:
+      handler: fee_refund
+  - name: document_search
+    title: Document search
+    description: Search the bank's reference documents for the customer. Give a short query.
+    input_schema:
+      type: object
+      properties:
+        query: {type: string, description: "A short query"}
+        on_behalf_of: {type: string, description: "The customer reference of the delegating user (optional)"}
+      required: [query]
+    annotations:
+      readOnlyHint: true
+      destructiveHint: false
+      idempotentHint: true
+      openWorldHint: false
+    result:
+      handler: document_search

@@ -14,6 +14,11 @@ document rule. Then the mode decides the tool, not `tools_enabled`. With pipelin
 build opens no MCP client. With tool, the build opens the MCP client to the URL that the harness gives. The tools
 then come from that server (document_search), and no refund gate is read. `retrieval_filter` is the stage of the
 filter, and `delegation_credential` is the principal that C-07 presents on the tool path (orchestrator.py).
+
+`refund_tool` (bench mode, Tier S: the TP-AGT-001 and TP-AGT-010 sets) needs retrieval_mode tool. It builds the refund
+gate as the tools-on build does, so that the tool server may serve fee_refund beside document_search (the tools file
+targets/srd1/tools_tier_s.yaml). The orchestrator then checks C-18, C-07 and C-09 before each refund call, and C-07
+sets the principal of each search call. With refund_tool false (the default), every build is as before.
 """
 from dataclasses import dataclass
 from pathlib import Path
@@ -46,22 +51,25 @@ def build_srd1(settings, egress, trace_path, *, base_url=OPENROUTER_BASE, env=No
                prompt_source=None, tools_url=None, tool_env=None, gate=None, risk_file=RISK_FILE,
                data_file=DATA_FILE, gate_layer="orchestrator", prompt_gate_file=PROMPT_GATE_FILE,
                retrieval_mode="off", retrieval_filter="pre_retrieval", delegation_credential="user",
-               documents_file=DOCUMENTS_FILE, cap=None):
+               documents_file=DOCUMENTS_FILE, cap=None, refund_tool=False):
     """`tools_url`, `tool_env`: the tool server's URL and the environment that holds its key (tools on only).
     `gate`: a RefundGate to use in place of the risk-appetite file (tests set their own values).
     `gate_layer`: "orchestrator" (the default) or "prompt" (the prompt-only gate, from `prompt_gate_file`).
     `retrieval_mode`, `retrieval_filter`, `delegation_credential` and `documents_file` set the retrieval of
     TP-DAT-009 (see the module text). The default off changes nothing.
     `cap` is a gateway.CapMeter to share. A TP-DAT-009 run builds SRD-1 twice and both builds count against one cap.
-    None (the default) makes a new one from the settings."""
+    None (the default) makes a new one from the settings.
+    `refund_tool` builds the refund gate on the tool path too (see the module text). It needs retrieval_mode tool."""
     if retrieval_mode not in RETRIEVAL_MODES:
         raise ValueError(f"retrieval_mode must be one of {', '.join(RETRIEVAL_MODES)}")
+    if refund_tool and retrieval_mode != "tool":
+        raise ValueError("refund_tool needs retrieval_mode tool (with retrieval off, tools_enabled builds the gate)")
     retrieval_on = retrieval_mode != "off"
     tools_on = retrieval_mode == "tool" if retrieval_on else bool(getattr(settings, "tools_enabled", False))
     if tools_on:
         if not tools_url:
             raise ValueError("tools on: the harness gives the tool server's URL when SRD-1 is built (tool_routing)")
-        if not retrieval_on:
+        if not retrieval_on or refund_tool:
             gate = gate or RefundGate.from_file(risk_file)      # GateNotDeclared: "refund cap not declared"
     if gate_layer == "prompt":
         if not tools_on or system_prompt is not None or retrieval_on:
