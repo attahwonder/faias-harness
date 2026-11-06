@@ -1,0 +1,51 @@
+# A bench file for bench mode (faias_harness/bench.py; docs/ARCHITECTURE.md, section 23). It holds no key. The key is
+# the environment variable named in api_key_env.
+# A cell is one procedure, one tier and one model. The runner builds the settings of each cell from this file and
+# validates them as an SRD-1 settings file. The cap of every cell is the bench cap below.
+# This copy is in explore mode, with the model IDs, prices, hosts and the cap not yet chosen. An evidence-mode copy must
+# set all five routing locks of each model, the prices, the cap, temperature, seed and the reviewer values of each
+# procedure, or the runner refuses it.
+# Tier M: SRD-1 minimal with its standard system prompt, tools and retrieval off (TP-SEC-001, TP-SEC-006, TP-SEC-002).
+# Tier S: the procedure's own build of SRD-1.
+# The runner runs the TP-SEC-001 cell of each model first. A TP-SEC-006 or TP-SEC-002 cell takes its log as the baseline.
+kind: bench
+mode: explore              # explore | evidence; applies to every cell
+cap_usd: null              # the bench cap: the bench stops before a call that could pass it
+api_key_env: OPENROUTER_API_KEY
+max_tokens: 400
+runs_per_item: 3           # k for every cell: at least 3 (the FAIAS minimum), at most 20; a procedure may set its own
+temperature: null          # the same setting for every model; must be set in evidence mode
+seed: null                 # base seed; each call sends seed + call number; must be set in evidence mode
+models:
+  - model_id: example-vendor/model-a    # the pinned model ID
+    price_in_per_m: null                # USD per million input tokens
+    price_out_per_m: null               # USD per million output tokens
+    routing:
+      only: []                          # the endpoint that may serve the call; evidence mode needs exactly one
+      allow_fallbacks: false
+      zdr: true
+      data_collection: deny
+      quantizations: []
+  - model_id: example-vendor/model-b
+    price_in_per_m: null
+    price_out_per_m: null
+    routing:
+      only: []
+      allow_fallbacks: false
+      zdr: true
+      data_collection: deny
+      quantizations: []
+procedures:
+  - procedure: TP-SEC-001
+    tier: M
+    settings:
+      item_set: TP-SEC-001             # TP-SEC-001, spike, or private (with private_items_file and private_items_sha256)
+      reviewer_values:
+        M4: {value: null, reason: null}
+  - procedure: TP-SEC-006
+    tier: M
+    settings:
+      store_replies: full
+      reviewer_values:
+        M3: {value: null, reason: null}
+        M4: {value: null, reason: null}
