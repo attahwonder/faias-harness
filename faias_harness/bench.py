@@ -13,7 +13,9 @@ calls the settings validator (settings.validate, settings.from_raw), so each cel
 settings hash. The cap of every cell is the bench cap.
 
 Tiers. Tier M is SRD-1 minimal with its standard system prompt, tools and retrieval off: one model call per customer
-turn. It takes TP-SEC-001, TP-SEC-006 and TP-SEC-002 only, with tools_enabled false. Tier S is the procedure's own build
+turn. It takes TP-SEC-001, TP-SEC-006 and TP-SEC-002, with tools_enabled false, and any procedure with no engine of
+its own, through the generic Tier M engine (engine/tierm.py: an item file outside the repository, pinned by its
+SHA-256; item outcomes only, no measure; a procedure with no record is refused). Tier S is the procedure's own build
 of SRD-1 (its tools, its retrieval or its prompt variant), as the engine of that procedure runs it. Each cell runs the
 default variant of its procedure (standard; model_probe for TP-MOD-011). The bench runs no positive control.
 
@@ -56,10 +58,10 @@ from pathlib import Path
 from cryptography.hazmat.primitives import serialization
 
 from . import preflight, selftest, yamlio
-from .engine import benchreport, runlog, sec001, spike
+from .engine import benchreport, runlog, sec001, spike, tierm
 from .profile import REPO, ProfileError, load_profile
-from .settings import (AGT012, DAT009, MOD011, PRIVATE_ITEM_SET, PROCEDURE_DEFAULT, SEC002, SEC003, SEC006,
-                       SettingsError, from_raw, validate)
+from .settings import (AGT012, DAT009, MOD011, PRIVATE_ITEM_SET, PROCEDURE_DEFAULT, PROCEDURES, SEC002, SEC003,
+                       SEC006, SettingsError, from_raw, validate)
 
 SEC001 = PROCEDURE_DEFAULT
 KIND = "bench"
@@ -165,9 +167,12 @@ def form_problems(raw):
             continue
         out += [f"procedure {i}: settings may not hold '{k}' (the bench file or the runner sets it)"
                 for k in sorted(set(st) & BENCH_OWNED)]
-        if tier == "M" and proc not in TIER_M_PROCEDURES:
+        if tier == "M" and proc not in TIER_M_PROCEDURES and proc in PROCEDURES:
             out.append(f"procedure {i}: tier M takes {', '.join(TIER_M_PROCEDURES)} only ({proc} runs its own build "
                        "of SRD-1, so it is tier S)")
+        if tier == "S" and proc not in PROCEDURES:
+            out.append(f"procedure {i}: {proc} has no engine of its own; the Tier M engine (tierm.py) runs it at tier "
+                       "M only")
         if tier == "M" and st.get("tools_enabled") is True:
             out.append(f"procedure {i}: tier M runs with tools off (set tools_enabled to false, or use tier S)")
     return out
@@ -209,6 +214,12 @@ def plan(raw, out):
                 log_key, key_key = DEPENDENT[p["procedure"]]
                 cell_raw[log_key] = str(base.run_dir / "run_log.jsonl")
                 cell_raw[key_key] = str(out / PUBKEY_NAME)
+            if p["procedure"] not in PROCEDURES:        # no engine of its own: the generic Tier M engine
+                s, found = tierm.cell_settings(cell_raw)
+                problems += [f"{where}: {x}" for x in found]
+                if s is not None:
+                    cells.append(Cell(n, mi, model["model_id"], p["procedure"], p["tier"], s, run_dir))
+                continue
             found = validate(cell_raw)
             if found:
                 problems += [f"{where}: {x}" for x in found]
@@ -231,6 +242,8 @@ def estimate(settings):
     proc = settings.procedure
     if settings.price_in_per_m is None or settings.price_out_per_m is None:
         return None
+    if tierm.is_tierm(settings):
+        return tierm.estimate(settings)
     if proc == SEC006:
         return run_sec006.estimate(settings)
     if proc == AGT012:
@@ -276,6 +289,8 @@ def cell_problems(profile, cell, sign_key, isolation, inspect_check, baseline_re
         problems += preflight.sec003_start_problems(s, v)
     elif cell.procedure == MOD011:
         problems += preflight.mod011_start_problems(s, v)
+    elif tierm.is_tierm(s):
+        problems += tierm.start_problems(s, v)
     if s.item_set == PRIVATE_ITEM_SET:
         problems += private_problems(s)
     return problems + selftest.gate_problems(cell.procedure, isolation, s.mode)
