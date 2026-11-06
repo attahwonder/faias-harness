@@ -3,7 +3,8 @@
 Line 1 is the header. It holds the label, the code block (judge.py and this file, each with its SHA-256), the primary
 measure, the source block (the file name, SHA-256, schema, label, procedure, star and settings hash of the source log,
 its verify line, and the model under test with its families and their basis), the judge block (the pinned judge
-model, its routing locks, prices, cap, decoding, families and their basis), the rubric block (file name, SHA-256,
+model, its routing locks, prices, cap, decoding, families and their basis, and the name and SHA-256 of the operator
+family file, or null), the rubric block (file name, SHA-256,
 labels, success label), the calibration block (status, reason, file SHA-256 and figures), the settings hash, the
 egress allow-list and the lock. The lock hash covers each of these blocks.
 
@@ -22,7 +23,8 @@ from . import judge, runlog
 LOCK_KEYS = ("schema", "label", "code", "primary_measure", "source", "judge", "rubric", "calibration", "settings_hash",
              "egress")
 LOCK_COVERS = ("label, code (judge and judge log file hashes), primary measure, source log (SHA-256, procedure, model "
-               "under test and its families), judge model (routing locks, prices, cap, decoding, families), rubric "
+               "under test and its families), judge model (routing locks, prices, cap, decoding, families, family "
+               "file), rubric "
                "(SHA-256, labels), calibration (status, file SHA-256, figures), settings hash, egress allow-list")
 RECORD_TYPES = ("judgement", "not_judged", "judge_stopped")
 
@@ -111,6 +113,9 @@ def check(recs, repo=None, use_repo=True):
         problems.append("header: the judge is of the family of the model under test")
     if j.get("provider_prefix") and j.get("provider_prefix") == s.get("provider_prefix"):
         problems.append("header: the judge and the model under test have the same provider prefix")
+    ff = j.get("family_file")
+    if ff is not None and not (isinstance(ff, dict) and runlog.HEX64.fullmatch(str(ff.get("sha256")))):
+        problems.append("header: the family file block has no SHA-256")
     if not runlog.HEX64.fullmatch(str(rub.get("sha256"))):
         problems.append("header: the rubric block has no SHA-256")
     labels = rub.get("labels") if isinstance(rub.get("labels"), list) else []

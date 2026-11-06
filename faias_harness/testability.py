@@ -58,7 +58,7 @@ def not_shown(procedures):
         "A full result means only that the profile declares every capability that the draft needs list. It does "
         "not mean that an adapter implements them, or that a test passes.",
         "The operator declares the capabilities in the profile. The harness has not observed them.",
-        f"It does not cover the FAIAS procedures outside the {procedures} records in records/.",
+        f"It does not cover the FAIAS procedures outside the {procedures} procedures of records/capability_needs.yaml.",
     ]
 
 

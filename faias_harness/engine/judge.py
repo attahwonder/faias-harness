@@ -16,9 +16,12 @@ Two IDs with the same provider prefix are one family, whether or not the table l
 table does not know has an unknown family. The pass refuses it, unless the operator names the family in the judge
 settings (`judge_family`, `target_family`). Where the table knows the model, a named family must be one that the table
 gives. The pass refuses a judge whose families meet the families of the model under test. All of this happens before
-any call. The table leaves out the vendors whose names the sweep bars from this repository; the operator names their
-family. The table is the harness's precaution: the evidence is of self-preference of a model for its own output, and
-its extension to a whole family is a reading.
+any call. The table leaves out the vendors whose names the sweep bars from this repository. For them the operator
+names the family, or names a family file (`family_file`, `family_sha256`; format FAMILY_FORMAT). The family file is
+JSON outside the repository, pinned by its SHA-256. It adds provider prefixes and name words to the table. It may not
+give an entry of the table another family. The rules above apply to its entries as to the table's own, and a model
+that neither the table nor the file knows still has an unknown family. The table is the harness's precaution: the
+evidence is of self-preference of a model for its own output, and its extension to a whole family is a reading.
 
 The calibration (rules 4b and the judge bar). A calibration file (format `faias-judge-calibration/1`) holds, for a
 fixed sample, the labels of two human labellers and of the judge, each item in the tune half or the held-out half.
@@ -82,11 +85,21 @@ NAME_FAMILY = {
     "mixtral": "mistral", "qwen": "qwen", "qwq": "qwen", "grok": "xai", "glm": "glm", "phi": "microsoft",
     "nemotron": "nvidia",
 }
+# The operator family file: JSON outside the repository, pinned by its SHA-256 in the judge settings. It adds provider
+# prefixes and name words for the vendors that the sweep bars from this repository (read_families).
+FAMILY_FORMAT = "faias-judge-families/1"
+FAMILY_FILE_KEYS = ("format", "prefix_family", "name_family")
+PREFIX_FORM = re.compile(r"[a-z0-9][a-z0-9._-]{0,63}")
+WORD_FORM = re.compile(r"[a-z][a-z0-9]{0,39}")
+FAMILY_FORM = re.compile(r"[a-z0-9][a-z0-9._-]{0,39}")
+CODE_TABLE = "the family table of engine/judge.py"
+FILE_TABLE = "the operator family file"
 
 # The keys of a judge settings file, and of its `model` block. The model block takes the keys of a run settings file
 # that a model call uses, with the same rules (settings.validate).
 JUDGE_REQUIRED = ("model", "rubric_file", "rubric_sha256")
-JUDGE_OPTIONAL = ("judge_family", "target_family", "calibration_file", "calibration_sha256")
+JUDGE_OPTIONAL = ("judge_family", "target_family", "calibration_file", "calibration_sha256", "family_file",
+                  "family_sha256")
 MODEL_KEYS = ("provider", "model_id", "mode", "routing", "price_in_per_m", "price_out_per_m", "cap_usd",
               "api_key_env", "max_tokens", "temperature", "seed")
 # settings.validate asks an evidence-mode run file for the M4 bar of TP-SEC-001. A judge has no M4, so this one message
@@ -121,39 +134,46 @@ def _prefix(model_id):
     return head if sep else ""
 
 
-def model_families(model_id, named=None):
+def model_families(model_id, named=None, extra=None):
     """(families, basis, problem) of one model ID. `families` is a sorted list, or None with a problem. `named` is
-    the family that the operator names in the judge settings, or None."""
+    the family that the operator names in the judge settings, or None. `extra` is the tables of an operator family file
+    (read_families), or None; its entries count as the table's own."""
     mid = str(model_id or "").strip().casefold()
     _, _, name = mid.partition("/")
     found, basis = set(), []
     prefix = _prefix(mid)
-    if prefix in PREFIX_FAMILY:
-        found.add(PREFIX_FAMILY[prefix])
-        basis.append(f"provider prefix '{prefix}'")
-    for word in re.split(r"[^a-z0-9]+", name or mid):
-        for key, fam in NAME_FAMILY.items():
-            if re.fullmatch(rf"{key}[0-9]*", word):
-                found.add(fam)
-                basis.append(f"name word '{word}'")
+    extra = extra or {}
+    for source, prefixes, words in ((CODE_TABLE, PREFIX_FAMILY, NAME_FAMILY),
+                                    (FILE_TABLE, extra.get("prefix_family") or {}, extra.get("name_family") or {})):
+        parts = []
+        if prefix in prefixes:
+            found.add(prefixes[prefix])
+            parts.append(f"provider prefix '{prefix}'")
+        for word in re.split(r"[^a-z0-9]+", name or mid):
+            for key, fam in words.items():
+                if re.fullmatch(rf"{key}[0-9]*", word):
+                    found.add(fam)
+                    parts.append(f"name word '{word}'")
+        if parts:
+            basis.append(f"{source}: " + ", ".join(parts))
     named = _family(named)
     if found:
         if named is not None and named not in found:
             return None, None, (f"the settings name the family '{named}' for {model_id}, but the table gives "
                                 f"{', '.join(sorted(found))}")
-        return sorted(found), "the family table of engine/judge.py: " + ", ".join(basis), None
+        return sorted(found), "; ".join(basis), None
     if named is not None:
         return [named], "named by the operator in the judge settings (the family table has no entry)", None
     return None, None, (f"the family of {model_id} is unknown (the family table has no entry); name it in the judge "
                         "settings")
 
 
-def family_problems(judge_id, judge_named, target_id, target_named):
+def family_problems(judge_id, judge_named, target_id, target_named, extra=None):
     """(problems, judge block, target block): the family rule, before any call. A block holds the model ID, its
-    provider prefix, its families and their basis."""
+    provider prefix, its families and their basis. `extra` is the tables of an operator family file, or None."""
     problems, blocks = [], []
     for role, mid, named in (("judge", judge_id, judge_named), ("model under test", target_id, target_named)):
-        fams, basis, problem = model_families(mid, named)
+        fams, basis, problem = model_families(mid, named, extra)
         if problem:
             problems.append(f"{role}: {problem}")
         blocks.append({"model_id": mid, "provider_prefix": _prefix(mid) or None, "families": fams,
@@ -166,6 +186,63 @@ def family_problems(judge_id, judge_named, target_id, target_named):
     if shared:
         problems.append(f"the judge is of the family of the model under test ({', '.join(shared)})")
     return problems, j, t
+
+
+def family_file_problems(data):
+    """The problems in the content of an operator family file (empty if none). It holds `format`, and `prefix_family`
+    and `name_family`: maps of a provider prefix or a name word to a family, with one entry or more in all. An entry
+    that the table of this file also holds must give the same family."""
+    if not isinstance(data, dict):
+        return ["the family file does not hold one JSON object"]
+    problems = [f"the family file has an unknown field '{k}'" for k in data if k not in FAMILY_FILE_KEYS]
+    if data.get("format") != FAMILY_FORMAT:
+        problems.append(f"the family file format is not {FAMILY_FORMAT}")
+    total = 0
+    for key, form, table, what in (("prefix_family", PREFIX_FORM, PREFIX_FAMILY, "provider prefix"),
+                                   ("name_family", WORD_FORM, NAME_FAMILY, "name word")):
+        entries = data.get(key, {})
+        if not isinstance(entries, dict):
+            problems.append(f"{key} must be a map of a {what} to a family")
+            continue
+        total += len(entries)
+        for k, fam in entries.items():
+            if not form.fullmatch(k):
+                problems.append(f"{key}: '{k}' is not a {what} in lower case ({form.pattern})")
+            if not (isinstance(fam, str) and FAMILY_FORM.fullmatch(fam)):
+                problems.append(f"{key}: the family of '{k}' is not a family name in lower case "
+                                f"({FAMILY_FORM.pattern})")
+            elif k in table and table[k] != fam:
+                problems.append(f"{key}: the file gives '{k}' the family '{fam}', but the table of engine/judge.py "
+                                f"gives '{table[k]}'")
+    if total == 0:
+        problems.append("the family file has no entry in prefix_family or name_family")
+    return problems
+
+
+def read_families(path, sha256, repo=REPO):
+    """(tables, file SHA-256, problems) of an operator family file. The file must be outside the repository, of the
+    SHA-256 `sha256`, JSON with no repeated key, and pass family_file_problems. `tables` is None with a problem."""
+    if _inside(path, repo):
+        return None, None, ["the family file is inside the repository; keep it outside (it may name vendors that the "
+                            "sweep bars from the repository)"]
+    if not runlog.HEX64.fullmatch(str(sha256)):
+        return None, None, ["the family file has no SHA-256 in the settings (family_sha256)"]
+    if not Path(path).is_file():
+        return None, None, ["the family file is absent"]
+    raw = Path(path).read_bytes()
+    sha = runlog.sha256_hex(raw)
+    if sha != sha256:
+        return None, sha, ["the family file does not have the SHA-256 that the settings name (family_sha256)"]
+    try:
+        data = json.loads(raw.decode("utf-8"), object_pairs_hook=jsonkeys.unique_keys)
+    except jsonkeys.RepeatedKey as e:
+        return None, sha, [f"the family file is refused: {e}"]
+    except ValueError:
+        return None, sha, ["the family file is not UTF-8 JSON"]
+    problems = family_file_problems(data)
+    if problems:
+        return None, sha, problems
+    return {k: dict(data.get(k) or {}) for k in ("prefix_family", "name_family")}, sha, []
 
 
 # ---------- agreement statistics ----------
@@ -329,15 +406,20 @@ class JudgeSettings:
     target_family: object = None
     calibration_file: object = None
     calibration_sha256: object = None
+    family_file: object = None
+    family_sha256: object = None
 
     def canonical(self):
         m = self.model
-        return {"model": {"provider": m.provider, "model_id": m.model_id, "mode": m.mode, "routing": m.routing(),
-                          "price_in_per_m": m.price_in_per_m, "price_out_per_m": m.price_out_per_m,
-                          "cap_usd": m.cap_usd, "api_key_env": m.api_key_env, "max_tokens": m.max_tokens,
-                          "temperature": m.temperature, "seed": m.seed},
-                "rubric_sha256": self.rubric_sha256, "judge_family": self.judge_family,
-                "target_family": self.target_family, "calibration_sha256": self.calibration_sha256}
+        c = {"model": {"provider": m.provider, "model_id": m.model_id, "mode": m.mode, "routing": m.routing(),
+                       "price_in_per_m": m.price_in_per_m, "price_out_per_m": m.price_out_per_m,
+                       "cap_usd": m.cap_usd, "api_key_env": m.api_key_env, "max_tokens": m.max_tokens,
+                       "temperature": m.temperature, "seed": m.seed},
+             "rubric_sha256": self.rubric_sha256, "judge_family": self.judge_family,
+             "target_family": self.target_family, "calibration_sha256": self.calibration_sha256}
+        if self.family_sha256 is not None:      # only when set, so settings with no family file keep their hash
+            c["family_sha256"] = self.family_sha256
+        return c
 
     def digest(self):
         return runlog.sha256_hex(runlog.canonical(self.canonical()))
@@ -374,6 +456,17 @@ def validate_judge(raw, repo=REPO):
             problems.append("calibration_file needs calibration_sha256 (64 lower-case hex characters)")
     elif cal_sha is not None:
         problems.append("calibration_sha256 is set but no calibration_file is named")
+    fam, fam_sha = raw.get("family_file"), raw.get("family_sha256")
+    if fam is not None:
+        if not (isinstance(fam, str) and fam.strip()):
+            problems.append("family_file must be a path or null")
+        elif _inside(fam, repo):
+            problems.append("the family file is inside the repository; keep it outside (it may name vendors that the "
+                            "sweep bars from the repository)")
+        if not runlog.HEX64.fullmatch(str(fam_sha)):
+            problems.append("family_file needs family_sha256 (64 lower-case hex characters)")
+    elif fam_sha is not None:
+        problems.append("family_sha256 is set but no family_file is named")
     return problems
 
 
@@ -389,7 +482,8 @@ def judge_from_raw(raw):
     return JudgeSettings(model=settings_mod.from_raw(model), model_raw=model, rubric_file=raw["rubric_file"],
                          rubric_sha256=raw["rubric_sha256"], judge_family=raw.get("judge_family"),
                          target_family=raw.get("target_family"), calibration_file=raw.get("calibration_file"),
-                         calibration_sha256=raw.get("calibration_sha256"))
+                         calibration_sha256=raw.get("calibration_sha256"), family_file=raw.get("family_file"),
+                         family_sha256=raw.get("family_sha256"))
 
 
 def load_judge_settings(path, repo=REPO):
@@ -523,10 +617,16 @@ def start_problems(js, source_path, *, sign_key, pubkey=None, repo=REPO, use_rep
     src, msg, h = source_problems(source_path, pubkey, repo=repo, use_repo=use_repo)
     problems += src
     facts["verify"] = msg
+    extra, facts["family_file"] = None, None
+    if js.family_file is not None:
+        extra, fsha, fp = read_families(js.family_file, js.family_sha256, repo=repo)
+        problems += fp
+        if not fp:
+            facts["family_file"] = {"file": Path(js.family_file).name, "sha256": fsha}
     if h is not None and not src:
         target_id = source_model(h)
         fam, judge_block, target_block = family_problems(js.model.model_id, js.judge_family, target_id,
-                                                         js.target_family)
+                                                         js.target_family, extra)
         problems += fam
         facts.update(header=h, judge_block=judge_block, target_block=target_block)
         to_judge, _ = plan(source_path)
@@ -580,6 +680,7 @@ def build_header(js, facts, source_path, calibration, allow_hosts, confirmation,
                   "provider_prefix": facts["judge_block"]["provider_prefix"],
                   "families": facts["judge_block"]["families"],
                   "family_basis": facts["judge_block"]["family_basis"],
+                  "family_file": facts.get("family_file"),
                   "family_rule": "the judge's families do not meet those of the model under test, and the provider "
                                  "prefixes differ (engine/judge.py, model_families)"},
         "rubric": {"file": Path(js.rubric_file).name, "sha256": js.rubric_sha256, "labels": rubric["labels"],
@@ -714,6 +815,8 @@ def main(argv=None):
     print(f"source log: {args.log}\n{facts['verify'].splitlines()[0]}")
     print(f"model under test: {facts['target_block']['model_id']} (families {facts['target_block']['families']})")
     print(f"judge: {js.model.model_id} (families {facts['judge_block']['families']}); cap {js.model.cap_usd} USD")
+    if facts.get("family_file"):
+        print(f"family file: {facts['family_file']['file']} (sha256 {facts['family_file']['sha256']})")
     print(f"replies to judge: {len(to_judge)}; not judged: {len(skip)}")
     print(f"worst-case cost: {estimate(js, facts['rubric'], args.log):.6f} USD")
     print(f"calibration: {cal['status']} ({cal['reason']})")

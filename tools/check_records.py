@@ -2,10 +2,11 @@
 
   py -3.14 tools/check_records.py --faias <path to the FAIAS tree> [--records <dir>]
 
-Checks: the set (one record per procedure in records/classification.tsv, no other); schema and allowed values;
+Checks: the set (one record per class-H procedure in records/classification.tsv, no other; each row has human
+step N or Y); schema and allowed values;
 the star equals the procedure's Confidence line; every number in a copied text appears at its cited line, and the
 text's words come from that line; every threshold has an allowed basis, and each `firm` threshold has its
-firm_value_key; capability_needs.yaml is marked draft, names exactly the 45 procedures, uses only the seven
+firm_value_key; capability_needs.yaml is marked draft, names exactly the 45 procedures with human step N, uses only the seven
 capabilities, keeps `needed` equal to the capabilities that both passes need where an `open` entry shows the two
 sets, keeps a `settled` entry within the two sets (all that both need, and only what one needs) with a note, and
 every file:line it cites exists in the FAIAS tree, in the file of its own procedure.
@@ -132,7 +133,14 @@ def check_needs(records_dir, want, faias, errors):
 def check(records_dir, faias):
     errors = []
     with open(records_dir / "classification.tsv", encoding="utf-8", newline="") as fh:
-        want = {r["tp"]: r for r in csv.DictReader(fh, delimiter="\t") if r["class"] == "H" and r["human_step"] == "N"}
+        rows = list(csv.DictReader(fh, delimiter="\t"))
+    for r in rows:
+        if r["class"] != "H" or r["human_step"] not in ("N", "Y"):
+            errors.append(f"{r['tp']}: classification.tsv row is not class H with human step N or Y")
+    want = {r["tp"]: r for r in rows if r["class"] == "H"}
+    # The capability needs (the preflight's input) cover the procedures with no human step only. A record with a
+    # human step (Y) is for the bench's generic Tier M engine, which reads the record's ID and star.
+    want_needs = {tp for tp, r in want.items() if r["human_step"] == "N"}
     have = {p.stem: p for p in records_dir.glob("TP-*.yaml")}
     for tp in sorted(set(want) - set(have)):
         errors.append(f"{tp}: no record")
@@ -212,7 +220,7 @@ def check(records_dir, faias):
                 errors.append(f"{tp} evidence_outputs[{i}]: level {lv!r}")
             elif any(x not in lines[int(e["src"].rsplit(":", 1)[1]) - 1] for x in re.findall(r"L[1-5]", lv)):
                 errors.append(f"{tp} evidence_outputs[{i}]: level {lv!r} not at its line")
-    check_needs(records_dir, want, faias, errors)
+    check_needs(records_dir, want_needs, faias, errors)
     return errors, counts
 
 

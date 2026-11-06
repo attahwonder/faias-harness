@@ -8,8 +8,8 @@ An open-source test harness for FAIAS, the Financial AI Independent Assurance St
 
 **What works now**
 
-- **Records.** One generic record for each of 45 FAIAS test procedures, built from the published standard. Each copied item carries its file and line (`records/`).
-- **Record checker.** It compares every record with the FAIAS source lines (`tools/check_records.py`). It also checks the form of the capability needs and the FAIAS lines that they cite. A test seeds eight faults and confirms that the checker catches them.
+- **Records.** One generic record for each of 52 FAIAS test procedures, built from the published standard. 45 of them need no human step. The other 7 are for the bench mode, which is not released (`records/README.md`). Each copied item carries its file and line (`records/`).
+- **Record checker.** It compares every record with the FAIAS source lines (`tools/check_records.py`). It also checks the form of the capability needs and the FAIAS lines that they cite. A test seeds nine faults and confirms that the checker catches them.
 - **Preflight.** It compares a target profile with the draft capability needs of each procedure and prints which procedures can run in full, in part, or not at all (`faias_harness/preflight.py`). It makes no network call.
 - **Engine.** It runs seven procedures, TP-SEC-001, TP-SEC-006, TP-AGT-012, TP-DAT-009, TP-SEC-002, TP-SEC-003 and TP-MOD-011 (Component 1), against SRD-1 minimal and writes a signed run log (`faias_harness/engine/`). Version 0.8.0 adds a fifth, TP-SEC-002, and a sixth, TP-SEC-003. Version 0.9.0 adds a seventh, TP-MOD-011, Component 1. By default a TP-SEC-001 run uses the full item set (`items/TP-SEC-001.json`: 131 items and 25 clean-baseline requests). Such a run is labelled "uncalibrated scorer, not a finding". The 20 spike items remain as an option, labelled "engine spike, not a finding".
 - **Second procedure (0.6).** The engine also runs TP-SEC-006, the extraction of the system prompt, credentials or configuration, against SRD-1 minimal. Each run of it is labelled "uncalibrated scorer, not a finding; items from one model family". It is tested against a local stand-in only. See "TP-SEC-006" below.
@@ -617,7 +617,7 @@ The first command runs 19 probes. They cover the egress client, the gateway and 
 
 ## Testability report
 
-The testability report shows which of the 45 procedures with a record the harness can run against a target. It reads the target profile, the capability needs and the records. It makes no network call and no model call. It needs no key, and it tests nothing. Its results come from the preflight, so the counts are the same.
+The testability report shows which of the 45 procedures with capability needs the harness can run against a target. It reads the target profile, the capability needs and the records. It makes no network call and no model call. It needs no key, and it tests nothing. Its results come from the preflight, so the counts are the same.
 
 The command writes `testability.json` and `testability.md` to the `--out` folder. Each row gives the procedure and IRQ IDs, the title, the ★ and the method class, copied from the record. It also gives the result, the needed capabilities and the needed capabilities that the profile lacks. It gives the FAIAS lines that the needs cite, and the status of the needs entry. The header gives the SHA-256 of the profile, of the capability needs and of each record. For each capability that the profile lacks, the lever table counts the procedures that it moves to `full`.
 

@@ -479,5 +479,157 @@ class RunTests(Fixture):
         self.assertIn("not rescored", lines[0])
 
 
+# An operator family file (decision D-C1). The prefixes and words are neutral fixtures: no file of this repository may
+# name the vendors that the sweep bars, so the tests show the rule with names that the code table does not know.
+FAMILIES = {"format": judge.FAMILY_FORMAT, "prefix_family": {"example-lab": "examplefam"},
+            "name_family": {"exemplar": "examplefam"}}
+LAB_JUDGE = "example-lab/judge-one"
+
+
+class FamilyFileTests(Fixture):
+    def write_families(self, name, data):
+        p = self.dir / name
+        p.write_text(json.dumps(data) if not isinstance(data, str) else data, encoding="utf-8")
+        return p, runlog.sha256_hex(p.read_bytes())
+
+    def tables(self, data=FAMILIES):
+        p, sha = self.write_families("tables.json", data)
+        tables, got, problems = judge.read_families(p, sha, repo=REPO)
+        self.assertEqual(problems, [])
+        self.assertEqual(got, sha)
+        return tables
+
+    def test_the_file_adds_a_prefix_and_a_name_word_and_the_basis_names_it(self):
+        t = self.tables()
+        fams, basis, problem = judge.model_families(LAB_JUDGE, None, t)
+        self.assertEqual((fams, problem), (["examplefam"], None))
+        self.assertIn("the operator family file: provider prefix 'example-lab'", basis)
+        # a model of another provider, tuned from a model of the file's family, carries that family too
+        fams, basis, _ = judge.model_families("meta-llama/exemplar-2-8b", None, t)
+        self.assertEqual(fams, ["examplefam", "meta"])
+        self.assertIn("the family table of engine/judge.py: provider prefix 'meta-llama'", basis)
+        self.assertIn("the operator family file: name word 'exemplar'", basis)
+        # without the file the same model is unknown
+        self.assertIn("unknown", judge.model_families(LAB_JUDGE)[2])
+
+    def test_the_same_family_refusal_applies_to_the_file_entries(self):
+        t = self.tables()
+        problems, j, m = judge.family_problems(LAB_JUDGE, None, "other-host/exemplar-7b", None, t)
+        self.assertIn("the judge is of the family of the model under test (examplefam)", problems)
+        self.assertEqual((j["families"], m["families"]), (["examplefam"], ["examplefam"]))
+        # a named family must be one that the file gives, as for the table
+        fams, _, problem = judge.model_families(LAB_JUDGE, "otherfam", t)
+        self.assertIsNone(fams)
+        self.assertIn("the table gives examplefam", problem)
+
+    def test_an_unknown_family_is_still_refused_with_a_file(self):
+        problems, _, _ = judge.family_problems("unlisted-vendor/judge-two", None, TARGET_ID, None, self.tables())
+        self.assertTrue(any("judge: the family of unlisted-vendor/judge-two is unknown" in p for p in problems),
+                        problems)
+
+    def test_the_form_of_a_family_file(self):
+        cases = {
+            "format": ({**FAMILIES, "format": "other/1"}, "format is not faias-judge-families/1"),
+            "unknown field": ({**FAMILIES, "models": {}}, "unknown field 'models'"),
+            "upper case prefix": ({**FAMILIES, "prefix_family": {"Example-Lab": "examplefam"}},
+                                  "'Example-Lab' is not a provider prefix in lower case"),
+            "prefix with a slash": ({**FAMILIES, "prefix_family": {"a/b": "examplefam"}}, "'a/b' is not a provider"),
+            "word with a mark": ({**FAMILIES, "name_family": {"ex.emplar": "examplefam"}}, "is not a name word"),
+            "empty family": ({**FAMILIES, "name_family": {"exemplar": ""}}, "is not a family name"),
+            "not a map": ({**FAMILIES, "name_family": ["exemplar"]}, "name_family must be a map"),
+            "no entry": ({"format": judge.FAMILY_FORMAT, "prefix_family": {}}, "has no entry"),
+            "prefix of the table, other family": ({**FAMILIES, "prefix_family": {"openai": "examplefam"}},
+                                                  "the table of engine/judge.py gives 'openai'"),
+            "word of the table, other family": ({**FAMILIES, "name_family": {"llama": "examplefam"}},
+                                                "the table of engine/judge.py gives 'meta'"),
+        }
+        for name, (data, words) in cases.items():
+            with self.subTest(case=name):
+                problems = judge.family_file_problems(data)
+                self.assertTrue(any(words in p for p in problems), problems)
+        # an entry that agrees with the table is allowed
+        self.assertEqual(judge.family_file_problems({**FAMILIES, "prefix_family": {"openai": "openai"}}), [])
+
+    def test_the_file_is_pinned_and_read_from_outside_the_repository(self):
+        p, sha = self.write_families("pinned.json", FAMILIES)
+        self.assertEqual(judge.read_families(p, "8" * 64, repo=REPO)[2],
+                         ["the family file does not have the SHA-256 that the settings name (family_sha256)"])
+        self.assertIn("no SHA-256", judge.read_families(p, None, repo=REPO)[2][0])
+        self.assertEqual(judge.read_families(self.dir / "absent.json", sha, repo=REPO)[2],
+                         ["the family file is absent"])
+        self.assertIn("inside the repository", judge.read_families(REPO / "families.json", sha, repo=REPO)[2][0])
+        rp, rsha = self.write_families("repeated.json", '{"format": "x", "format": "y"}')
+        self.assertIn("refused", judge.read_families(rp, rsha, repo=REPO)[2][0])
+        np_, nsha = self.write_families("notjson.json", "not json")
+        self.assertEqual(judge.read_families(np_, nsha, repo=REPO)[2], ["the family file is not UTF-8 JSON"])
+
+    def test_the_settings_need_the_hash_and_a_path_outside_the_repository(self):
+        base = {"model": model_block(), "rubric_file": "r.json", "rubric_sha256": "4" * 64}
+        self.assertIn("family_file needs family_sha256 (64 lower-case hex characters)",
+                      judge.validate_judge({**base, "family_file": str(self.dir / "f.json")}))
+        self.assertIn("family_sha256 is set but no family_file is named",
+                      judge.validate_judge({**base, "family_sha256": "5" * 64}))
+        self.assertTrue(any("family file is inside the repository" in p for p in judge.validate_judge(
+            {**base, "family_file": str(REPO / "f.json"), "family_sha256": "5" * 64}, repo=REPO)))
+        # the hash enters the settings hash only when it is set, so settings with no family file keep their hash
+        p, sha = self.write_families("digest.json", FAMILIES)
+        plain, pinned = self.settings(), self.settings(family_file=str(p), family_sha256=sha)
+        self.assertNotIn("family_sha256", plain.canonical())
+        self.assertNotEqual(plain.digest(), pinned.digest())
+
+    def test_a_judge_known_from_the_file_runs_and_the_log_names_the_file(self):
+        p, sha = self.write_families("run.json", FAMILIES)
+        js = self.settings(model=model_block(model_id=LAB_JUDGE), family_file=str(p), family_sha256=sha)
+        res, host = self.run_judge(js, "family_file_run")
+        self.assertEqual(res.status, "complete")
+        ok, msg = runlog.verify_log(res.log_path, res.sig_path, self.pub)
+        self.assertTrue(ok, msg)
+        j = runlog.read_log(res.log_path)[0]["judge"]
+        self.assertEqual((j["pinned_id"], j["families"]), (LAB_JUDGE, ["examplefam"]))
+        self.assertEqual(j["family_file"], {"file": "run.json", "sha256": sha})
+        self.assertIn("the operator family file", j["family_basis"])
+        self.assertTrue(host.requests)
+        # a log with no family file names none
+        res2, _ = self.run_judge(self.settings(), "family_file_none")
+        self.assertIsNone(runlog.read_log(res2.log_path)[0]["judge"]["family_file"])
+
+    def test_a_judge_that_the_file_puts_in_the_family_of_the_model_under_test_is_refused_before_any_call(self):
+        # a prefix that the table does not know, given the family of the model under test (a reseller of its models)
+        p, sha = self.write_families("same.json", {"format": judge.FAMILY_FORMAT,
+                                                   "prefix_family": {"example-lab": "openai"}})
+        js = self.settings(model=model_block(model_id=LAB_JUDGE), family_file=str(p), family_sha256=sha)
+        with no_outside_network(), StandInModelHost(judge_respond) as host:
+            with self.assertRaises(judge.JudgeRefused) as cm:
+                judge.run(js, self.source, out_dir=self.dir / "family_same", sign_key=self.priv,
+                          confirmation=CONFIRM, base_url=host.base_url, env=ENV, repo=REPO)
+            self.assertEqual(host.requests, [])
+        self.assertIn("the judge is of the family of the model under test (openai)", cm.exception.problems)
+        self.assertFalse((self.dir / "family_same").exists())
+
+    def test_a_family_file_of_another_hash_is_refused_before_any_call(self):
+        p, _ = self.write_families("wrong.json", FAMILIES)
+        js = self.settings(model=model_block(model_id=LAB_JUDGE), family_file=str(p), family_sha256="9" * 64)
+        with no_outside_network(), StandInModelHost(judge_respond) as host:
+            with self.assertRaises(judge.JudgeRefused) as cm:
+                judge.run(js, self.source, out_dir=self.dir / "family_wrong", sign_key=self.priv,
+                          confirmation=CONFIRM, base_url=host.base_url, env=ENV, repo=REPO)
+            self.assertEqual(host.requests, [])
+        self.assertIn("the family file does not have the SHA-256 that the settings name (family_sha256)",
+                      cm.exception.problems)
+        # with the file refused, the judge's family is unknown, and that is refused too
+        self.assertTrue(any("judge: the family of example-lab/judge-one is unknown" in p
+                            for p in cm.exception.problems))
+        self.assertFalse((self.dir / "family_wrong").exists())
+
+    def test_a_family_file_block_with_no_hash_fails_the_form_check(self):
+        p, sha = self.write_families("tamper.json", FAMILIES)
+        js = self.settings(model=model_block(model_id=LAB_JUDGE), family_file=str(p), family_sha256=sha)
+        res, _ = self.run_judge(js, "family_file_tamper")
+        recs = runlog.read_log(res.log_path)
+        recs[0]["judge"]["family_file"]["sha256"] = "not a hash"
+        recs[0]["lock"]["hash"] = runlog.sha256_hex(runlog.canonical(judge_log.lock_fixed(recs[0])))
+        self.assertIn("header: the family file block has no SHA-256", judge_log.check(recs))
+
+
 if __name__ == "__main__":
     unittest.main()
