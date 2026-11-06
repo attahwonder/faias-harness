@@ -571,6 +571,9 @@ def _default_gateway(settings):
 
 
 def _default_executor(**kw):
+    if getattr(kw["settings"], "kind", None) == "tierm":      # the generic Tier M engine of bench mode
+        from .engine import tierm
+        return tierm.execute(**kw)
     proc = kw["settings"].procedure
     if proc == SEC006:
         from .engine import run_sec006

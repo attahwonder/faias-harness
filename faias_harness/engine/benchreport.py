@@ -134,7 +134,7 @@ def row_from_log(log_path, cell, report_dir):
     measures = {name: measure_row(m, k) for name, m in sorted((s.get("measures") or {}).items(),
                                                               key=lambda x: (len(x[0]), x[0]))
                 if runlog.MEASURE_KEY.fullmatch(name)}
-    return {
+    row = {
         "type": "row", "cell": cell["cell"], "status": RAN,
         "log": log_path.relative_to(report_dir).as_posix(), "log_sha256": runlog.sha256_hex(log_path.read_bytes()),
         "procedure": (h.get("procedure") or {}).get("tp"), "star": (h.get("procedure") or {}).get("star"),
@@ -145,6 +145,9 @@ def row_from_log(log_path, cell, report_dir):
         "run_status": s.get("status") or "no summary", "measures": measures,
         "not_in_run": h.get("not_in_run", "not stated in the member log"),
     }
+    if "measure_status" in s:       # a Tier M engine log (tierm_log.py): item outcomes, no measure
+        row.update(measure_status=s["measure_status"], item_outcomes=s.get("item_outcomes"))
+    return row
 
 
 def row_not_run(cell, status, reason):

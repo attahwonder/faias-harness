@@ -119,6 +119,7 @@ SCHEMA_SEC003 = "faias-harness-run-log/10"  # 10 (version 0.8), for TP-SEC-003 o
 SCHEMA_MOD011 = "faias-harness-run-log/11"  # 11, for TP-MOD-011 on SRD-1 minimal (mod011_log.py)
 SCHEMA_SELFTEST = "faias-harness-selftest-log/1"    # the containment self-test of the harness (selftest/__init__.py)
 SCHEMA_JUDGE = "faias-judge-log/1"      # the judge pass over a signed run log (judge.py, judge_log.py)
+SCHEMA_TIERM = "faias-tierm-log/1"   # the generic Tier M engine of bench mode (tierm.py, tierm_log.py)
 EXTERNAL_SCHEMAS = (SCHEMA_V3, SCHEMA_EXTERNAL)
 # the logs with the code block and the wider lock
 CODE_SCHEMAS = (SCHEMA, SCHEMA_EXTERNAL, SCHEMA_SEC006, SCHEMA_AGT012, SCHEMA_DAT009, SCHEMA_SEC002, SCHEMA_SEC003,
@@ -672,6 +673,9 @@ def check_log(path, repo=REPO, use_repo=True):
     if h.get("schema") == SCHEMA_JUDGE:
         from . import judge_log
         return judge_log.check(recs, repo=repo, use_repo=use_repo)
+    if h.get("schema") == SCHEMA_TIERM:
+        from . import tierm_log
+        return tierm_log.check(recs, repo=repo, use_repo=use_repo)
     rec = sec001.load_record(repo=repo) if use_repo else None
     schema = h.get("schema")
     if schema not in KNOWN_SCHEMAS:
@@ -854,7 +858,8 @@ def private_log(log_path):
     except (OSError, ValueError):
         return False
     return (isinstance(h, dict) and h.get("schema") in KNOWN_SCHEMAS
-            and (h.get("corpus") or {}).get("item_set") == sec001.PRIVATE_SET)
+            and (h.get("corpus") or {}).get("item_set") == sec001.PRIVATE_SET) or (
+        isinstance(h, dict) and h.get("schema") == SCHEMA_TIERM)       # a Tier M log: its item file is private too
 
 
 def _no_repo_lines(log_path):
@@ -883,6 +888,9 @@ def _no_repo_lines(log_path):
         elif recs[0].get("schema") == SCHEMA_JUDGE:
             from . import judge_log
             items_line = judge_log.summary_line(recs)
+        elif recs[0].get("schema") == SCHEMA_TIERM:
+            from . import tierm_log
+            items_line = tierm_log.summary_line(recs)
         else:
             status, detail = items_hash_from_log(recs[0], [r for r in recs if r.get("type") == "run"])
             items_line = f"items hash: {status} ({detail})"
@@ -929,6 +937,9 @@ def rescore_log(log_path, repo=REPO, replies=None):
         return ["a self-test log has no replies to score; run `python -m faias_harness.selftest rerun --log <log>`"], None
     if recs[0].get("schema") == SCHEMA_JUDGE:
         return ["a judge log is a second reading of a run log; it is not rescored. Rescore the source log"], None
+    if recs[0].get("schema") == SCHEMA_TIERM:
+        from . import tierm_log
+        return tierm_log.rescore(recs, repo=repo)
     h, runs = recs[0], [r for r in recs if r.get("type") == "run"]
     used = sha256_hex(Path(sec001.__file__).read_bytes())
     logged = (h.get("code") or {}).get("scorer_sha256")
