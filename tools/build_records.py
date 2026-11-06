@@ -1,4 +1,4 @@
-"""Build one generic procedure record per automated procedure.
+"""Build one generic procedure record for each class-H procedure in records/classification.tsv.
 
   py -3.14 tools/build_records.py --faias <path to the FAIAS tree>
 
@@ -193,8 +193,10 @@ def main():
     play = Path(a.faias) / "V3_Testing_Playbook"
     if not play.is_dir():
         sys.exit(f"no V3_Testing_Playbook folder under {a.faias}")
+    # Every class-H row of classification.tsv: the procedures with no human step (N), and the procedures with a
+    # human step (Y) that the bench runs on the generic Tier M engine (records/README.md, "Limits").
     with open(RECORDS / "classification.tsv", encoding="utf-8", newline="") as fh:
-        cls = {r["tp"]: r for r in csv.DictReader(fh, delimiter="\t") if r["class"] == "H" and r["human_step"] == "N"}
+        cls = {r["tp"]: r for r in csv.DictReader(fh, delimiter="\t") if r["class"] == "H"}
     ov_path = RECORDS / "OVERRIDES.yaml"
     overrides = (yamlio.load(ov_path.read_text(encoding="utf-8")) or {}) if ov_path.exists() else {}
     residue_all, keys = [], []

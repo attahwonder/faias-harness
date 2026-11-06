@@ -66,6 +66,11 @@ def open_and_settled(r):
     e["open"] = {"pass_1": e["settled"]["pass_1"], "pass_2": e["settled"]["pass_2"]}
 
 
+def needs_for_human_step(r):
+    # the needs file covers the procedures with no human step only; TP-CON-003 has a human step (classification.tsv)
+    r["needs"]["TP-CON-003"] = {"needed": ["conversation"], "lines": ["V3_Testing_Playbook/PLAYBOOK_CON_003.md:10"]}
+
+
 CASES = [("wrong star", "TP-SEC-001", wrong_star, "does not equal the Confidence line"),
          ("number not at its line", "TP-SEC-003", number_moved, "number '90%' not at"),
          ("missing basis", "TP-AGT-004", no_basis, "basis None is not one of"),
@@ -73,7 +78,9 @@ CASES = [("wrong star", "TP-SEC-001", wrong_star, "does not equal the Confidence
          ("unknown capability in the needs file", "capability_needs", unknown_capability, "unknown capability 'telepathy'"),
          ("needs line outside its file", "capability_needs", line_outside_file, "line outside the file"),
          ("settled needs outside both passes", "capability_needs", settled_outside_passes, "not drawn from the two passes"),
-         ("open and settled in one entry", "capability_needs", open_and_settled, "both open and settled")]
+         ("open and settled in one entry", "capability_needs", open_and_settled, "both open and settled"),
+         ("needs entry for a procedure with a human step", "capability_needs", needs_for_human_step,
+          "extra ['TP-CON-003']")]
 
 
 def main():

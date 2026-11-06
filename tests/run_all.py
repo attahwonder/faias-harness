@@ -5,7 +5,7 @@
 Steps:
   1. rebuild the records twice: the output is byte-identical, and equal to the files in the repository
   2. check_records passes
-  3. the seeded-fault test passes (8 faults caught: 4 in records, 4 in the capability needs)
+  3. the seeded-fault test passes (9 faults caught: 4 in records, 5 in the capability needs)
   4. preflight: the SRD-1 profile gives 45 full; the example profiles give stable, correct counts;
      --start refuses without an attestation file and without settings; a profile alone starts nothing;
      with a settings file: the shipped explore files (TP-SEC-001, TP-SEC-006 and TP-AGT-012) are accepted, an evidence file that lacks any of the five
@@ -367,7 +367,7 @@ def main():
     def step3():
         print("3. seeded faults")
         rc, out = run(["tools/test_check_records.py", "--faias", faias])
-        expect(rc == 0 and "8 seeded faults caught" in out, f"test_check_records failed: {out[-400:]}")
+        expect(rc == 0 and "9 seeded faults caught" in out, f"test_check_records failed: {out[-400:]}")
         print("  ", out.strip().splitlines()[-1])
 
     def step4():

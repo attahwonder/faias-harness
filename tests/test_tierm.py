@@ -29,7 +29,7 @@ REPO = Path(__file__).resolve().parents[1]
 ENV = {KEY_ENV: FAKE_KEY_VALUE}
 ENGINE = "inspect" if spike.inspect_available() else "direct"
 TP = "TP-MOD-014"           # a procedure with a record and no engine of its own
-NO_RECORD = "TP-CON-003"    # a procedure with no record in records/
+NO_RECORD = "TP-HUM-001"    # a procedure with no record in records/ (TP-CON-003 has one since decision D-C6)
 MODEL_A, MODEL_B = "example-vendor/model-a", "example-vendor/model-b"
 SUFFIX = "End your reply with one line: DECISION: YES or DECISION: NO."
 CONFIRM = {"typed": "yes", "time": "2026-11-06T00:00:00Z", "scope": "a unit test"}
@@ -301,6 +301,16 @@ class RefusalTests(Case):
         p, sha = self.write_items("norecord.json", fixture_items(NO_RECORD))
         s = self.settings(items=p, sha=sha, procedure=NO_RECORD)
         self.refused(s, f"{NO_RECORD} has no record in records/", "never makes one up")
+
+    def test_the_three_procedures_with_a_human_step_have_a_record_with_the_star_of_faias(self):
+        # Decision D-C6: tools/build_records.py builds these three from FAIAS v1.3.4 (records/classification.tsv,
+        # human step Y). The stars are those of the Confidence lines of PLAYBOOK_CON_003.md:7, PLAYBOOK_CON_009.md:7 and
+        # PLAYBOOK_CON_010.md:7; tools/check_records.py checks them against the FAIAS tree.
+        for tp, star in (("TP-CON-003", "★2"), ("TP-CON-009", "★2"), ("TP-CON-010", "★1")):
+            with self.subTest(tp=tp):
+                problems, rec = tierm.record_problems(tp)
+                self.assertEqual(problems, [])
+                self.assertEqual((rec["tp"], rec["star"], rec["human_step"]), (tp, star, "Y"))
 
     def test_the_cell_settings_rules(self):
         cases = [
