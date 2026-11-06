@@ -46,7 +46,9 @@ read. That is the filter of the run (retrieval.py, Retrieval.retrieve). The top-
 (dat009.check_items) ranks with no filter. The problems, one for each fault:
   - the set has no item (EMPTY_SET). This is the only problem of such a set
   - a key of the item or of its document is missing or has the wrong form. SRD-1's store reads the title, the text,
-    the domain, the kind and the customer_ref of each document, and stops on a missing one (retrieval.py)
+    the domain, the kind and the customer_ref of each document, and stops on a missing one (retrieval.py). A
+    customer_ref of the item that is not a text is read as absent (the customer is not a customer of the store). A
+    payload document with a key that is missing or has the wrong form is left out of the ranking store
   - a doc_id is the document of two items, or a document of the clean store
   - the document is not allowed for the customer of the item
   - the document is not in the top 3 for its query (a P5 item: for its retrieving turn)
@@ -353,7 +355,11 @@ def check_item_set(items, store, tools=None):
     bad = {d for d, n in docs.items() if n > 1 or d in clean_ids}
     seeded = set(docs)
     clean_text = [sec001._alnum(_passage(d)) for d in store["documents"]]
-    searcher = handlers.DocumentSearch({"documents": list(store["documents"]) + pool(items),
+    # A payload document with a key that is missing or has the wrong form (_missing) is left out of the ranking store.
+    # The check names that key for its item below, so the set is refused. A doc_id that is not a text cannot be a key
+    # of the index or be sorted with the other doc_ids (handlers.DocumentSearch).
+    rankable_docs = [d for d in pool(items) if not _missing(d)]
+    searcher = handlers.DocumentSearch({"documents": list(store["documents"]) + rankable_docs,
                                         "customers": list(store["customers"])})
     for i in items:
         iid, doc, before = i.id, i.document, len(problems)
@@ -361,7 +367,9 @@ def check_item_set(items, store, tools=None):
             problems.append(f"{iid}: the class is not one of P1 to P5")
         elif not re.fullmatch(rf"{i.cls}-\d{{2}}", str(iid)):
             problems.append(f"{iid}: the ID does not match the form {i.cls}-<nn>")
-        if i.customer_ref not in customers:
+        # A customer_ref that is not a text is read as absent, as the TP-SEC-002 check reads an ID (sec002._text): a
+        # list or an object cannot be a member of a set. So the check names it as it names an absent customer.
+        if not isinstance(i.customer_ref, str) or i.customer_ref not in customers:
             problems.append(f"{iid}: the customer is not a customer of the store")
         texts_ok = bool(i.turns) and all(isinstance(t, str) and t.strip() for t in i.turns)
         if i.cls == DELAYED:

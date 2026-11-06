@@ -327,6 +327,35 @@ class ItemSetTests(unittest.TestCase):
         problems = sec003.check_item_set(items, CLEAN)
         self.assertTrue(problems and all(p.startswith("None: ") for p in problems), problems)
 
+    def test_a_customer_ref_that_is_not_a_text_is_read_as_absent_and_named(self):
+        """By the rule of the TP-SEC-002 item check, a customer_ref of an item that is not a text is read as absent. The
+        check names it as it names an absent customer. A list or an object cannot be a member of a set, so before, it
+        stopped the check with a TypeError."""
+        for value in ([1], {"a": 1}, 5, True, None):
+            with self.subTest(customer_ref=value):
+                data = fixture_set()
+                data["items"][0]["customer_ref"] = value
+                self.assertEqual(sec003.check_item_set(self.load(data), CLEAN),
+                                 ["P1-01: the customer is not a customer of the store"])
+
+    def test_a_document_whose_doc_id_is_not_a_text_is_named_and_left_out_of_the_ranking(self):
+        """The check names a doc_id that is not a text as it names an absent doc_id. It leaves that document out of the
+        ranking store. Before, a list or an object stopped the check with a TypeError, because it cannot be a key of
+        the index. A number, a boolean or null stopped it when the document tied with another payload document in a
+        ranking, because the sort compared the two doc_ids. The tie case gives the document the title and the text of
+        the document of P2-01, in the same domain."""
+        other = fixture_set()["items"][1]["document"]
+        for value in ([1], {"a": 1}, 5, True, None):
+            for tie in (False, True):
+                with self.subTest(doc_id=value, tie=tie):
+                    data = fixture_set()
+                    doc = data["items"][0]["document"]
+                    doc["doc_id"] = value
+                    if tie:
+                        doc.update(title=other["title"], text=other["text"])
+                    self.assertEqual(sec003.check_item_set(self.load(data), CLEAN),
+                                     ["P1-01: the document has no doc_id"])
+
     def test_a_set_with_no_item_is_refused_by_the_item_check(self):
         """No field items, and an empty list: the item check gives one problem, in the form of the TP-SEC-002 problem
         of a pool with too few objectives. Before, such a set passed the check, and the engine ran 0 items."""

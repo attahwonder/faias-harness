@@ -183,6 +183,25 @@ EMPTY = "the item set has 0 items; it must have 1 or more"
 NOT_UTF8_JSON = r"the file is not UTF-8 JSON \(.+\)"
 
 
+def wrong_field_sets():
+    """(name, items, the one problem of the item check) for item lists whose first item has a field of the wrong type
+    that the item check or its ranking store reads: a customer_ref that is a list or an object, a doc_id that is a list
+    or an object, and a doc_id that is a number on a document that ties with the document of P2-01 in its ranking."""
+    out = []
+    for name, value in (("a list", [1]), ("an object", {"a": 1})):
+        items = fixture_set()["items"]
+        items[0]["customer_ref"] = value
+        out.append((f"customer_ref {name}", items, "P1-01: the customer is not a customer of the store"))
+        items = fixture_set()["items"]
+        items[0]["document"]["doc_id"] = value
+        out.append((f"doc_id {name}", items, "P1-01: the document has no doc_id"))
+    items = fixture_set()["items"]
+    other = items[1]["document"]
+    items[0]["document"].update(doc_id=5, title=other["title"], text=other["text"])
+    out.append(("doc_id a number that ties", items, "P1-01: the document has no doc_id"))
+    return out
+
+
 class RefusalTests(unittest.TestCase):
     """Each refusal comes before the lock: no run log is written and no model call is made."""
 
@@ -339,6 +358,17 @@ class RefusalTests(unittest.TestCase):
                                                              str(items_file(folder, f"wrong_type_{n}", items))):
                 d = self.refused(f"items_wrong_type_{n}", ValueError, ["the item set is refused: " + want], items=None)
             self.assertFalse(d.exists())
+
+    def test_an_item_field_of_the_wrong_type_is_refused_by_the_item_check_before_any_file(self):
+        """A customer_ref or a doc_id of the wrong type (wrong_field_sets): the item check names each as it names an
+        absent value. Before, each stopped the engine with a TypeError. A direct call of the engine writes no file and
+        makes no model call."""
+        folder = Path(_FIXTURE["tmp"].name)
+        for n, (name, items, want) in enumerate(wrong_field_sets()):
+            with self.subTest(name), mock.patch.object(sec003, "ITEM_FILE",
+                                                       str(items_file(folder, f"field_type_{n}", items))):
+                d = self.refused(f"items_field_type_{n}", ValueError, ["the item set is refused: " + want], items=None)
+                self.assertFalse(d.exists())
 
     def test_a_set_with_no_item_is_refused_before_any_file(self):
         """An item file with no field items, an item file with an empty list, and an empty fixture set: the engine
@@ -1056,6 +1086,23 @@ class PreflightTests(unittest.TestCase):
                 else:
                     self.assertEqual(problems[0], "the item file: None: the class is not one of P1 to P5")
                     self.assertTrue(all(p.startswith("the item file: None: ") for p in problems), problems)
+
+    def test_start_refuses_an_item_field_of_the_wrong_type_in_one_problem_line(self):
+        """A customer_ref or a doc_id of the wrong type (wrong_field_sets): the preflight prints no traceback, and
+        --start refuses in one problem line, the problem of the item check, before the probes and the executor.
+        Before, --start stopped with a TypeError."""
+        for n, (name, items, want) in enumerate(wrong_field_sets()):
+            path = items_file(self.dir, f"field_type_{n}", items)
+            calls = []
+            with self.subTest(name), mock.patch.object(sec003, "ITEM_FILE", str(path)):
+                rc, out = self.main(*self.selftest)
+                self.assertEqual(rc, 0, out)
+                self.assertNotIn("Traceback", out)
+                rc, out = self.main("--start", "--sign-key", str(self.key), *self.selftest, calls=calls)
+                self.assertEqual((rc, calls), (2, []), out)
+                self.assertNotIn("Traceback", out)
+                self.assertEqual(out.split("Fix these points first:\n")[1].splitlines(),
+                                 [f"  - the item file: {want}"])
 
     def test_start_refuses_a_set_with_no_item_in_one_problem_line(self):
         """No field items, and an empty list: --start refuses in one problem line, the problem of the item check,

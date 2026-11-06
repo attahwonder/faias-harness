@@ -434,7 +434,7 @@ The label names four limits and one note. In the label and in the log, "payload"
 - A JSON object of the item file holds a key more than once.
 - The item file is not UTF-8 JSON.
 - The item file is JSON but not one JSON object, for example a list.
-- The item file does not pass the item check of the engine. That check ranks the store and makes no model call. It refuses a set with no item. As in the TP-SEC-002 check, a field of the wrong type is read as absent. A field `items` that is not a list gives no item. A value in the list that is not an object is an item with no key.
+- The item file does not pass the item check of the engine. That check ranks the store and makes no model call. It refuses a set with no item. As in the TP-SEC-002 check, a field of the wrong type is read as absent. A field `items` that is not a list gives no item. A value in the list that is not an object is an item with no key. A `customer_ref` of an item that is not a text is read as absent too. A document with a `doc_id` that is not a text is named, and the check does not rank it.
 - The variant is not `standard`. The engine runs SRD-1 minimal with its system prompt only.
 - No containment self-test log of this code shows PASS. In evidence mode the key of that log must also be pinned.
 - The settings break a rule above.
