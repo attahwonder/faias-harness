@@ -301,6 +301,8 @@ def calibration_block(js, rubric_sha256, repo=REPO):
         return {"status": "uncalibrated", "reason": reason, "file_sha256": sha, "stats": stats}
     if not js.calibration_file:
         return uncal("no calibration file is named")
+    if not js.calibration_sha256:       # validate_judge asks for it; a settings object built without validate_judge may not
+        return uncal("the settings name a calibration file with no SHA-256 (calibration_sha256)")
     data, sha, problems = read_calibration(js.calibration_file, js.calibration_sha256, repo=repo)
     if problems:
         return uncal("; ".join(problems), sha)
@@ -373,6 +375,13 @@ def validate_judge(raw, repo=REPO):
     elif cal_sha is not None:
         problems.append("calibration_sha256 is set but no calibration_file is named")
     return problems
+
+
+def raw_of(js):
+    """The judge settings mapping of a JudgeSettings, for validate_judge: the model block and each field that is set."""
+    raw = {"model": dict(js.model_raw), "rubric_file": js.rubric_file, "rubric_sha256": js.rubric_sha256}
+    raw.update({k: getattr(js, k) for k in JUDGE_OPTIONAL if getattr(js, k) is not None})
+    return raw
 
 
 def judge_from_raw(raw):
@@ -500,6 +509,17 @@ def estimate(js, rubric, source_path):
 def start_problems(js, source_path, *, sign_key, pubkey=None, repo=REPO, use_repo=True, env=None):
     """(problems, facts). Every check that comes before a file is written or a call is made."""
     problems, facts = [], {}
+    # The settings again: a JudgeSettings built without validate_judge is checked here (the calibration file and its
+    # hash, the model block). This also refuses a calibration file inside the repository.
+    problems += validate_judge(raw_of(js), repo=repo)
+    m = js.model
+    for k in ("price_in_per_m", "price_out_per_m"):
+        if getattr(m, k) is None:
+            problems.append(f"model: settings.{k} is not set")
+    if not isinstance(m.cap_usd, (int, float)) or isinstance(m.cap_usd, bool) or m.cap_usd <= 0:
+        problems.append("model: settings.cap_usd is not set to a number above 0")
+    if not isinstance(m.max_tokens, int) or isinstance(m.max_tokens, bool) or m.max_tokens < 1:
+        problems.append("model: settings.max_tokens is not set to a whole number above 0")
     src, msg, h = source_problems(source_path, pubkey, repo=repo, use_repo=use_repo)
     problems += src
     facts["verify"] = msg
@@ -509,11 +529,15 @@ def start_problems(js, source_path, *, sign_key, pubkey=None, repo=REPO, use_rep
                                                          js.target_family)
         problems += fam
         facts.update(header=h, judge_block=judge_block, target_block=target_block)
+        to_judge, _ = plan(source_path)
+        if not to_judge:
+            seen = Counter(str(r.get("type")) for r in runlog.read_log(source_path))
+            problems.append("the source log holds no reply text to judge (records by type: "
+                            + ", ".join(f"{t} {n}" for t, n in sorted(seen.items()))
+                            + "); the pass reads the reply text of records of type 'run' only")
     rubric, rp = read_rubric(js)
     problems += rp
     facts["rubric"] = rubric
-    if js.calibration_file and _inside(js.calibration_file, repo):
-        problems.append("the calibration file is inside the repository; keep it outside until it is reviewed")
     problems += runlog.key_problems(sign_key, repo=repo) if sign_key else ["no signing key is named"]
     if not (env if env is not None else os.environ).get(js.model.api_key_env):
         problems.append(f"the environment variable {js.model.api_key_env} is not set")

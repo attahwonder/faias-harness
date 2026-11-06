@@ -246,6 +246,24 @@ class CalibrationFileTests(Fixture):
                                         self.rubric_sha, repo=REPO)
         self.assertEqual((block["status"], block["file_sha256"]), ("calibrated", sha))
 
+    def test_a_hand_built_settings_object_with_no_calibration_hash_is_not_calibrated_and_is_refused(self):
+        good, sha = self.write_calibration("hand.json", calibration(*GOOD, self.rubric_sha))
+        base = self.settings()
+        # built without validate_judge: a calibration file that passes every other test, and no SHA-256
+        js = judge.JudgeSettings(model=base.model, model_raw=base.model_raw, rubric_file=base.rubric_file,
+                                 rubric_sha256=base.rubric_sha256, calibration_file=str(good))
+        block = judge.calibration_block(js, self.rubric_sha, repo=REPO)
+        self.assertEqual(block["status"], "uncalibrated")
+        self.assertIn("no SHA-256", block["reason"])
+        with no_outside_network(), StandInModelHost(judge_respond) as host:
+            with self.assertRaises(judge.JudgeRefused) as cm:
+                judge.run(js, self.source, out_dir=self.dir / "hand", sign_key=self.priv, confirmation=CONFIRM,
+                          base_url=host.base_url, env=ENV, repo=REPO)
+            self.assertEqual(host.requests, [])
+        self.assertIn("calibration_file needs calibration_sha256 (64 lower-case hex characters)",
+                      cm.exception.problems)
+        self.assertFalse((self.dir / "hand").exists())
+
     def test_the_calibrate_command(self):
         good, sha = self.write_calibration("cmd.json", calibration(*GOOD, self.rubric_sha))
         out = io.StringIO()
@@ -399,6 +417,40 @@ class RunTests(Fixture):
                           confirmation=CONFIRM, base_url=host.base_url, env=ENV, repo=REPO)
             self.assertEqual(host.requests, [])
         self.assertIn("does not pass verify", cm.exception.problems[0])
+
+    def test_a_judge_with_no_cap_or_no_price_is_refused_before_any_folder_or_call(self):
+        cases = {"cap_usd": "model: settings.cap_usd is not set to a number above 0",
+                 "price_in_per_m": "model: settings.price_in_per_m is not set",
+                 "price_out_per_m": "model: settings.price_out_per_m is not set"}
+        for key, words in cases.items():
+            with self.subTest(unset=key):
+                # evidence mode refuses a null price or cap in settings.validate; explore mode allows it
+                js = self.settings(model=model_block(mode="explore", **{key: None}))
+                out = self.dir / f"unset_{key}"
+                with no_outside_network(), StandInModelHost(judge_respond) as host:
+                    with self.assertRaises(judge.JudgeRefused) as cm:
+                        judge.run(js, self.source, out_dir=out, sign_key=self.priv, confirmation=CONFIRM,
+                                  base_url=host.base_url, env=ENV, repo=REPO)
+                    self.assertEqual(host.requests, [])
+                self.assertIn(words, cm.exception.problems)
+                self.assertFalse(out.exists())         # no folder and no egress log
+
+    def test_a_source_log_with_no_reply_text_is_refused_not_signed_empty(self):
+        with no_outside_network(), StandInModelHost(lambda text, nth: "") as host:
+            src = spike.execute(make_settings(model_id=TARGET_ID, cap_usd=10.0), run_dir=self.dir / "empty_source",
+                                sign_key=self.priv, confirmation=CONFIRM, base_url=host.base_url, env=ENV,
+                                engine=ENGINE)
+        self.assertTrue(runlog.verify_log(src.log_path, src.sig_path, self.pub)[0])
+        self.assertEqual(judge.plan(src.log_path)[0], [])
+        with no_outside_network(), StandInModelHost(judge_respond) as host:
+            with self.assertRaises(judge.JudgeRefused) as cm:
+                judge.run(self.settings(), src.log_path, out_dir=self.dir / "empty", sign_key=self.priv,
+                          confirmation=CONFIRM, base_url=host.base_url, env=ENV, repo=REPO)
+            self.assertEqual(host.requests, [])
+        problem = next(p for p in cm.exception.problems if "no reply text to judge" in p)
+        self.assertIn("header 1", problem)
+        self.assertIn("records of type 'run' only", problem)
+        self.assertFalse((self.dir / "empty").exists())
 
     def test_a_judge_log_is_not_a_source(self):
         res, _ = self.run_judge(self.settings(), "first")
