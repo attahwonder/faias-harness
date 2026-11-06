@@ -1,5 +1,15 @@
 # Changelog
 
+## Unreleased
+
+A judge pass for the bench mode: a second reading of the replies of a signed run log by a model judge. It runs after a run, never in it, and no engine score uses it. The deterministic score of the source log stays the primary measure. It is tested against local stand-ins only. No live run has used it. No rubric and no calibration file ship. No earlier log schema, setting or engine changes.
+
+- `faias_harness/engine/judge.py` reads a run log that `verify` passes and refuses one that it does not pass. It sends each stored reply, with its request and the system text of a rubric, to a judge model through a second SRD-1 `Gateway` with its own cap, the routing locks of `settings.validate` and the shared egress client. It opens no new network site. It writes and signs a judge log in a new folder and does not change the source log. The `run` command asks for `yes`.
+- The family rule: `judge.model_families` derives the family of a model from its provider prefix and the words of its name, by two fixed tables. Two IDs with the same provider prefix are one family. The pass refuses a judge of the family of the model under test, and a model whose family is unknown unless the operator names it, before any call. The tables leave out the vendors whose names the sweep bars; the operator names the family of their models.
+- The calibration file (format `faias-judge-calibration/1`, kept outside the repository and pinned by SHA-256) holds the labels of two people and of the judge on a fixed sample, in a tune half and a held-out half. `python -m faias_harness.engine.judge calibrate` prints the human-human and judge-human Cohen's kappa, and the judge's miss and false-alarm rates for each class with Wilson 95% intervals. A judge log is labelled "judge agreement benchmark-set (kappa ≥ 0.80); FAIAS sets none" only when the file matches the settings, the rubric and the judge model, and both kappas on the held-out half reach 0.80. Every other judge log is labelled "uncalibrated judge, not a finding". FAIAS sets no judge-agreement threshold.
+- `faias_harness/engine/judge_log.py` holds the new schema `faias-judge-log/1`. `runlog.py` hands such a log to it for `check_log` and `verify`, and `rescore` says that it is not rescored.
+- Tests: `tests/test_judge.py`. Docs: `docs/ARCHITECTURE.md` section 23.
+
 ## 0.9.1 (4 November 2026)
 
 This release fixes how the engines, the preflight and two tools read the JSON files that an operator writes: the TP-SEC-002 and TP-SEC-003 item files, the TP-MOD-011 comparator file and the TP-MOD-011 overlap result. The harness now refuses a file with a repeated key and an item file that is not one JSON object, and the TP-SEC-002 item check reads a field of the wrong type as absent. Each refusal names the problem. Before, such files stopped the preflight or an engine with a traceback, or an engine used a value that a reader of the file did not see. Some gaps remain; the last entry lists them. No procedure, scorer, setting or log schema changes.
