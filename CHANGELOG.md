@@ -1,6 +1,6 @@
 # Changelog
 
-## 0.9.2 (6 November 2026 — date of the push)
+## 0.9.2 (6 November 2026)
 
 This release closes the gaps that the last entry of the 0.9.1 section lists, and more of the same kind. The harness now refuses more kinds of bad file with a problem line, in place of a traceback. These are the TP-SEC-003 item file, the TP-MOD-011 comparator file and overlap result, and the files that `tools/mod011_overlap.py` reads. The loaders of the item and instrument files that ship now refuse a repeated key. Some gaps remain; the last entry lists them.
 
