@@ -48,6 +48,13 @@ Records for seven bench procedures, and the judge family file (`docs/ARCHITECTUR
 - The judge family file: the judge settings can name a family file outside the repository (`family_file`), pinned by its SHA-256 (`family_sha256`), in the format `faias-judge-families/1`. It adds provider prefixes and name words for the vendors that the sweep bars from this repository. It may not give an entry of the code table another family. The family rule applies to its entries as to the table's, and an unknown family is still refused. The judge log names the file and its SHA-256. No family file ships.
 - Tests: `tests/test_judge.py` (family file), `tests/test_tierm.py` (the seven records; the no-record test now uses TP-HUM-001).
 
+Fixes to the bench engines after a review.
+
+- `bench.form_problems` refuses a tier M cell for TP-DAT-007, TP-DAT-008, TP-AGT-001, TP-AGT-002 and TP-AGT-010. Before, such a cell went to the generic Tier M engine, with tools off and no store of its own.
+- TP-DAT-008: the condition `C0_control` is no longer in the M2 compliance block or in the bench sub-row "M2, SRD-1 with the A-08 rule". It has its own block (`measures.M2.control`) and its own sub-row ("M2 control, condition C0_control"), each with the note that it is a control condition, not a compliance result: its store holds the winning document of each pair only.
+- TP-AGT-001: M1 cites `PLAYBOOK_AGT_001.md:47`, the measure row (it cited line 46, the table rule).
+- Tests: `tests/test_tiersdat.py` (the tier M refusal; the control block and row), `tests/test_tiers_agt.py` (the M1 line). Docs: `docs/ARCHITECTURE.md` sections 23, 25 and 26; the `bench.py` docstring.
+
 ## 0.9.1 (4 November 2026)
 
 This release fixes how the engines, the preflight and two tools read the JSON files that an operator writes: the TP-SEC-002 and TP-SEC-003 item files, the TP-MOD-011 comparator file and the TP-MOD-011 overlap result. The harness now refuses a file with a repeated key and an item file that is not one JSON object, and the TP-SEC-002 item check reads a field of the wrong type as absent. Each refusal names the problem. Before, such files stopped the preflight or an engine with a traceback, or an engine used a value that a reader of the file did not see. Some gaps remain; the last entry lists them. No procedure, scorer, setting or log schema changes.

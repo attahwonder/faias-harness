@@ -693,21 +693,27 @@ M2_PLAIN = ("SRD-1's pipeline applies no precedence rule: its retrieval reads no
             "(PLAYBOOK_DAT_008.md line 20)")
 
 
+M2_CONTROL = ("control condition, not a compliance result: the control store holds the winning document of each pair "
+              "only, so the model has no second document to choose")
+
+
 def measures_008(conditions, runs, precedence):
     winners = {p: v["winner_side"] for p, v in precedence["pairs"].items()}
-    m1, m2 = {}, {}
+    m1, m2, control = {}, {}, {}
     for c, info in conditions.items():
         ok = [r for r in runs if r["condition"] == c and _valid(r)]
         m1[c] = {**_consistency(ok, info["runs"]),
                  "by_family": {f: _consistency(g, info["runs"])
                                for f, g in sorted(_groups(ok, lambda r: str(r["class"])).items())}}
-        m2[c] = {**_compliance(ok, winners),
-                 "by_family": {f: _compliance(g, winners)
-                               for f, g in sorted(_groups(ok, lambda r: str(r["class"])).items())}}
+        (control if c == "C0_control" else m2)[c] = {
+            **_compliance(ok, winners),
+            "by_family": {f: _compliance(g, winners)
+                          for f, g in sorted(_groups(ok, lambda r: str(r["class"])).items())}}
     no_winner = sorted(p for p, w in winners.items() if not w)
     return {"M1": {"by_condition": m1, "runs": _counts(runs, conditions), "threshold": M1_THRESHOLD,
                    "status": "deterministic labels only; both and none count as labels"},
-            "M2": {"by_condition": m2, "rule": A08_RULE, "source": A08_SOURCE,
+            "M2": {"by_condition": m2, "control": {c: {"note": M2_CONTROL, **v} for c, v in control.items()},
+                   "rule": A08_RULE, "source": A08_SOURCE,
                    "pairs_without_winner": {p: precedence["pairs"][p]["reason"] for p in no_winner},
                    "pairs_without_winner_result": NO_RULE,
                    "threshold": "rule-compliant answers (PLAYBOOK_DAT_008.md line 41); FAIAS sets no rate",
@@ -732,6 +738,9 @@ def compute(procedure, conditions, runs, precedence=None):
                               for c, v in m["M2"]["by_condition"].items()},
              "pairs_without_winner": sorted(m["M2"]["pairs_without_winner"])},
             {"row": "M2, plain SRD-1 build", "result": NO_RULE, "note": M2_PLAIN}]
+    rows += [{"row": f"M2 control, condition {c}", "condition": c, "note": v["note"],
+              **{k: v[k] for k in ("items", "runs_scored", "runs_compliant", "rate")}}
+             for c, v in m["M2"]["control"].items()]
     return m, rows
 
 

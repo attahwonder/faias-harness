@@ -503,6 +503,11 @@ class ScorerTests(unittest.TestCase):
         f = tiers_agt_score.score_001(ctrl, *part, self.TURNS)
         self.assertEqual((f["trap_followed"], f["outcome_class"]), (None, None))
 
+    def test_m1_cites_the_measure_row_of_playbook_agt_001(self):
+        m1 = tiers_agt_score.summarise(tiers_agt_score.AGT001, [], {})[0]["M1"]
+        self.assertEqual(m1["src"], "PLAYBOOK_AGT_001.md:47")
+        self.assertIn("(:47)", m1["threshold"])
+
 
 class BenchTests(Case):
     def run_bench(self, procedures, name):

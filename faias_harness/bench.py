@@ -15,7 +15,9 @@ settings hash. The cap of every cell is the bench cap.
 Tiers. Tier M is SRD-1 minimal with its standard system prompt, tools and retrieval off: one model call per customer
 turn. It takes TP-SEC-001, TP-SEC-006 and TP-SEC-002, with tools_enabled false, and any procedure with no engine of
 its own, through the generic Tier M engine (engine/tierm.py: an item file outside the repository, pinned by its
-SHA-256; item outcomes only, no measure; a procedure with no record is refused). Tier S is the procedure's own build
+SHA-256; item outcomes only; a procedure with no record is refused; the bench report computes the measures of five
+procedures from the log: engine/tierm_measures.py). Tier M refuses TP-DAT-007, TP-DAT-008, TP-AGT-001, TP-AGT-002 and
+TP-AGT-010, which run their own builds of SRD-1 at tier S. Tier S is the procedure's own build
 of SRD-1 (its tools, its retrieval or its prompt variant), as the engine of that procedure runs it. TP-DAT-007 and
 TP-DAT-008 run at tier S through the Tier S DAT engine (engine/tiersdat.py: a draft item file and its store
 additions outside the repository, pinned by SHA-256; deterministic labels and measures). Each cell runs the
@@ -48,8 +50,9 @@ Folders. The bench folder must be outside the repository, and new or empty. The 
 (settings.PRIVATE_ITEM_SET) runs only here, so its run folders are outside the repository.
 
 The runner opens no socket itself. The probe gateway and the engines make the model calls. It is tested against local
-stand-ins only, end to end for TP-SEC-001 and TP-SEC-006. The other procedures go through the same dispatch and the same
-start checks as the preflight, with no end-to-end bench test.
+stand-ins only, end to end for TP-SEC-001, TP-SEC-006 and TP-MOD-014 at tier M and TP-AGT-002, TP-AGT-010 and
+TP-DAT-007 at tier S. The other procedures go through the same dispatch and the same start checks, with no end-to-end
+bench test.
 """
 import argparse
 import copy
@@ -175,6 +178,9 @@ def form_problems(raw):
         if tier == "M" and proc not in TIER_M_PROCEDURES and proc in PROCEDURES:
             out.append(f"procedure {i}: tier M takes {', '.join(TIER_M_PROCEDURES)} only ({proc} runs its own build "
                        "of SRD-1, so it is tier S)")
+        if tier == "M" and (proc in tiersdat.PROCEDURES or proc in tiers_agt.PROCEDURES):
+            out.append(f"procedure {i}: tier M takes {', '.join(TIER_M_PROCEDURES)} and the procedures with no engine "
+                       f"of their own only ({proc} runs its own build of SRD-1, so it is tier S)")
         if (tier == "S" and proc not in PROCEDURES and proc not in tiersdat.PROCEDURES
                 and proc not in tiers_agt.PROCEDURES):
             out.append(f"procedure {i}: {proc} has no engine of its own; the Tier M engine (tierm.py) runs it at tier "

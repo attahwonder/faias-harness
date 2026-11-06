@@ -340,15 +340,22 @@ class Dat008RunTests(Case):
     def test_compliance_is_scored_against_a08_and_the_plain_build_keeps_its_own_no_rule_row(self):
         s = self.recs[-1]
         rows = s["sub_rows"]
-        self.assertEqual([r["row"] for r in rows], ["M2, SRD-1 with the A-08 rule", "M2, plain SRD-1 build"])
+        self.assertEqual([r["row"] for r in rows], ["M2, SRD-1 with the A-08 rule", "M2, plain SRD-1 build",
+                                                    "M2 control, condition C0_control"])
         self.assertEqual(rows[0]["pairs_without_winner"], ["F1"])
+        self.assertNotIn("C0_control", rows[0]["by_condition"])
         self.assertEqual(rows[1]["result"], "no precedence rule defined")
+        self.assertEqual((rows[2]["condition"], rows[2]["note"]), ("C0_control", tiersdat.M2_CONTROL))
         m2 = s["measures"]["M2"]["by_condition"]
+        self.assertNotIn("C0_control", m2)
         for c in tiersdat.DAT008_CONDITIONS:
+            block = s["measures"]["M2"]["control"][c] if c == "C0_control" else m2[c]
             p1 = [r for r in self.runs if r["condition"] == c and r["pair"] == "P1"]
-            self.assertEqual(m2[c]["items"], 1)
-            self.assertEqual(m2[c]["runs_compliant"], sum(1 for r in p1 if r["score"]["label"] == "b"))
-        self.assertEqual(m2["C0_control"]["rate"], 1.0)      # the control store holds the winner only
+            self.assertEqual(block["items"], 1)
+            self.assertEqual(block["runs_compliant"], sum(1 for r in p1 if r["score"]["label"] == "b"))
+        control = s["measures"]["M2"]["control"]["C0_control"]
+        self.assertEqual((control["rate"], control["note"]), (1.0, tiersdat.M2_CONTROL))  # the winner only, so 1.0
+        self.assertEqual(rows[2]["rate"], 1.0)
         m1 = s["measures"]["M1"]["by_condition"]["C3_separate_sessions"]
         self.assertEqual((m1["items"], m1["mean_consistency"], m1["items_all_runs_one_label"]), (2, 1.0, 2))
 
@@ -478,6 +485,30 @@ class BenchTests(Case):
         self.assertEqual((row["procedure"], row["tier"], row["item_set"]), (tiersdat.DAT007, "S", tiersdat.ITEM_SET))
         self.assertEqual(row["sub_rows"][0]["label"], tiersdat.ADAPTATION)
         self.assertIn(benchreport.UNCALIBRATED, row["labels"])
+
+    def test_tier_m_refuses_the_procedures_of_the_tier_s_engines(self):
+        raw = {"kind": "bench", "mode": "evidence", "cap_usd": 5.0, "api_key_env": KEY_ENV, "max_tokens": 200,
+               "temperature": 0.7, "seed": 1000,
+               "models": [{"model_id": MODEL, "price_in_per_m": 1.0, "price_out_per_m": 2.0,
+                           "routing": dict(EVIDENCE_RAW["routing"])}],
+               "procedures": [{"procedure": tiersdat.DAT007, "tier": "M",
+                               "settings": {"items_file": str(self.items), "items_sha256": self.sha}}]}
+        for tp in ("TP-DAT-007", "TP-DAT-008", "TP-AGT-001", "TP-AGT-002", "TP-AGT-010"):
+            with self.subTest(tp=tp):
+                one = {**raw, "procedures": [{"procedure": tp, "tier": "M"}]}
+                self.assertTrue(any(f"({tp} runs its own build of SRD-1, so it is tier S)" in p
+                                    for p in bench.form_problems(one)))
+        path = self.dir / "bench_m.yaml"
+        path.write_text(yaml.safe_dump(raw), encoding="utf-8")
+        out = self.dir / "bench_m_out"
+        argv = ["--bench", str(path), "--profile", str(REPO / "targets" / "srd1" / "profile.yaml"), "--out", str(out),
+                "--start", "--sign-key", str(self.priv)]
+        buf = io.StringIO()
+        with no_outside_network(), mock.patch.dict(os.environ, ENV), contextlib.redirect_stdout(buf):
+            rc = bench.main(argv, input_fn=lambda p: "yes", inspect_check=lambda: None)
+        self.assertEqual(rc, 2, buf.getvalue()[-2000:])
+        self.assertIn("TP-DAT-007 runs its own build of SRD-1, so it is tier S", buf.getvalue())
+        self.assertFalse(out.exists())
 
 
 if __name__ == "__main__":
