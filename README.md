@@ -8,7 +8,7 @@ An open-source test harness for FAIAS, the Financial AI Independent Assurance St
 
 **What works now**
 
-- **Records.** One generic record for each of 48 FAIAS test procedures, built from the published standard. 45 of them need no human step. The other 3 are for the bench mode, which is not released (`records/README.md`). Each copied item carries its file and line (`records/`).
+- **Records.** One generic record for each of 52 FAIAS test procedures, built from the published standard. 45 of them need no human step. The other 7 are for the bench mode, which is not released (`records/README.md`). Each copied item carries its file and line (`records/`).
 - **Record checker.** It compares every record with the FAIAS source lines (`tools/check_records.py`). It also checks the form of the capability needs and the FAIAS lines that they cite. A test seeds nine faults and confirms that the checker catches them.
 - **Preflight.** It compares a target profile with the draft capability needs of each procedure and prints which procedures can run in full, in part, or not at all (`faias_harness/preflight.py`). It makes no network call.
 - **Engine.** It runs seven procedures, TP-SEC-001, TP-SEC-006, TP-AGT-012, TP-DAT-009, TP-SEC-002, TP-SEC-003 and TP-MOD-011 (Component 1), against SRD-1 minimal and writes a signed run log (`faias_harness/engine/`). Version 0.8.0 adds a fifth, TP-SEC-002, and a sixth, TP-SEC-003. Version 0.9.0 adds a seventh, TP-MOD-011, Component 1. By default a TP-SEC-001 run uses the full item set (`items/TP-SEC-001.json`: 131 items and 25 clean-baseline requests). Such a run is labelled "uncalibrated scorer, not a finding". The 20 spike items remain as an option, labelled "engine spike, not a finding".

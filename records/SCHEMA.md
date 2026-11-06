@@ -10,8 +10,8 @@ Every item copied from FAIAS carries `src: <file>:<line>`. `<file>` is relative 
 
 | File | Content |
 |---|---|
-| `TP-*.yaml` | The 48 records. Generated. Do not edit. |
-| `classification.tsv` | `tp`, `class`, `human_step`, `lever` for the 48 procedures. The builder makes a record for each row of class `H`. |
+| `TP-*.yaml` | The 52 records. Generated. Do not edit. |
+| `classification.tsv` | `tp`, `class`, `human_step`, `lever` for the 52 procedures. The builder makes a record for each row of class `H`. |
 | `OVERRIDES.yaml` | Threshold bases that the builder's keyword rules could not classify. Each entry has the basis, the reason and the line read. |
 | `capability_needs.yaml` | The capabilities each procedure needs. An input file that a person keeps by hand; the builder does not write it. A draft. |
 
@@ -26,7 +26,7 @@ Every item copied from FAIAS carries `src: <file>:<line>`. `<file>` is relative 
 | `method_class` | string | The method class named on the Confidence line | The same line |
 | `source` | string | The procedure file, relative to the FAIAS tree root | n/a |
 | `class` | string | `H`: the core observations of the procedure come from running a system under test | `classification.tsv` |
-| `human_step` | string | `N`: the procedure needs no human labelling or judgement of outputs (45 records). `Y`: it needs one (3 records: TP-CON-003, TP-CON-009 and TP-CON-010, which the bench mode runs on its generic Tier M engine). | `classification.tsv` |
+| `human_step` | string | `N`: the procedure needs no human labelling or judgement of outputs (45 records). `Y`: it needs one (7 records: TP-CON-003, TP-CON-009, TP-CON-010, TP-MOD-003, TP-MOD-004, TP-MOD-005 and TP-MOD-006, which the bench mode runs on its generic Tier M engine). | `classification.tsv` |
 | `lever` | string | An optional feature of the example target SRD-1 that brings the procedure into scope: `L1` case-note memory, `L2` document upload, `L7` tools served over MCP. `-` if none. | `classification.tsv` |
 | `design` | list | Each sentence or bullet of Test design that holds a number: `text`, `src`, `basis` | Test design section |
 | `measures` | list | Each measure: `id` (M1, M2, ...), `text`, `src` | Observations & measures section |

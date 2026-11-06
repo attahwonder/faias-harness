@@ -302,11 +302,13 @@ class RefusalTests(Case):
         s = self.settings(items=p, sha=sha, procedure=NO_RECORD)
         self.refused(s, f"{NO_RECORD} has no record in records/", "never makes one up")
 
-    def test_the_three_procedures_with_a_human_step_have_a_record_with_the_star_of_faias(self):
-        # Decision D-C6: tools/build_records.py builds these three from FAIAS v1.3.4 (records/classification.tsv,
-        # human step Y). The stars are those of the Confidence lines of PLAYBOOK_CON_003.md:7, PLAYBOOK_CON_009.md:7 and
-        # PLAYBOOK_CON_010.md:7; tools/check_records.py checks them against the FAIAS tree.
-        for tp, star in (("TP-CON-003", "★2"), ("TP-CON-009", "★2"), ("TP-CON-010", "★1")):
+    def test_the_procedures_with_a_human_step_have_a_record_with_the_star_of_faias(self):
+        # Decision D-C6: tools/build_records.py builds these seven from FAIAS v1.3.4 (records/classification.tsv,
+        # human step Y). The stars are those of the Confidence line of each procedure file;
+        # tools/check_records.py checks them against the FAIAS tree.
+        for tp, star in (("TP-CON-003", "★2"), ("TP-CON-009", "★2"), ("TP-CON-010", "★1"),
+                         ("TP-MOD-003", "★2"), ("TP-MOD-004", "★3"), ("TP-MOD-005", "★3"),
+                         ("TP-MOD-006", "★3")):
             with self.subTest(tp=tp):
                 problems, rec = tierm.record_problems(tp)
                 self.assertEqual(problems, [])

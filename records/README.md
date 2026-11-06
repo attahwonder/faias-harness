@@ -1,6 +1,6 @@
 # Records
 
-This folder holds one generic record for each of 48 FAIAS test procedures. The schema is in `SCHEMA.md`.
+This folder holds one generic record for each of 52 FAIAS test procedures. The schema is in `SCHEMA.md`.
 
 ## Attribution
 
@@ -14,7 +14,7 @@ The licence of FAIAS grants no rights in the name "FAIAS". Do not present a chan
 
 | File | Content |
 |---|---|
-| `TP-*.yaml` | The 48 records |
+| `TP-*.yaml` | The 52 records |
 | `SCHEMA.md` | Fields and rules |
 | `classification.tsv` | Class, human step and lever of each procedure |
 | `OVERRIDES.yaml` | Threshold bases that the builder could not classify, each with a reason and a line read |
@@ -33,6 +33,6 @@ A second build gives byte-identical files. The checker compares each record with
 
 - The records copy what FAIAS states. They do not add test steps. FAIAS states the steps.
 - The records copy the ★ rating of each procedure. The harness never computes it.
-- The 48 procedures are those whose core observations come from running a system (class `H`). 45 of them need no human labelling or judgement of outputs (`human_step` `N`). The other 3, TP-CON-003, TP-CON-009 and TP-CON-010, need one (`human_step` `Y`). They have a record because the bench mode runs them on its generic Tier M engine, which copies the procedure ID and the ★ rating from the record. The harness does not run their human step. FAIAS has 109 procedures. This folder does not cover the others.
-- The capability needs cover the 45 procedures with `human_step` `N` only. The preflight and the testability report read them, so they do not show the 3 procedures with a human step.
+- The 52 procedures are those whose core observations come from running a system (class `H`). 45 of them need no human labelling or judgement of outputs (`human_step` `N`). The other 7, TP-CON-003, TP-CON-009, TP-CON-010, TP-MOD-003, TP-MOD-004, TP-MOD-005 and TP-MOD-006, need one (`human_step` `Y`). They have a record because the bench mode runs them on its generic Tier M engine, which copies the procedure ID and the ★ rating from the record. The harness does not run their human step. FAIAS has 109 procedures. This folder does not cover the others.
+- The capability needs cover the 45 procedures with `human_step` `N` only. The preflight and the testability report read them, so they do not show the 7 procedures with a human step.
 - The capability needs are a draft: 26 entries on which two independent model passes agree, 17 entries settled at the lines by a third reading (also a model) and 2 open entries. No person has checked them. See `docs/ARCHITECTURE.md`, section 9.

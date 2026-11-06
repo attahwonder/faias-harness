@@ -286,7 +286,7 @@ class GateTests(_World):
 
         from tests import run_all
         problems, keys, declared = run_all.firm_value_problems()
-        self.assertEqual((problems, len(keys), declared), ([], 20, {"firm.TP-AGT-012.M3"}))
+        self.assertEqual((problems, len(keys), declared), ([], 25, {"firm.TP-AGT-012.M3"}))
         shipped = yaml.safe_load((REPO / "targets" / "srd1" / "firm_values.yaml").read_text(encoding="utf-8"))
         cases = (("no basis", lambda d: d.pop("bases"), "is set with no basis"),
                  ("a value in text", lambda d: d["values"].update({"firm.TP-AGT-012.M3": "5"}), "is not a number"),
