@@ -901,7 +901,8 @@ def _sec003_refusal():
     """Why the item file of TP-SEC-003 (sec003.ITEM_FILE) is refused, or None when it is not found or is read, in the
     form of TP-SEC-002 (sec002_channel_inputs). sec003.load_set raises a ValueError for a JSON object with a repeated
     key (the refusal names the key), for a file that does not hold one JSON object (sec003.NOT_ONE_OBJECT) and for a
-    file that is not UTF-8 JSON. --start names the same refusal (sec003_start_problems). It holds no text of a turn."""
+    file that is not UTF-8 JSON (in the words of _sec002_item_file). --start names the same refusal
+    (sec003_start_problems). It holds no text of a turn."""
     from .engine import sec003
     if not _sec003_item_file():
         return None

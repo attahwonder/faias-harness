@@ -44,6 +44,7 @@ the seed route writes them. So each payload document changes the scores of the o
 ranking is that of the harness (the document_search handler), over the documents that the customer of the item may
 read. That is the filter of the run (retrieval.py, Retrieval.retrieve). The top-3 rule of TP-DAT-009
 (dat009.check_items) ranks with no filter. The problems, one for each fault:
+  - the set has no item (EMPTY_SET). This is the only problem of such a set
   - a key of the item or of its document is missing or has the wrong form. SRD-1's store reads the title, the text,
     the domain, the kind and the customer_ref of each document, and stops on a missing one (retrieval.py)
   - a doc_id is the document of two items, or a document of the clean store
@@ -221,6 +222,9 @@ MARKDOWN_LINK = re.compile(r"!?\[[^\]\n]*\]\([^)\n]*\)|^[ \t]{0,3}\[[^\]\n]+\]:[
 HOST_NAME = re.compile(r"(?i)(?<![a-z0-9_.-])(?:[a-z0-9](?:[a-z0-9-]*[a-z0-9])?\.)+[a-z]{2,63}(?![a-z0-9_-])"
                        r"|(?<![0-9.])[0-9]{1,3}(?:\.[0-9]{1,3}){3}(?![0-9.])")
 TOOL_NAME = re.compile(r"(?<![A-Za-z0-9_])[a-z][a-z0-9]*(?:_[a-z0-9]+)+(?![A-Za-z0-9_])")
+# The problem of a set with no item, in the form of the TP-SEC-002 problem of a pool with too few objectives
+# (sec002.check_item_set: "the pool has 0 objectives (...); it must have 20 (...)").
+EMPTY_SET = "the item set has 0 items; it must have 1 or more"
 
 
 @dataclass(frozen=True)
@@ -267,13 +271,23 @@ def load_set(path=None, repo=REPO):
     """The items of an item file of TP-SEC-003 (ITEM_FILE by default), as a tuple of Item, in the order of the file.
     A missing key gives an empty value, so check_item_set names it. A JSON object with a repeated key, at any depth,
     raises jsonkeys.RepeatedKey (a ValueError) with the key: plain json.loads keeps only its last value. A file that is
-    JSON but not one JSON object (for example a list, or null) raises ValueError with NOT_ONE_OBJECT, because no key
-    can be read."""
-    data = json.loads(Path(path or Path(repo) / ITEM_FILE).read_text(encoding="utf-8"),
-                      object_pairs_hook=jsonkeys.unique_keys)
+    not UTF-8 JSON raises ValueError in the words of TP-SEC-002 (preflight._sec002_item_file), with the words of the
+    decoder. A file that is JSON but not one JSON object (for example a list, or null) raises ValueError with
+    NOT_ONE_OBJECT, because no key can be read. A field of the wrong type is read as absent, by the rule of the
+    TP-SEC-002 item check (sec002.check_item_set): a field `items` that is not a list gives no item, and a value of the
+    list that is not an object is an item with no key. check_item_set names each of them (an empty set, or the missing
+    keys)."""
+    try:
+        data = json.loads(Path(path or Path(repo) / ITEM_FILE).read_text(encoding="utf-8"),
+                          object_pairs_hook=jsonkeys.unique_keys)
+    except jsonkeys.RepeatedKey:
+        raise
+    except ValueError as e:         # json.JSONDecodeError and UnicodeDecodeError are ValueError
+        raise ValueError(f"the file is not UTF-8 JSON ({e})") from None
     if not isinstance(data, dict):
         raise ValueError(NOT_ONE_OBJECT)
-    return tuple(_item(i) for i in data.get("items") or [])
+    items = data.get("items")
+    return tuple(_item(i if isinstance(i, dict) else {}) for i in (items if isinstance(items, list) else []))
 
 
 def pool(items):
@@ -326,6 +340,8 @@ def check_item_set(items, store, tools=None):
     `tools` is the list of the tool names that the run offers. None means that the run offers no tool, as the
     pipeline build of SRD-1 does."""
     tools = tuple(tools or ())
+    if not items:       # no field items, an empty list, or a field items that is not a list (load_set)
+        return [EMPTY_SET]
     problems = []
     clean_ids = {d.get("doc_id") for d in store["documents"]}
     customers = {c.get("customer_ref") for c in store["customers"]}

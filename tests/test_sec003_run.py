@@ -24,6 +24,7 @@ import dataclasses
 import inspect
 import io
 import json
+import re
 import tempfile
 import unittest
 from collections import Counter
@@ -165,6 +166,23 @@ def not_one_object_file(folder, text=None):
     return path, f"TP-SEC-003: the item file {path} is refused: the file does not hold one JSON object"
 
 
+def items_file(folder, name, items=FIXTURE):
+    """The fixture file in `folder` with its field items set to `items` (FIXTURE: with no field items). Returns the
+    file."""
+    data = fixture_set()
+    if items is FIXTURE:
+        del data["items"]
+    else:
+        data["items"] = items
+    path = Path(folder) / f"items_{name}.json"
+    path.write_text(json.dumps(data), encoding="utf-8")
+    return path
+
+
+EMPTY = "the item set has 0 items; it must have 1 or more"
+NOT_UTF8_JSON = r"the file is not UTF-8 JSON \(.+\)"
+
+
 class RefusalTests(unittest.TestCase):
     """Each refusal comes before the lock: no run log is written and no model call is made."""
 
@@ -293,6 +311,46 @@ class RefusalTests(unittest.TestCase):
                     self.assertEqual(str(cm.exception), want)
                     d = self.refused(f"not_one_object_run_{n}", ValueError, [want], items=None)
                 self.assertFalse(d.exists())
+
+    def test_the_default_item_load_refuses_an_item_file_that_is_not_utf8_json_before_any_file(self):
+        """A file that is not JSON, and one that is not UTF-8: run_sec003.load_items refuses each in the form of its
+        other refusals, "TP-SEC-003: the item file <file> is refused: ", with the words of TP-SEC-002. A direct call of
+        the engine writes no file and makes no model call."""
+        for n, raw in enumerate((b"{not json", b"\xff\xfe{}")):
+            with self.subTest(raw=raw):
+                path = Path(_FIXTURE["tmp"].name) / f"items_not_utf8_json_{n}.json"
+                path.write_bytes(raw)
+                want = rf"^TP-SEC-003: the item file {re.escape(str(path))} is refused: {NOT_UTF8_JSON}$"
+                with mock.patch.object(sec003, "ITEM_FILE", str(path)):
+                    with self.assertRaises(ValueError) as cm:
+                        run_sec003.load_items(repo=REPO)
+                    self.assertRegex(str(cm.exception), want)
+                    d = self.refused(f"not_utf8_json_run_{n}", ValueError, [f"the item file {path} is refused: "
+                                                                            "the file is not UTF-8 JSON ("], items=None)
+                self.assertFalse(d.exists())
+
+    def test_an_item_file_whose_items_are_not_a_list_of_objects_is_refused_by_the_item_check_before_any_file(self):
+        """A field items that is a number, and a list that holds a number: the item check refuses each (an empty set,
+        and an item with no key). Before, such a file stopped the engine with a TypeError or an AttributeError. A
+        direct call of the engine writes no file and makes no model call."""
+        folder = Path(_FIXTURE["tmp"].name)
+        for n, (items, want) in enumerate(((5, EMPTY), ([1], "None: the class is not one of P1 to P5"))):
+            with self.subTest(items=items), mock.patch.object(sec003, "ITEM_FILE",
+                                                             str(items_file(folder, f"wrong_type_{n}", items))):
+                d = self.refused(f"items_wrong_type_{n}", ValueError, ["the item set is refused: " + want], items=None)
+            self.assertFalse(d.exists())
+
+    def test_a_set_with_no_item_is_refused_before_any_file(self):
+        """An item file with no field items, an item file with an empty list, and an empty fixture set: the engine
+        refuses each with the problem of the item check. Before, the engine ran a set of 0 items."""
+        folder = Path(_FIXTURE["tmp"].name)
+        for n, items in enumerate((FIXTURE, [])):
+            with self.subTest(items=items), mock.patch.object(sec003, "ITEM_FILE",
+                                                             str(items_file(folder, f"empty_{n}", items))):
+                d = self.refused(f"empty_set_{n}", ValueError, [f"the item set is refused: {EMPTY}"], items=None)
+            self.assertFalse(d.exists())
+        d = self.refused("empty_fixture_set", ValueError, [f"the item set is refused: {EMPTY}"], items=())
+        self.assertFalse(d.exists())
 
     def test_a_context_assembly_site_that_is_not_found_refuses_the_run(self):
         """A copy of the orchestrator file whose request line has other text, and a copy with that line twice:
@@ -949,6 +1007,70 @@ class PreflightTests(unittest.TestCase):
             rc, out = self.main(*self.selftest)
         self.assertEqual(rc, 0, out)
         self.assertNotIn("Item file: ", out)
+
+    def test_an_item_file_that_is_not_utf8_json_is_refused_in_the_form_of_tp_sec_002(self):
+        """A file that is not JSON, and one that is not UTF-8: the report line gives the TP-SEC-002 words, "the file is
+        not UTF-8 JSON (...)", and no estimate. --start refuses in one problem line with the prefix of the other
+        refusals of the item file, before the probes and the executor. No output holds a traceback."""
+        for n, raw in enumerate((b"{not json", b"\xff\xfe{}")):
+            path = self.dir / f"items_not_utf8_json_{n}.json"
+            path.write_bytes(raw)
+            calls = []
+            with self.subTest(raw=raw), mock.patch.object(sec003, "ITEM_FILE", str(path)):
+                rc, out = self.main(*self.selftest)
+                self.assertEqual(rc, 0, out)
+                lines = [x for x in out.splitlines() if x.startswith("Item file: ")]
+                self.assertEqual(len(lines), 1, out)
+                self.assertRegex(lines[0], rf"^Item file: {re.escape(str(path))} is refused: {NOT_UTF8_JSON}$")
+                self.assertIn("Worst-case estimate: not available (the item file is refused); cap: USD 1.0", out)
+                self.assertNotIn("Traceback", out)
+                rc, out = self.main("--start", "--sign-key", str(self.key), *self.selftest, calls=calls)
+                self.assertEqual((rc, calls), (2, []), out)
+                refused = out.split("Fix these points first:\n")[1].splitlines()
+                self.assertEqual(len(refused), 1, refused)
+                self.assertRegex(refused[0], rf"^  - TP-SEC-003: the item file {re.escape(str(path))} is refused: "
+                                             rf"{NOT_UTF8_JSON}$")
+                self.assertNotIn("Traceback", out)
+
+    def test_an_item_file_whose_items_are_not_a_list_of_objects_gives_its_problems_and_no_traceback(self):
+        """A field items that is a number, a text or an object, and a list that holds a number: the preflight prints no
+        traceback, and --start refuses with the problems of the item check (an empty set, or the missing keys of an
+        item with no key, each with the ID None), before the probes and the executor."""
+        cases = {"a number": (5, [EMPTY]), "a text": ("ab", [EMPTY]), "an object": ({"a": 1}, [EMPTY]),
+                 "a list that holds a number": ([1], None)}
+        for n, (name, (items, want)) in enumerate(cases.items()):
+            path = items_file(self.dir, f"wrong_type_{n}", items)
+            calls = []
+            with self.subTest(name), mock.patch.object(sec003, "ITEM_FILE", str(path)):
+                rc, out = self.main(*self.selftest)
+                self.assertEqual(rc, 0, out)
+                self.assertNotIn("Traceback", out)
+                problems = preflight.sec003_start_problems(sm.load_settings(self.settings))
+                rc, out = self.main("--start", "--sign-key", str(self.key), *self.selftest, calls=calls)
+                self.assertEqual((rc, calls), (2, []), out)
+                self.assertNotIn("Traceback", out)
+                refused = out.split("Fix these points first:\n")[1].splitlines()
+                self.assertEqual(refused, [f"  - {p}" for p in problems])
+                if want:
+                    self.assertEqual(problems, [f"the item file: {w}" for w in want])
+                else:
+                    self.assertEqual(problems[0], "the item file: None: the class is not one of P1 to P5")
+                    self.assertTrue(all(p.startswith("the item file: None: ") for p in problems), problems)
+
+    def test_start_refuses_a_set_with_no_item_in_one_problem_line(self):
+        """No field items, and an empty list: --start refuses in one problem line, the problem of the item check,
+        before the probes and the executor. Before, --start handed a run of 0 items to the executor."""
+        for n, items in enumerate((FIXTURE, [])):
+            path = items_file(self.dir, f"empty_{n}", items)
+            calls = []
+            with self.subTest(items=items), mock.patch.object(sec003, "ITEM_FILE", str(path)):
+                self.assertEqual(preflight.sec003_start_problems(sm.load_settings(self.settings)),
+                                 [f"the item file: {EMPTY}"])
+                rc, out = self.main("--start", "--sign-key", str(self.key), *self.selftest, calls=calls)
+                self.assertEqual((rc, calls), (2, []), out)
+                self.assertEqual(out.split("Fix these points first:\n")[1].splitlines(),
+                                 [f"  - the item file: {EMPTY}"])
+                self.assertNotIn("Traceback", out)
 
     def test_with_the_item_file_the_run_starts_with_its_engine_and_no_variant(self):
         """With an item file (the fixture file in its place), the preflight gives an estimate and the start line, and

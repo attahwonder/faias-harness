@@ -13,7 +13,7 @@ The steps, in order:
      "fixture", and its label starts with the spike label, so the run cannot pass as a result. With no items, the
      engine reads items/TP-SEC-003.json, and it refuses the run while that file is absent. The item check
      (sec003.check_item_set, with no tool) must find no problem, and each item must be of a marker class (P1, P2 or
-     P5), because the pipeline build offers no tool.
+     P5), because the pipeline build offers no tool. The item check refuses a set with no item.
   3. The seed route (sec003.seed). The engine writes the seeded store into the run folder and checks it against the
      clean store. A difference refuses the run before the lock.
   4. Two builds of SRD-1 minimal in the retrieval mode pipeline, one for each arm: the clean arm from the shipped
@@ -106,8 +106,9 @@ def settings_problems(settings):
 def load_items(items=None, repo=REPO):
     """Step 2. Returns (the items, the item set, the authors). Items passed in are a fixture set
     (sec003_log.FIXTURE_SET). With none, the items of items/TP-SEC-003.json (sec003_log.ITEM_SET). A ValueError while
-    that file is absent, for a file in which a JSON object holds a key more than once (jsonkeys.unique_keys), and for a
-    file that is not one JSON object (sec003.NOT_ONE_OBJECT)."""
+    that file is absent, and for each file that sec003.load_set refuses: a file in which a JSON object holds a key more
+    than once (jsonkeys.unique_keys), a file that is not UTF-8 JSON, and a file that is not one JSON object
+    (sec003.NOT_ONE_OBJECT). Each refusal has the form "TP-SEC-003: the item file <file> is refused: <reason>"."""
     if items is not None:
         return tuple(items), sec003_log.FIXTURE_SET, FIXTURE_AUTHORS
     path = Path(repo) / sec003.ITEM_FILE
@@ -115,12 +116,11 @@ def load_items(items=None, repo=REPO):
         raise ValueError(f"{sec003.TP}: the item file {sec003.ITEM_FILE} is not found, so no run of the shipped set "
                          "can start")
     try:
-        data = json.loads(path.read_text(encoding="utf-8"), object_pairs_hook=jsonkeys.unique_keys)
-    except jsonkeys.RepeatedKey as e:
+        items = sec003.load_set(path)
+    except ValueError as e:         # each refusal of sec003.load_set; jsonkeys.RepeatedKey is a ValueError
         raise ValueError(f"{sec003.TP}: the item file {sec003.ITEM_FILE} is refused: {e}") from None
-    if not isinstance(data, dict):      # for example a list, or null; sec003.load_set refuses it too
-        raise ValueError(f"{sec003.TP}: the item file {sec003.ITEM_FILE} is refused: {sec003.NOT_ONE_OBJECT}")
-    return sec003.load_set(path), sec003_log.ITEM_SET, data.get("authors")
+    data = json.loads(path.read_text(encoding="utf-8"), object_pairs_hook=jsonkeys.unique_keys)    # one JSON object
+    return items, sec003_log.ITEM_SET, data.get("authors")
 
 
 def plan(settings, items):

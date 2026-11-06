@@ -286,6 +286,61 @@ class ItemSetTests(unittest.TestCase):
                 self.assertEqual(str(cm.exception), "the file does not hold one JSON object")
                 self.assertEqual(str(cm.exception), sec002.NOT_ONE_OBJECT)
 
+    def test_a_file_that_is_not_utf8_json_is_refused_in_the_words_of_tp_sec_002(self):
+        """sec003.load_set refuses a file that is not JSON, and one that is not UTF-8, with a ValueError in the words
+        of the TP-SEC-002 preflight: "the file is not UTF-8 JSON (<the words of the decoder>)"."""
+        path = self.dir / "items.json"
+        for name, raw in {"not JSON": b"{not json", "not UTF-8": b"\xff\xfe{}"}.items():
+            with self.subTest(name):
+                path.write_bytes(raw)
+                with self.assertRaises(ValueError) as cm:
+                    sec003.load_set(path)
+                self.assertRegex(str(cm.exception), r"^the file is not UTF-8 JSON \(.+\)$")
+
+    def test_a_field_items_that_is_not_a_list_of_objects_is_read_as_absent_and_the_check_names_it(self):
+        """By the rule of the TP-SEC-002 item check, a field of the wrong type is read as absent. A field items that is
+        not a list gives no item, so the check names an empty set. A value of the list that is not an object is an
+        item with no key, so the check names its missing keys, with the ID None. The valid items of the list still
+        load. No value stops load_set or the check."""
+        empty = "the item set has 0 items; it must have 1 or more"
+        for value in (5, "ab", {"a": 1}, None, True):
+            with self.subTest(items=value):
+                data = fixture_set()
+                data["items"] = value
+                items = self.load(data)
+                self.assertEqual(items, ())
+                self.assertEqual(sec003.check_item_set(items, CLEAN), [empty])
+        for value in ([1], ["P1-01"], [[]], [None]):
+            with self.subTest(items=value):
+                data = fixture_set()
+                data["items"] = value
+                items = self.load(data)
+                self.assertEqual([(i.id, i.cls, i.turns, i.document, i.marker) for i in items],
+                                 [(None, None, (), {}, ())])
+                problems = sec003.check_item_set(items, CLEAN)
+                self.assertEqual(problems[0], "None: the class is not one of P1 to P5")
+                self.assertTrue(all(p.startswith("None: ") for p in problems), problems)
+        data = fixture_set()
+        data["items"].append(5)
+        items = self.load(data)
+        self.assertEqual([i.id for i in items], ["P1-01", "P2-01", "P5-01", "P1-02", None])
+        problems = sec003.check_item_set(items, CLEAN)
+        self.assertTrue(problems and all(p.startswith("None: ") for p in problems), problems)
+
+    def test_a_set_with_no_item_is_refused_by_the_item_check(self):
+        """No field items, and an empty list: the item check gives one problem, in the form of the TP-SEC-002 problem
+        of a pool with too few objectives. Before, such a set passed the check, and the engine ran 0 items."""
+        empty = "the item set has 0 items; it must have 1 or more"
+        self.assertEqual(sec003.check_item_set((), CLEAN), [empty])
+        self.assertEqual(sec003.check_item_set((), CLEAN, ["branch_finder"]), [empty])
+        no_items = {k: v for k, v in fixture_set().items() if k != "items"}
+        for name, data in {"no field items": no_items, "an empty list": {**no_items, "items": []},
+                           "an empty object": {}}.items():
+            with self.subTest(name):
+                items = self.load(data)
+                self.assertEqual(items, ())
+                self.assertEqual(sec003.check_item_set(items, CLEAN), [empty])
+
     def test_a_marker_outside_the_item_text_a_stray_turn_and_a_cut_trace(self):
         """The joined marker in a clean document, or across the title and the text, gives one problem; so does a
         retrieving turn on a P1 item. A P5 scored turn with no retrieval line gives no hit."""
