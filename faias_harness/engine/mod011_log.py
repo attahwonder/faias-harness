@@ -239,7 +239,8 @@ def benchmarks_block(benchmarks, items, item_files, repo=runlog.REPO):
 def comparators_block(settings, comparators, file_sha256, overlap, overlap_sha256, features):
     """The comparators block: facts of the private file, with no comparator text."""
     dates = sorted(str(c["created"]) for c in comparators)
-    rows = [r for r in overlap.get("results") or [] if isinstance(r, dict)]
+    # A row whose longest run is not a whole number is read as absent, as mod011.check_comparators reads it.
+    rows = [r for r in overlap.get("results") or [] if isinstance(r, dict) and mod011._whole(r.get("longest_run"))]
     return {"file_sha256": file_sha256,
             "count": dict(sorted(Counter(c["benchmark"] for c in comparators).items())),
             "created": {"first": dates[0] if dates else None, "last": dates[-1] if dates else None},
@@ -248,7 +249,7 @@ def comparators_block(settings, comparators, file_sha256, overlap, overlap_sha25
             "training_cutoff": settings.training_cutoff, "training_cutoff_source": settings.training_cutoff_source,
             "declared_basis": "declared by the operator in the settings, from the model card; not observed",
             "overlap_result": {"sha256": overlap_sha256, "limit": mod011.OVERLAP_LIMIT,
-                               "longest_run": max((r.get("longest_run") or 0 for r in rows), default=None),
+                               "longest_run": max((r["longest_run"] for r in rows), default=None),
                                "files": overlap.get("gsm8k_files")},
             "sme_record_sha256": settings.sme_record_sha256,
             "check": "mod011.check_comparators gave no problem before the lock",

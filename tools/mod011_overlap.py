@@ -12,8 +12,10 @@ mod011.check_comparators reads it. A run of OVERLAP_LIMIT (8) words or more is a
 
 The tool reads no network and calls no model. It refuses an --out path that exists. It refuses a comparator file in
 which a JSON object holds a key more than once, at any depth, with the key, as the engine does (jsonkeys.unique_keys):
-plain json.loads keeps only the last value. Exit 0 when each run is under the limit, 1 when a run is at or above it, 2
-when it refuses.
+plain json.loads keeps only the last value. It also refuses a comparator file that is not UTF-8 JSON, one that does
+not hold one JSON object, and one whose field comparators is not a list of objects (read_comparators), in the words of
+the refusals of TP-SEC-002. A refused file gives no result. Exit 0 when each run is under the limit, 1 when a run is at
+or above it, 2 when it refuses.
 """
 import argparse
 import hashlib
@@ -25,10 +27,13 @@ REPO = Path(__file__).resolve().parents[1]
 if str(REPO) not in sys.path:
     sys.path.insert(0, str(REPO))
 
-from faias_harness.engine import jsonkeys, mod011, sec006  # noqa: E402
+from faias_harness.engine import jsonkeys, mod011, sec002, sec006  # noqa: E402
 
 VERSION = "1"
 _GAP = "\0"         # between two questions; no word of a comparator is this token, so no run spans it
+# The refusal of a field comparators that is not a list of objects, in the form of the TP-SEC-002 line of the preflight
+# for the field families ("the field families of the item file is not a list of texts").
+NOT_A_LIST = "the field comparators is not a list of objects"
 
 
 def question_stream(files):
@@ -61,11 +66,28 @@ def overlap(comparators, files):
     return rows
 
 
+def read_comparators(comparator_raw):
+    """The list comparators of a comparator file, from its bytes. Raises jsonkeys.RepeatedKey (a ValueError) for a JSON
+    object that holds a key more than once. Raises ValueError, in the words of TP-SEC-002, for a file that is not UTF-8
+    JSON (preflight._sec002_item_file), for a file that does not hold one JSON object (sec002.NOT_ONE_OBJECT), and for a
+    field comparators that is not a list of objects (NOT_A_LIST)."""
+    try:
+        data = json.loads(comparator_raw.decode("utf-8"), object_pairs_hook=jsonkeys.unique_keys)
+    except jsonkeys.RepeatedKey:
+        raise
+    except ValueError as e:         # json.JSONDecodeError and UnicodeDecodeError are ValueError
+        raise ValueError(f"the file is not UTF-8 JSON ({e})") from None
+    if not isinstance(data, dict):
+        raise ValueError(sec002.NOT_ONE_OBJECT)
+    comps = data.get("comparators")
+    if not (isinstance(comps, list) and all(isinstance(c, dict) for c in comps)):
+        raise ValueError(NOT_A_LIST)
+    return comps
+
+
 def result(comparator_raw, comparator_name, files):
-    """The result file, as a dict. Raises jsonkeys.RepeatedKey (a ValueError) for a comparator file in which a JSON
-    object holds a key more than once."""
-    data = json.loads(comparator_raw.decode("utf-8"), object_pairs_hook=jsonkeys.unique_keys)
-    rows = overlap(data.get("comparators") or [], files)
+    """The result file, as a dict. Raises ValueError for a comparator file that read_comparators refuses."""
+    rows = overlap(read_comparators(comparator_raw), files)
     return {"tool": "tools/mod011_overlap.py", "version": VERSION, "procedure": mod011.TP,
             "reads": "the field question of each GSM8K line; the answer text is not read",
             "limit": mod011.OVERLAP_LIMIT,
@@ -88,11 +110,13 @@ def main(argv=None):
         print(f"refused: {out} exists")
         return 2
     comp = Path(a.comparators)
+    raw = comp.read_bytes()
     try:
-        res = result(comp.read_bytes(), comp.name, [(Path(p).name, Path(p).read_bytes()) for p in a.gsm8k])
-    except jsonkeys.RepeatedKey as e:
+        read_comparators(raw)
+    except ValueError as e:         # each refusal of read_comparators; jsonkeys.RepeatedKey is a ValueError
         print(f"refused: the comparator file {comp}: {e}")
         return 2
+    res = result(raw, comp.name, [(Path(p).name, Path(p).read_bytes()) for p in a.gsm8k])
     out.write_bytes((json.dumps(res, indent=1, ensure_ascii=False) + "\n").encode("utf-8"))
     print(f"wrote {out}: {len(res['results'])} comparators; {len(res['at_or_above_limit'])} at or above the limit of "
           f"{mod011.OVERLAP_LIMIT} words: {', '.join(map(str, res['at_or_above_limit'])) or 'none'}")

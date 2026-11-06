@@ -11,6 +11,7 @@ import hashlib
 import importlib.util
 import io
 import json
+import re
 import shutil
 import tempfile
 import unittest
@@ -431,6 +432,27 @@ class ComparatorTests(unittest.TestCase):
                     self.assertEqual(len(problems), 1, problems)
                 self.assertIn(want, problems[0])
 
+    def test_an_overlap_field_of_the_wrong_type_is_read_as_absent_and_named(self):
+        """By the rule of the TP-SEC-002 item check, a field of the overlap result that has the wrong type is read as
+        absent, so the problem of an absent field names it. Before, such a field stopped the check with a TypeError or
+        an AttributeError."""
+        good = overlap_result(self.data["comparators"], self.file_sha)
+        other_file = ["the overlap result is for another comparator file (its SHA-256 differs)"]
+        no_files = ["the overlap result does not read the files train.jsonl, test.jsonl of gsm8k that the digest file "
+                    "names"]
+        no_rows = [f"{c['id']}: the overlap result has no row for it" for c in self.data["comparators"]]
+        cases = {"comparator_file a number": ({"comparator_file": 5}, other_file),
+                 "comparator_file a list": ({"comparator_file": [1]}, other_file),
+                 "comparator_file a text": ({"comparator_file": "ab"}, other_file),
+                 "gsm8k_files a number": ({"gsm8k_files": 5}, no_files),
+                 "gsm8k_files with a sha256 that is a list": ({"gsm8k_files": [{"name": "x", "sha256": [1]}]},
+                                                              no_files),
+                 "results a number": ({"results": 5}, no_rows),
+                 "results with an id that is a list": ({"results": [{"id": [1], "longest_run": 3}]}, no_rows)}
+        for name, (change, want) in cases.items():
+            with self.subTest(name):
+                self.assertEqual(self.check(overlap={**good, **change}), want)
+
     def test_an_empty_comparator_list_falls_under_the_minimum(self):
         problems = self.check({"comparators": []}, overlap=overlap_result([], self.file_sha))
         self.assertEqual(len(problems), 1, problems)
@@ -521,6 +543,37 @@ class OverlapToolTests(unittest.TestCase):
                     self.assertEqual((rc, out.exists()), (2, False), buf.getvalue())
                     self.assertEqual(buf.getvalue(), f"refused: the comparator file {comp}: a JSON object holds the "
                                                      f"key {key} more than once\n")
+                    for c in self.COMPARATORS:
+                        self.assertNotIn(c["question"], buf.getvalue())
+
+    def test_a_comparator_file_that_cannot_be_read_is_refused_in_the_words_of_tp_sec_002_and_no_result_is_written(self):
+        """A comparator file that is not UTF-8 JSON, one that does not hold one JSON object, and one whose field
+        comparators is not a list of objects: the tool refuses each, with the TP-SEC-002 words, and writes no result
+        (exit 2). Before, each stopped the tool with a traceback, or (no list) gave a result of no row."""
+        not_json, not_object = r"the file is not UTF-8 JSON \(.+\)", "the file does not hold one JSON object"
+        not_list = "the field comparators is not a list of objects"
+        cases = {"not JSON": (b"not JSON", not_json), "not UTF-8": (b"\xff\xfe{}", not_json),
+                 "a list": (b"[1]", not_object), "null": (b"null", not_object),
+                 "no field comparators": (b"{}", not_list), "comparators null": (b'{"comparators": null}', not_list),
+                 "comparators a number": (b'{"comparators": 5}', not_list),
+                 "comparators a text": (b'{"comparators": "ab"}', not_list),
+                 "a comparator that is a number": (json.dumps({"comparators": self.COMPARATORS + [5]}).encode(),
+                                                   not_list)}
+        with tempfile.TemporaryDirectory() as d:
+            d = Path(d)
+            for name, rows in (("train.jsonl", self.TRAIN), ("test.jsonl", self.TEST)):
+                (d / name).write_text("".join(json.dumps(r) + "\n" for r in rows), encoding="utf-8")
+            for n, (name, (raw, reason)) in enumerate(cases.items()):
+                with self.subTest(name):
+                    comp, out = d / f"comparators_{n}.json", d / f"overlap_{n}.json"
+                    comp.write_bytes(raw)
+                    buf = io.StringIO()
+                    with redirect_stdout(buf):
+                        rc = OVERLAP_TOOL.main(["--comparators", str(comp), "--gsm8k", str(d / "train.jsonl"),
+                                                str(d / "test.jsonl"), "--out", str(out)])
+                    self.assertEqual((rc, out.exists()), (2, False), buf.getvalue())
+                    self.assertRegex(buf.getvalue(), rf"^refused: the comparator file {re.escape(str(comp))}: "
+                                                     rf"{reason}\n$")
                     for c in self.COMPARATORS:
                         self.assertNotIn(c["question"], buf.getvalue())
 
