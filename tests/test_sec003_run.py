@@ -39,7 +39,7 @@ from faias_harness.adapters.srd1_http import Srd1ChatError, Srd1ChatTarget
 from faias_harness.engine import run_sec003, runlog, sec001, sec003, sec003_log, sec006, spike
 from tests.helpers import (FAKE_KEY_VALUE, KEY_ENV, StandInModelHost, make_settings, no_outside_network, raw_settings,
                            shared_selftest)
-from tests.test_sec003 import CLEAN_FILE, FIXTURE_ITEMS, fixture_set
+from tests.test_sec003 import CLEAN_FILE, FIXTURE_ITEMS, ROUND_TRIP_TRIGGERS, fixture_set, round_trip_problem
 from tests.test_sec003_log import assert_each_fault_gives_its_problems, seeded_faults
 
 REPO = Path(__file__).resolve().parents[1]
@@ -368,6 +368,21 @@ class RefusalTests(unittest.TestCase):
             with self.subTest(name), mock.patch.object(sec003, "ITEM_FILE",
                                                        str(items_file(folder, f"field_type_{n}", items))):
                 d = self.refused(f"items_field_type_{n}", ValueError, ["the item set is refused: " + want], items=None)
+                self.assertFalse(d.exists())
+
+    def test_a_document_that_does_not_come_back_unchanged_is_refused_by_the_item_check_before_any_file(self):
+        """A key or a value of a payload document that does not come back unchanged from the seeded store
+        (ROUND_TRIP_TRIGGERS): the item check names the item and the key, so a direct call of the engine refuses the set
+        before it makes the run folder, and makes no model call. Before, the seed step refused it with a RuntimeError,
+        after it made the run folder and wrote the seeded store into it."""
+        folder = Path(_FIXTURE["tmp"].name)
+        for n, (name, (change, key)) in enumerate(ROUND_TRIP_TRIGGERS.items()):
+            items = fixture_set()["items"]
+            change(items[0]["document"])
+            with self.subTest(name), mock.patch.object(sec003, "ITEM_FILE",
+                                                       str(items_file(folder, f"round_trip_{n}", items))):
+                d = self.refused(f"items_round_trip_{n}", ValueError,
+                                 ["the item set is refused: " + round_trip_problem("P1-01", key)], items=None)
                 self.assertFalse(d.exists())
 
     def test_a_set_with_no_item_is_refused_before_any_file(self):
@@ -1103,6 +1118,26 @@ class PreflightTests(unittest.TestCase):
                 self.assertNotIn("Traceback", out)
                 self.assertEqual(out.split("Fix these points first:\n")[1].splitlines(),
                                  [f"  - the item file: {want}"])
+
+    def test_start_refuses_a_document_that_does_not_come_back_unchanged_in_one_problem_line(self):
+        """A key or a value of a payload document that does not come back unchanged from the seeded store
+        (ROUND_TRIP_TRIGGERS): the preflight prints no traceback, and --start refuses in one problem line that names
+        the item and the key, before the probes and the executor. Before, --start passed the item check, and the engine
+        refused the run at the seed step, after the probe calls and the typed yes."""
+        for n, (name, (change, key)) in enumerate(ROUND_TRIP_TRIGGERS.items()):
+            items = fixture_set()["items"]
+            change(items[0]["document"])
+            path = items_file(self.dir, f"round_trip_{n}", items)
+            calls = []
+            with self.subTest(name), mock.patch.object(sec003, "ITEM_FILE", str(path)):
+                rc, out = self.main(*self.selftest)
+                self.assertEqual(rc, 0, out)
+                self.assertNotIn("Traceback", out)
+                rc, out = self.main("--start", "--sign-key", str(self.key), *self.selftest, calls=calls)
+                self.assertEqual((rc, calls), (2, []), out)
+                self.assertNotIn("Traceback", out)
+                self.assertEqual(out.split("Fix these points first:\n")[1].splitlines(),
+                                 [f"  - the item file: {round_trip_problem('P1-01', key)}"])
 
     def test_start_refuses_a_set_with_no_item_in_one_problem_line(self):
         """No field items, and an empty list: --start refuses in one problem line, the problem of the item check,

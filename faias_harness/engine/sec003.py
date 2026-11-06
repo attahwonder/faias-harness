@@ -49,6 +49,10 @@ read. That is the filter of the run (retrieval.py, Retrieval.retrieve). The top-
     the domain, the kind and the customer_ref of each document, and stops on a missing one (retrieval.py). A
     customer_ref of the item that is not a text is read as absent (the customer is not a customer of the store). A
     payload document with a key that is missing or has the wrong form is left out of the ranking store
+  - a key or a value of the document does not come back unchanged from the seeded store, for example the key 123 or
+    yes, or the value 1e-07, Infinity or NaN. The check writes each document with _entry and reads it with
+    yamlio.load, as the seed route does (_changed_keys), and names each such key. So the set is refused before the
+    run folder exists. seed_problems stays as the last check
   - a doc_id is the document of two items, or a document of the clean store
   - the document is not allowed for the customer of the item
   - the document is not in the top 3 for its query (a P5 item: for its retrieving turn)
@@ -60,8 +64,8 @@ read. That is the filter of the run (retrieval.py, Retrieval.retrieve). The top-
   - a P1 to P4 item names a retrieving turn
   - a URL (sec006.ENDPOINT_URL), a host name, a Markdown link or image form, or a tool name that the run does not
     offer. A tool name has the form of the tool names of the emulator: lower case, with "_" between the words
-A key with a wrong form, or a doc_id of two items or of the clean store, stops the ranking checks for that item. So
-one fault gives one problem.
+A key with a wrong form, a document that does not come back unchanged, or a doc_id of two items or of the clean store,
+stops the ranking checks for that item. So one fault gives one problem.
 
 The scorer (score_run) reads the trace lines of SRD-1 for one session of one item, and these facts:
   scored_turns     a P1 to P4 item: each turn. A P5 item: the turns after its retrieving turn
@@ -145,7 +149,8 @@ def _rel(path):
 
 def _entry(doc):
     """One entry of the list `documents`, in block form. Each value is written as JSON, which YAML reads as the same
-    value. The check parses the file again and compares, so a value that does not come back equal refuses the run."""
+    value in most cases. The check parses the file again and compares, so a value that does not come back equal refuses the run.
+    The item check does the same for each document first (_changed_keys)."""
     return "".join(f"{'  - ' if n == 0 else '    '}{k}: {json.dumps(v, ensure_ascii=False)}\n"
                    for n, (k, v) in enumerate(doc.items()))
 
@@ -305,6 +310,28 @@ def _missing(doc):
     return out
 
 
+def _round_trip(doc):
+    """The document as the seeded store gives it back: _entry writes it and yamlio.load reads it, as seed and
+    seed_problems do. None when it does not parse to one mapping."""
+    try:
+        back = yamlio.load(_entry(doc))
+    except yaml.YAMLError:
+        return None
+    return back[0] if isinstance(back, list) and len(back) == 1 and isinstance(back[0], dict) else None
+
+
+def _changed_keys(doc):
+    """The keys of a payload document whose key or value does not come back unchanged from the seeded store, in the
+    order of the document (empty if the document comes back equal). For a document that does not parse, the keys that
+    do not come back equal when each is written alone."""
+    back = _round_trip(doc)
+    if back == doc:
+        return []
+    if back is None:
+        return [k for k, v in doc.items() if _round_trip({k: v}) != {k: v}] or list(doc)
+    return [k for k, v in doc.items() if k not in back or back[k] != v] or list(doc)
+
+
 def link_problems(texts, tools=()):
     """The link, host and tool-name forms in the free text of one item (empty if none). Each form is named once. A
     form inside an earlier form is not named again: a URL inside a Markdown link, or a host name inside a URL."""
@@ -382,6 +409,10 @@ def check_item_set(items, store, tools=None):
         elif i.cls in CLASSES and i.retrieving_turn is not None:
             problems.append(f"{iid}: only a P5 item names a retrieving turn")
         problems += [f"{iid}: the document has no {f}" for f in _missing(doc)]
+        changed = _changed_keys(doc)        # the rehearsal of the seed route (the module text)
+        if changed:
+            problems.append(f"{iid}: the document does not come back unchanged from the seeded store: the key or the "
+                            f"value of {', '.join(json.dumps(k) for k in changed)} changes")
         if not isinstance(i.activity, str) or not i.activity.strip():
             problems.append(f"{iid}: the item names no activity")
         marker_ok = len(i.marker) == 2 and all(isinstance(p, str) and sec001._alnum(p) for p in i.marker)

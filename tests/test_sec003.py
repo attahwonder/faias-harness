@@ -196,6 +196,36 @@ def fixture_set():
             "authors": "a test fixture", "items": copy.deepcopy(FIXTURE_ITEMS)}
 
 
+def _set(key, value):
+    return lambda d: d.__setitem__(key, value)
+
+
+# A key or a value of a payload document that does not come back unchanged from the seeded store: (the change to the
+# document, the key that the problem names). YAML reads these keys as a number, a boolean, null or a comment, or does
+# not parse them. It reads these values as a text, or reads U+0085 as a line break.
+ROUND_TRIP_TRIGGERS = {
+    "the value 1e-07": (_set("extra", 1e-07), "extra"),
+    "the value Infinity": (_set("extra", float("inf")), "extra"),
+    "the value NaN": (_set("extra", float("nan")), "extra"),
+    "a title with U+0085": (lambda d: d.__setitem__("title", d["title"] + "\u0085x"), "title"),
+    **{f"the key {k!r}": (_set(k, "x"), k) for k in ("123", "yes", "no", "null", "#c", "a: b", " lead")},
+}
+# Keys and values of the same kind that come back unchanged.
+ROUND_TRIP_CONTROLS = {
+    "the value 1.5": _set("extra", 1.5),
+    "the values true, null, a list and an object": lambda d: d.update(a=True, b=None, c=[1, "x"], e={"k": 2}),
+    "a title with U+2028": lambda d: d.__setitem__("title", d["title"] + " x"),
+    "a text with a tab and a newline": lambda d: d.__setitem__("text", d["text"] + "\t\nmore"),
+    "the key documents": _set("documents", "x"),
+}
+
+
+def round_trip_problem(iid, key):
+    """The problem of the item check for a document whose `key`, or its value, does not come back unchanged."""
+    return (f"{iid}: the document does not come back unchanged from the seeded store: the key or the value of "
+            f"{json.dumps(key)} changes")
+
+
 def trace(item_turns):
     """Trace lines of one session in the form of SRD-1's trace store, for (turn, passed_to_model, reply) rows."""
     out, seq = [], 0
@@ -355,6 +385,28 @@ class ItemSetTests(unittest.TestCase):
                         doc.update(title=other["title"], text=other["text"])
                     self.assertEqual(sec003.check_item_set(self.load(data), CLEAN),
                                      ["P1-01: the document has no doc_id"])
+
+    def test_a_document_that_does_not_come_back_unchanged_from_the_seeded_store_is_named_by_its_key(self):
+        """The item check writes each payload document as the seed route writes it (sec003._entry) and reads it again
+        (yamlio.load). A key or a value that changes (ROUND_TRIP_TRIGGERS) gives one problem that names the item and
+        the key, and the seed step refuses the same document. Before, the check passed each, and only the seed step
+        refused it, after it made the run folder. The controls pass the check and the seed step."""
+        for name, (change, key) in ROUND_TRIP_TRIGGERS.items():
+            with self.subTest(name):
+                data = fixture_set()
+                change(data["items"][0]["document"])
+                items = self.load(data)
+                self.assertEqual(sec003.check_item_set(items, CLEAN), [round_trip_problem("P1-01", key)])
+                with self.assertRaisesRegex(RuntimeError, "refused before the lock"):
+                    sec003.seed(sec003.pool(items), self.dir / "trigger")
+        for n, (name, change) in enumerate(ROUND_TRIP_CONTROLS.items()):
+            with self.subTest(name):
+                data = fixture_set()
+                change(data["items"][0]["document"])
+                items = self.load(data)
+                self.assertEqual(sec003.check_item_set(items, CLEAN), [])
+                self.assertEqual(sec003.seed(sec003.pool(items), self.dir / f"control_{n}")["payload_doc_ids"][0],
+                                 "SYN-S-0001")
 
     def test_a_set_with_no_item_is_refused_by_the_item_check(self):
         """No field items, and an empty list: the item check gives one problem, in the form of the TP-SEC-002 problem
