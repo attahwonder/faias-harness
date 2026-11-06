@@ -7,7 +7,7 @@ run of each unit, a `run_stopped` record where the run stopped, and a `summary` 
 The header holds the procedure ID, title and star label, copied from records/<procedure>.yaml (never computed); the
 tier; the model, the routing locks, the prices, the cap and the settings hash; the corpus (the item file's name and
 SHA-256, its dataset GUID, status and authors, the splits that ran, k, and a manifest of the units with the SHA-256 of
-each turn and the checks of each unit); the checks that the item file declares, as declared; the store mode; the scorer
+each turn, the checks and the scoring fields (`meta`) of each unit); the checks that the item file declares, as declared; the store mode; the scorer
 status ("uncalibrated"); "item outcomes, measure not computed"; what a reader of one exchange (the judge pass) reads; the
 steps not in the run. The lock is a time and a SHA-256 over LOCK_KEYS.
 
@@ -50,7 +50,8 @@ SCORER = {
     ],
 }
 MEASURES = {"status": MEASURE_STATUS,
-            "note": "the engine writes item-level outcomes only; a scorer of the procedure's measures does not exist yet"}
+            "note": "the engine writes item-level outcomes only; for a procedure with a measure scorer "
+                    "(tierm_measures.py), the bench report computes the measures from this log afterwards"}
 JUDGE_VIEW = ("a reader of one exchange (the judge pass, which runs after the run and writes its own signed log) reads "
               "`request` and `reply` of each run record: for one turn, the customer text and the reply; for more "
               "turns, the conversation before the last reply as a transcript, and the last reply. Each turn's own reply "
@@ -66,7 +67,8 @@ REDACTION = ("each reply is redacted with sec006.redact (the staged placeholders
              "and before it is stored; each turn holds the counts in `placeholders`. The customer turns are item text "
              "and are stored as they were sent")
 NOT_IN_RUN = [
-    "a measure of the procedure: the engine records item outcomes only (no scorer of the procedure's measures exists)",
+    "a measure of the procedure: the engine records item outcomes only (the bench report computes the measures of "
+    "a procedure with a scorer from this log)",
     "a model judge: the judge pass runs after the run and writes its own signed log",
     "Tier S: tools and retrieval are off",
     "the steps of the procedure that need a firm, its data or its production system",
@@ -78,7 +80,8 @@ TARGET_README = ("This folder holds SRD-1's own trace store: each customer turn 
 
 def unit_entry(u):
     return {"unit": u.id, "item": u.item, "variant_of": u.variant_of, "class": u.cls, "split": u.split,
-            "turns": len(u.turns), "turn_sha256": [runlog.sha256_hex(t) for t in u.turns], "checks": list(u.checks)}
+            "turns": len(u.turns), "turn_sha256": [runlog.sha256_hex(t) for t in u.turns], "checks": list(u.checks),
+            "meta": dict(u.meta)}
 
 
 def build_header(settings, *, record, data, units, checks, allow_hosts, system_prompt_sha256, confirmation,
@@ -111,7 +114,9 @@ def build_header(settings, *, record, data, units, checks, allow_hosts, system_p
                    "runs_per_item_basis": "set in the bench file (3 to 20); the engine reads no count from the procedure",
                    "manifest": manifest, "units_sha256": runlog.sha256_hex(runlog.canonical(manifest)),
                    "scoring": "the deterministic checks that the item file declares, on each reply; item outcomes "
-                              "only; no measure; no model judge in this log"},
+                              "only; no measure; no model judge in this log. Each manifest entry's `meta` holds the "
+                              "item fields that the measure scorer of the procedure reads (tierm_measures.FIELDS), "
+                              "in both store modes"},
         "checks": checks,
         "measures": MEASURES,
         "variant": {"name": tierm.VARIANT, "purpose": "the standard system prompt of SRD-1 minimal"},
@@ -258,8 +263,8 @@ def check(recs, repo=tierm.REPO, use_repo=True):
     by_unit = {}
     for e in manifest:
         if not (isinstance(e, dict) and set(e) == {"unit", "item", "variant_of", "class", "split", "turns",
-                                                   "turn_sha256", "checks"}
-                and isinstance(e["turns"], int) and isinstance(e["turn_sha256"], list)
+                                                   "turn_sha256", "checks", "meta"}
+                and isinstance(e["meta"], dict) and isinstance(e["turns"], int) and isinstance(e["turn_sha256"], list)
                 and len(e["turn_sha256"]) == e["turns"] >= 1 and isinstance(e["checks"], list)
                 and not set(e["checks"]) - names):
             problems.append("header: a manifest entry is malformed")

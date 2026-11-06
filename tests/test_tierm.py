@@ -21,7 +21,7 @@ import yaml
 from faias_harness import bench, preflight
 from faias_harness import settings as settings_mod
 from faias_harness.egress import EgressClient
-from faias_harness.engine import benchreport, runlog, spike, tierm, tierm_log
+from faias_harness.engine import benchreport, runlog, spike, tierm, tierm_log, tierm_measures
 from targets.srd1.app.gateway import Gateway
 from tests.helpers import EVIDENCE_RAW, FAKE_KEY_VALUE, KEY_ENV, StandInModelHost, no_outside_network
 
@@ -400,8 +400,9 @@ class BenchTests(Case):
         rows = [r for r in runlog.read_log(report) if r["type"] == "row"]
         self.assertEqual([r["model_id"] for r in rows], [MODEL_A, MODEL_B])
         for r in rows:
-            self.assertEqual((r["procedure"], r["star"], r["measures"], r["measure_status"]),
-                             (TP, "★2", {}, "item outcomes, measure not computed"))
+            # TP-MOD-014 has a measure scorer (tierm_measures.py); this fixture gives none of the fields that it reads.
+            self.assertEqual((r["procedure"], r["star"], r["measure_status"]), (TP, "★2", tierm_measures.NOT_COMPUTED))
+            self.assertIn("carry no `sample` field", r["measures"]["private"]["status"])
             self.assertEqual(r["labels"], [benchreport.LABEL, benchreport.UNCALIBRATED])
         self.assertEqual(rows[1]["item_outcomes"]["private"]["checks"]["decision"]["values"], {"NONE": 12})
         # 18 calls per model (15 runs, one of two turns) and the probe pair.

@@ -14,7 +14,9 @@ hash, the log's own label, the scorer status, the run status and the list of ste
 (`not_in_run`, where the log has one). For each measure of the log summary (M1, M2 and so on) it gives the rate, the
 count of successes and items where the measure holds them, k (the runs per item) and a Wilson 95% interval on the item
 rate. With 0 successes the row says to report the upper bound only. A measure with no count of successes and items has
-no interval, and the row says so. Every row carries the label LABEL. A row of a log whose scorer is not calibrated
+no interval, and the row says so. A row of a Tier M engine log (tierm_log.py) copies its item outcomes; for a
+procedure with a measure scorer (tierm_measures.py) it also holds the measures that the scorer computes from the log,
+one block for each split, and the FAIAS line that sets no threshold. Every row carries the label LABEL. A row of a log whose scorer is not calibrated
 also carries UNCALIBRATED. A row whose procedure ID starts with "TP-AGT-" also carries PROPENSITY. The report has no
 composite score.
 
@@ -37,7 +39,7 @@ from cryptography.exceptions import InvalidSignature
 from cryptography.hazmat.primitives import serialization
 
 from .. import __version__
-from . import runlog, sec001
+from . import runlog, sec001, tierm_measures
 
 REPO = Path(__file__).resolve().parents[2]
 SCHEMA = "faias-bench-report/1"
@@ -59,7 +61,8 @@ RAN, NOT_RUN, REFUSED, ERROR = "run", "not run", "refused", "error"
 ROW_STATES = (RAN, NOT_RUN, REFUSED, ERROR)
 # The count pairs of a measure, as (successes, items). TP-SEC-001 and TP-SEC-006 measures hold both.
 COUNT_PAIRS = (("successful_items", "items"),)
-CODE_FILES = ("faias_harness/bench.py", "faias_harness/engine/benchreport.py")
+CODE_FILES = ("faias_harness/bench.py", "faias_harness/engine/benchreport.py", "faias_harness/engine/tierm_measures.py",
+              "faias_harness/engine/tierm_textscore.py")
 LOCK_KEYS = ("bench_settings_sha256", "mode", "cap_usd", "models", "cells", "code")
 LOCK_COVERS = "bench settings hash, mode, bench cap, models, cells (with the settings hash of each), code block"
 
@@ -147,6 +150,10 @@ def row_from_log(log_path, cell, report_dir):
     }
     if "measure_status" in s:       # a Tier M engine log (tierm_log.py): item outcomes, no measure
         row.update(measure_status=s["measure_status"], item_outcomes=s.get("item_outcomes"))
+        scored = tierm_measures.row_measures(recs)      # None for a procedure with no measure scorer
+        if scored is not None:
+            row.update(measure_status=scored["status"], measures=scored["measures"],
+                       measure_threshold=scored["threshold"])
     return row
 
 
