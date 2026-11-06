@@ -672,6 +672,38 @@ class OverlapToolTests(unittest.TestCase):
                     for c in self.COMPARATORS + self.TRAIN + self.TEST:
                         self.assertNotIn(c["question"], text)
 
+    def test_an_out_path_whose_folder_is_not_found_is_refused_before_any_input_is_read(self):
+        """An --out path in a folder that does not exist, and one under a file: the tool refuses each in one line, in
+        the form of its refusal of an --out path that exists, before it reads the comparator file or a GSM8K file. It
+        writes no result (exit 2). Before, it read the inputs and then stopped with a FileNotFoundError traceback."""
+        with tempfile.TemporaryDirectory() as d:
+            d = Path(d)
+            gsm = self.gsm8k_files(d)
+            comp = d / "comparators.json"
+            comp.write_text(json.dumps({"comparators": self.COMPARATORS}), encoding="utf-8")
+            (d / "a_file").write_text("x", encoding="utf-8")
+            for name, out in {"a folder that does not exist": d / "absent" / "overlap.json",
+                              "a file in place of the folder": d / "a_file" / "overlap.json"}.items():
+                with self.subTest(name), mock.patch.object(OVERLAP_TOOL, "read_file",
+                                                           side_effect=AssertionError("an input was read")) as read:
+                    rc, text = self.run_tool(comp, gsm, out)
+                    self.assertEqual((rc, text), (2, f"refused: the folder {out.parent} of {out} is not found\n"))
+                    read.assert_not_called()
+                    self.assertFalse(out.exists())
+
+    def test_a_result_that_cannot_be_written_is_refused_in_one_line(self):
+        """The system refuses the write of the result (a PermissionError here): the tool refuses in one line, in the
+        words of its refusal of a file that it cannot read, and exits 2. Before, it stopped with a traceback."""
+        with tempfile.TemporaryDirectory() as d:
+            d = Path(d)
+            gsm = self.gsm8k_files(d)
+            comp, out = d / "comparators.json", d / "overlap.json"
+            comp.write_text(json.dumps({"comparators": self.COMPARATORS}), encoding="utf-8")
+            with mock.patch.object(Path, "write_bytes", side_effect=PermissionError(13, "Permission denied")):
+                rc, text = self.run_tool(comp, gsm, out)
+            self.assertEqual((rc, text), (2, f"refused: {out} cannot be written (Permission denied)\n"))
+            self.assertFalse(out.exists())
+
     def test_a_run_never_spans_two_questions(self):
         files = [("a.jsonl", b'{"question": "one two three four"}\n{"question": "five six seven eight"}\n')]
         rows = OVERLAP_TOOL.overlap([{"id": "X", "question": "three four five six"}], files)

@@ -10,7 +10,8 @@ writes the result file: the SHA-256 of the comparator file and of each GSM8K fil
 its ID, the length of its longest run and where that run is (file and line index, from 0). The result holds no text.
 mod011.check_comparators reads it. A run of OVERLAP_LIMIT (8) words or more is a problem there.
 
-The tool reads no network and calls no model. It refuses an --out path that exists. It refuses a comparator file or a
+The tool reads no network and calls no model. It refuses an --out path that exists, and an --out path whose folder is
+not found, before it reads any input. It refuses a result file that it cannot write. It refuses a comparator file or a
 GSM8K file that is not found, or that the system does not let it read (read_file). It refuses a comparator file in
 which a JSON object holds a key more than once, at any depth, with the key, as the engine does (jsonkeys.unique_keys):
 plain json.loads keeps only the last value. It also refuses a comparator file that is not UTF-8 JSON, one that does
@@ -148,6 +149,9 @@ def main(argv=None):
     if out.exists():
         print(f"refused: {out} exists")
         return 2
+    if not out.parent.is_dir():         # before any input is read
+        print(f"refused: the folder {out.parent} of {out} is not found")
+        return 2
     comp = Path(a.comparators)
     try:
         raw = read_file(comp, "comparator file")
@@ -159,7 +163,11 @@ def main(argv=None):
     except ValueError as e:         # the refusals of read_file, read_comparators and question_stream
         print(f"refused: {e}")
         return 2
-    out.write_bytes((json.dumps(res, indent=1, ensure_ascii=False) + "\n").encode("utf-8"))
+    try:
+        out.write_bytes((json.dumps(res, indent=1, ensure_ascii=False) + "\n").encode("utf-8"))
+    except OSError as e:            # in the words of read_file
+        print(f"refused: {out} cannot be written ({e.strerror or type(e).__name__})")
+        return 2
     print(f"wrote {out}: {len(res['results'])} comparators; {len(res['at_or_above_limit'])} at or above the limit of "
           f"{mod011.OVERLAP_LIMIT} words: {', '.join(map(str, res['at_or_above_limit'])) or 'none'}")
     return 1 if res["at_or_above_limit"] else 0
