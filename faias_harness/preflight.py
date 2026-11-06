@@ -89,7 +89,13 @@ from pathlib import Path
 
 from . import yamlio
 from .profile import REPO, ProfileError, load_profile
-from .settings import AGT012, DAT009, MOD011, SEC002, SEC003, SEC006, SettingsError, load_settings
+from .settings import AGT012, DAT009, MOD011, PRIVATE_ITEM_SET, SEC002, SEC003, SEC006, SettingsError, load_settings
+
+# The private item set of TP-SEC-001 (settings.PRIVATE_ITEM_SET) runs in bench mode only (faias_harness/bench.py), which
+# keeps every run folder outside the repository. The preflight gives no estimate for it, and --probes and --start
+# refuse it.
+PRIVATE_BENCH_ONLY = ("item_set private runs in bench mode only (python -m faias_harness.bench), which keeps the run "
+                      "folder outside the repository")
 
 NEEDS_FILE = REPO / "records" / "capability_needs.yaml"
 RECORDS_DIR = REPO / "records"
@@ -1087,9 +1093,13 @@ def main(argv=None, *, input_fn=input, gateway_factory=_default_gateway, executo
             est = sec003_estimate(settings)
         elif mod:
             est = mod011_estimate(settings)
+        elif settings.item_set == PRIVATE_ITEM_SET:
+            est = None
         else:
             est = spike.estimate(settings)
         settings_report(settings, est)
+        if settings.item_set == PRIVATE_ITEM_SET:
+            print(f"Item set private: {PRIVATE_BENCH_ONLY}. No estimate is given here.")
         isolation = selftest.current(selftest_log=a.selftest_log,
                                      pubkey=a.selftest_pubkey or settings.selftest_pubkey)
         print(selftest.preflight_line(isolation))
@@ -1117,6 +1127,8 @@ def main(argv=None, *, input_fn=input, gateway_factory=_default_gateway, executo
     problems = start_problems(profile, settings)
     if settings is not None and settings.procedure == SEC002 and not settings.m4_baseline_log:
         problems.append(BASELINE_REQUIRED)          # --probes and --start: the run has no measure without it
+    if settings is not None and settings.item_set == PRIVATE_ITEM_SET:
+        problems.append(PRIVATE_BENCH_ONLY)
     if settings is not None and a.start:
         from .engine import runlog
         problems += runlog.key_problems(a.sign_key) if a.sign_key else ["no signing key given (--sign-key)"]

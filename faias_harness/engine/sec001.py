@@ -6,7 +6,8 @@ Two item sets. `load_items` returns the items and the clean-baseline requests of
 items/TP-SEC-001.json: 131 items over C1 to C4 and 25 clean-baseline requests (items/README.md says where they come
 from). A run on it is labelled "uncalibrated scorer, not a finding": the scorer below has not been measured against
 human labels. The baseline requests are sent and recorded, and never scored. The second set is the engine spike's,
-below.
+below. A third set, `private` (bench mode), reads a private item file outside the repository, pinned by its SHA-256
+(private_problems). Its label adds "private item set, not in the repository".
 
 What the spike is. It checks that the engine works from end to end. It uses 20 items (5 for each of the four
 technique classes C1 to C4), not the 100 or more that the procedure asks for, and it has no clean-baseline arm.
@@ -30,6 +31,7 @@ It does not find a canary or a marker
 that is encoded, spelled out or split across sentences. It can miss a commitment that does not name the product. It can count a
 sentence that quotes a commitment without a hedge. Nobody has measured its error rate against human labels.
 """
+import hashlib
 import json
 import math
 import re
@@ -441,15 +443,104 @@ OBJECTIVES = {"C1": _OBJ_MARKER, "C2": _OBJ_COMMIT, "C3": _OBJ_COMMIT, "C4": _OB
 _OBJ_BASELINE = "none: an ordinary request with no attack"
 
 
-def load_items(item_set="TP-SEC-001", repo=REPO):
-    """The items and the clean-baseline requests of a set, as two tuples of Item. The spike set has no baseline."""
-    if item_set == "spike":
-        return ITEMS, ()
-    if item_set != "TP-SEC-001":
-        raise ValueError(f"unknown item set: {item_set}")
-    data = json.loads((Path(repo) / "items" / "TP-SEC-001.json").read_text(encoding="utf-8"))
+def _parse_set(data, baseline_key=True):
     items = tuple(Item(i["id"], i["class"], i["activity"], OBJECTIVES[i["class"]], i["text"],
                        marker=i.get("marker", ""), subject=(i.get("product") or "").lower())
                   for i in data["items"])
-    baseline = tuple(Item(b["id"], BASELINE, b["activity"], _OBJ_BASELINE, b["text"]) for b in data["baseline"])
+    rows = data["baseline"] if baseline_key else data.get("baseline") or []
+    baseline = tuple(Item(b["id"], BASELINE, b["activity"], _OBJ_BASELINE, b["text"]) for b in rows)
     return items, baseline
+
+
+def load_items(item_set="TP-SEC-001", repo=REPO, private_file=None, private_sha256=None):
+    """The items and the clean-baseline requests of a set, as two tuples of Item. The spike set has no baseline.
+    The private set (PRIVATE_SET) reads `private_file`, which must pass private_problems; a ValueError names each
+    problem."""
+    if item_set == "spike":
+        return ITEMS, ()
+    if item_set == PRIVATE_SET:
+        problems, data = private_problems(private_file, private_sha256, repo)
+        if problems:
+            raise ValueError("; ".join(problems))
+        return _parse_set(data, baseline_key=False)
+    if item_set != "TP-SEC-001":
+        raise ValueError(f"unknown item set: {item_set}")
+    data = json.loads((Path(repo) / "items" / "TP-SEC-001.json").read_text(encoding="utf-8"))
+    return _parse_set(data)
+
+
+def items_for(settings, repo=REPO):
+    """The items and the clean-baseline requests of the item set of `settings` (load_items). For the private set, the
+    file and its SHA-256 come from the settings (private_items_file, private_items_sha256)."""
+    return load_items(settings.item_set, repo=repo, private_file=getattr(settings, "private_items_file", None),
+                      private_sha256=getattr(settings, "private_items_sha256", None))
+
+
+# ---------- the private item set (bench mode) ----------
+# A private item file holds the private split of TP-SEC-001 items. It is kept outside the repository and pinned by its
+# SHA-256 in the settings, as the TP-MOD-011 comparator file is. Its form is that of items/TP-SEC-001.json: `items` (a
+# non-empty list) and, optionally, `baseline`. Other fields are allowed and not read. A JSON object with a repeated key
+# is refused (jsonkeys.unique_keys). No message quotes the text of an item.
+PRIVATE_SET = "private"
+LABELS[PRIVATE_SET] = "uncalibrated scorer, not a finding; private item set, not in the repository"
+_PRIVATE_FIELDS = {"C1": ("marker",), "C2": ("product",), "C3": ("product",), "C4": ()}
+
+
+def _inside(path, repo):
+    p, r = Path(path).resolve(), Path(repo).resolve()
+    return p == r or r in p.parents
+
+
+def _text(v):
+    return isinstance(v, str) and bool(v.strip())
+
+
+def private_problems(path, sha256, repo=REPO):
+    """(problems, data) for a private item file. The file must be named, outside the repository, present, of the
+    SHA-256 `sha256`, one UTF-8 JSON object with no repeated key, and of the form of items/TP-SEC-001.json: each item
+    with a unique `id`, a `class` of C1 to C4, an `activity` and a `text`, a `marker` for C1 and a `product` for C2 and
+    C3; each baseline request with a unique `id`, an `activity` and a `text`. `data` is None when there is a problem."""
+    from .jsonkeys import RepeatedKey, unique_keys
+    if not _text(path):
+        return ["no private item file is named (private_items_file)"], None
+    if _inside(path, repo):
+        return ["the private item file is inside the repository; the private split stays outside it"], None
+    if not Path(path).is_file():
+        return ["the private item file is absent"], None
+    raw = Path(path).read_bytes()
+    if hashlib.sha256(raw).hexdigest() != sha256:
+        return ["the private item file does not have the SHA-256 that the settings name (private_items_sha256)"], None
+    try:
+        data = json.loads(raw.decode("utf-8"), object_pairs_hook=unique_keys)
+    except RepeatedKey as e:
+        return [f"the private item file is refused: {e}"], None
+    except ValueError:
+        return ["the private item file is not UTF-8 JSON"], None
+    if not isinstance(data, dict):
+        return ["the private item file does not hold one JSON object"], None
+    out, ids = [], set()
+    items, base = data.get("items"), data.get("baseline", [])
+    if not (isinstance(items, list) and items):
+        out.append("the private item file has no list of items")
+        items = []
+    if not isinstance(base, list):
+        out.append("the baseline of the private item file is not a list")
+        base = []
+    for n, i in enumerate(items, 1):
+        ok = isinstance(i, dict) and i.get("class") in CLASSES and all(
+            _text(i.get(k)) for k in ("id", "activity", "text") + _PRIVATE_FIELDS[i["class"]])
+        if not ok:
+            out.append(f"item {n}: it needs an id, a class of {', '.join(CLASSES)}, an activity and a text, and a "
+                       "marker (C1) or a product (C2, C3)")
+        elif i["id"] in ids:
+            out.append(f"item {n}: the id is used more than once")
+        else:
+            ids.add(i["id"])
+    for n, b in enumerate(base, 1):
+        if not (isinstance(b, dict) and all(_text(b.get(k)) for k in ("id", "activity", "text"))):
+            out.append(f"baseline request {n}: it needs an id, an activity and a text")
+        elif b["id"] in ids:
+            out.append(f"baseline request {n}: the id is used more than once")
+        else:
+            ids.add(b["id"])
+    return out, (None if out else data)

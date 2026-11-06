@@ -83,6 +83,11 @@ of the match features: a number, or a number for each feature), each with a reas
 `tools_enabled: true` is refused, and so are `retrieval_filter` and `arms`. In evidence mode it needs the three reviewer
 values with their reasons, the cut-off with its source, the target family and the SME record hash. The settings enter
 the settings hash only for a TP-MOD-011 run, so every other file keeps its settings hash.
+
+The item set `private` (bench mode, faias_harness/bench.py) applies to TP-SEC-001 on SRD-1 only. It needs
+`private_items_file`, the path of a private item file outside the repository, and `private_items_sha256`, its SHA-256.
+The engine refuses the file as sec001.private_problems says. The two keys enter the settings hash only with the item
+set private, so every other file keeps its settings hash. An external run does not take the private item set.
 """
 import datetime
 import hashlib
@@ -102,10 +107,15 @@ TOP_OPTIONAL = ["max_tokens", "reviewer_values", "temperature", "seed", "runs_pe
                 "procedure", "store_replies", "m4_baseline_log", "m4_baseline_pubkey", "tools_enabled",
                 "tool_key_env", "containment", "halt_on_bypass", "selftest_pubkey", "retrieval_filter",
                 "delegation_credential", "arms", "halt_on_crossing", "baseline_log", "baseline_pubkey", "benchmarks",
-                "comparator_file", "comparator_sha256", "overlap_result", "cited", "declared", "sme_record_sha256"]
+                "comparator_file", "comparator_sha256", "overlap_result", "cited", "declared", "sme_record_sha256",
+                "private_items_file", "private_items_sha256"]
 RUNS_MIN, RUNS_MAX, RUNS_DEFAULT = 3, 20, 3     # three is the FAIAS minimum (PLAYBOOK_SEC_001.md line 27)
 # The item set of a run: the full set in items/TP-SEC-001.json (the default), or the 20 items of the engine spike.
 ITEM_SETS, ITEM_SET_DEFAULT = ("TP-SEC-001", "spike"), "TP-SEC-001"
+# The private item set of a TP-SEC-001 run on SRD-1 (bench mode): a private item file outside the repository, pinned by
+# its SHA-256 (sec001.private_problems). Only that item set takes the two keys, and it needs both.
+PRIVATE_ITEM_SET = "private"
+PRIVATE_KEYS = ("private_items_file", "private_items_sha256")
 # The procedure of an SRD-1 run (version 0.6). TP-SEC-006 runs its own item set, and only it takes m4_baseline_log,
 # m4_baseline_pubkey and a reviewer value for M3. It and TP-SEC-002 take store_replies.
 PROCEDURES, PROCEDURE_DEFAULT, SEC006, AGT012 = ("TP-SEC-001", "TP-SEC-006", "TP-AGT-012", "TP-DAT-009", "TP-SEC-002",
@@ -211,6 +221,8 @@ class Settings:
     tau_reason: object = None
     match_tolerance_value: object = None
     match_tolerance_reason: object = None
+    private_items_file: object = None           # item_set private only (TP-SEC-001, bench mode)
+    private_items_sha256: object = None
     kind = "srd1"           # a class attribute: not in the canonical content, so the settings hash is unchanged
 
     def routing(self):
@@ -278,6 +290,8 @@ class Settings:
                                                            "reason": self.match_tolerance_reason})
         if self.selftest_pubkey is not None:
             out["selftest_pubkey"] = self.selftest_pubkey
+        if self.item_set == PRIVATE_ITEM_SET:       # only then, so every other file keeps its settings hash
+            out.update(private_items_file=self.private_items_file, private_items_sha256=self.private_items_sha256)
         return out
 
     def containment_plan(self):
@@ -464,6 +478,17 @@ def validate(raw):
         problems += [f"{k} applies to the procedure TP-SEC-002 only" for k in SEC002_KEYS if k in raw]
     if not mod011:
         problems += [f"{k} applies to the procedure TP-MOD-011 only" for k in MOD011_KEYS if k in raw]
+    private = proc == PROCEDURE_DEFAULT and raw.get("item_set") == PRIVATE_ITEM_SET
+    if private:
+        if not (isinstance(raw.get("private_items_file"), str) and raw["private_items_file"].strip()):
+            problems.append("item_set private needs private_items_file, the path of the private item file outside the "
+                            "repository")
+        if not (isinstance(raw.get("private_items_sha256"), str) and SHA256_HEX.fullmatch(raw["private_items_sha256"])):
+            problems.append("item_set private needs private_items_sha256, the SHA-256 of the private item file (64 "
+                            "lower-case hexadecimal characters)")
+    else:
+        problems += [f"{k} applies to item_set private of the procedure TP-SEC-001 only" for k in PRIVATE_KEYS
+                     if k in raw]
     if "store_replies" in raw and proc not in STORE_PROCEDURES:
         problems.append(f"store_replies applies to the procedures {', '.join(STORE_PROCEDURES[:-1])} and "
                         f"{STORE_PROCEDURES[-1]} only")
@@ -531,7 +556,8 @@ def validate(raw):
             if k in raw:
                 problems.append(f"{k} applies to the procedure TP-SEC-006 only")
     else:
-        if "item_set" in raw and raw["item_set"] not in ITEM_SETS:
+        # The private item set is not named in the message: it runs in bench mode only (bench.py).
+        if "item_set" in raw and raw["item_set"] not in ITEM_SETS + (PRIVATE_ITEM_SET,):
             problems.append(f"item_set must be one of {', '.join(ITEM_SETS)}")
         for k in ("m4_baseline_log", "m4_baseline_pubkey"):
             if k in raw:
@@ -732,6 +758,7 @@ def from_raw(raw):
         training_cutoff_source=dec.get("training_cutoff_source"), target_family=dec.get("target_family"),
         sme_record_sha256=raw.get("sme_record_sha256"), tau_value=tau.get("value"), tau_reason=tau.get("reason"),
         match_tolerance_value=tol.get("value"), match_tolerance_reason=tol.get("reason"),
+        private_items_file=raw.get("private_items_file"), private_items_sha256=raw.get("private_items_sha256"),
     )
 
 

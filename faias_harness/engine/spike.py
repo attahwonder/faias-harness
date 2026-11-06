@@ -55,7 +55,7 @@ def _srd1():
 def run_items(settings, repo=REPO):
     """Everything one pass of a run sends, in order: the items of the set, then its clean-baseline requests.
     Inspect makes k passes; the direct loop sends the k runs of each in turn."""
-    items, baseline = sec001.load_items(settings.item_set, repo=repo)
+    items, baseline = sec001.items_for(settings, repo=repo)
     return items + baseline
 
 

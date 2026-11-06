@@ -277,7 +277,7 @@ def build_header(settings, *, allow_hosts, system_prompt_sha256, confirmation, p
     """The header, without the lock. `lock_header` adds the lock. `tools`: the tools block of a run with tools on
     (since 0.6); a run with tools off has no tools block, as before."""
     rec = sec001.load_record(repo=repo)
-    items, baseline = sec001.load_items(settings.item_set, repo=repo)
+    items, baseline = sec001.items_for(settings, repo=repo)
     header = {
         "type": "header", "schema": SCHEMA, "label": sec001.LABELS[settings.item_set], "engine_version": __version__,
         "code": code_facts(repo, redaction_file=REDACTION_FILE),
@@ -716,7 +716,7 @@ def check_log(path, repo=REPO, use_repo=True):
         problems.append(f"header: the label '{sec001.LABELS[item_set]}' is missing")
     problems += example_problems(h)
     runs = [r for r in recs if r.get("type") == "run"]
-    if use_repo:
+    if use_repo and item_set != sec001.PRIVATE_SET:     # a private set has no file in the repository; its label says so
         items, baseline = sec001.load_items(item_set, repo=repo)
         if (h.get("corpus") or {}).get("items_sha256") != items_digest(items, baseline):
             problems.append(f"header: the items hash differs from the item set '{item_set}' in the repository")
@@ -816,7 +816,7 @@ def verify_log(log_path, sig_path, pubkey_path=None, repo=REPO, use_repo=True):
 
     With `use_repo` false (`verify --no-repo`), the form is checked without the record and the item set of this
     checkout (`check_log`), and the message ends with the items hash line and "repository item set: not checked"."""
-    tail = "" if use_repo else "\n" + _no_repo_lines(log_path)
+    tail = "" if use_repo and not private_log(log_path) else "\n" + _no_repo_lines(log_path)
     try:
         s = json.loads(Path(sig_path).read_bytes().decode("utf-8"))
         data = Path(log_path).read_bytes()
@@ -834,6 +834,19 @@ def verify_log(log_path, sig_path, pubkey_path=None, repo=REPO, use_repo=True):
     form = "log form ok" if use_repo else "log form ok without the repository"
     m4 = m4_line(log_path)
     return True, f"PASS: signature valid ({pin}); {form}" + (f"\n{m4}" if m4 else "") + tail
+
+
+def private_log(log_path):
+    """True when line 1 of the log is the header of a TP-SEC-001 log on the private item set (sec001.PRIVATE_SET). Such
+    a log is checked without the repository item set in each mode, so `verify` prints the items hash line and
+    "repository item set: not checked". It reads line 1 only and checks nothing."""
+    try:
+        with open(log_path, encoding="utf-8") as f:
+            h = json.loads(f.readline())
+    except (OSError, ValueError):
+        return False
+    return (isinstance(h, dict) and h.get("schema") in KNOWN_SCHEMAS
+            and (h.get("corpus") or {}).get("item_set") == sec001.PRIVATE_SET)
 
 
 def _no_repo_lines(log_path):
