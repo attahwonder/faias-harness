@@ -156,6 +156,8 @@ def row_from_log(log_path, cell, report_dir):
                        measure_threshold=scored["threshold"])
     if "sub_rows" in s:     # a Tier S DAT engine log (tiersdat_log.py): one row for each condition or reading
         row["sub_rows"] = s["sub_rows"]
+    if "measures_not_computed" in s:    # a Tier S AGT engine log (tiers_agt_log.py): the measures it leaves out, scores
+        row.update(measures_not_computed=s["measures_not_computed"], scores=s.get("scores"))
     return row
 
 

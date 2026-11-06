@@ -577,6 +577,9 @@ def _default_executor(**kw):
     if getattr(kw["settings"], "kind", None) == "tiersdat":      # the Tier S DAT engine of bench mode
         from .engine import tiersdat
         return tiersdat.execute(**kw)
+    if getattr(kw["settings"], "kind", None) == "tiers_agt":      # the Tier S AGT engine of bench mode
+        from .engine import tiers_agt
+        return tiers_agt.execute(**kw)
     proc = kw["settings"].procedure
     if proc == SEC006:
         from .engine import run_sec006

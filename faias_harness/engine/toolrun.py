@@ -1,6 +1,7 @@
 """Serve SRD-1's tool for one engine run with tools on (since 0.6). Four engines use it: spike.execute (TP-SEC-001),
 run_sec006.execute (TP-SEC-006), run_agt012.execute (TP-AGT-012) and run_dat009.execute (TP-DAT-009, with the tools
-file targets/srd1/tools_retrieval.yaml).
+file targets/srd1/tools_retrieval.yaml). In bench mode the Tier S AGT engine (tiers_agt.execute) uses it too, with the
+store of its item set (`store`) and, for TP-AGT-001 and TP-AGT-010, the tools file targets/srd1/tools_tier_s.yaml.
 
 The run starts the harness's MCP tool emulator on 127.0.0.1 with SRD-1's tools file (targets/srd1/tools.yaml) and
 its synthetic store, and keeps the tool ledger in the run folder. It generates a key for the emulator in this
@@ -21,15 +22,16 @@ LEDGER_NAME = "tool_ledger.jsonl"
 
 
 class ToolRun:
-    """Use as a context manager, or call start() and stop()."""
+    """Use as a context manager, or call start() and stop(). `store` (the Tier S engine of bench mode) is a store file
+    that replaces the `store` of the tools file; None (the default) keeps the store of the tools file."""
 
-    def __init__(self, settings, run_dir, egress, tools_file=SRD1_TOOLS):
+    def __init__(self, settings, run_dir, egress, tools_file=SRD1_TOOLS, store=None):
         self.key_env = settings.tool_key_env
         self.env = {self.key_env: secrets.token_hex(32)}    # the per-run key: in this dict only
         self.tools_file = Path(tools_file)
         self.tools = mcp_tools.load_tools(self.tools_file)
         self.emulator = mcp_tools.ToolEmulator(self.tools, Path(run_dir) / LEDGER_NAME, api_key_env=self.key_env,
-                                               env=self.env)
+                                               env=self.env, store=store)
         self.egress = egress
         self.started = False
 
