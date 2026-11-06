@@ -10,8 +10,8 @@ writes the result file: the SHA-256 of the comparator file and of each GSM8K fil
 its ID, the length of its longest run and where that run is (file and line index, from 0). The result holds no text.
 mod011.check_comparators reads it. A run of OVERLAP_LIMIT (8) words or more is a problem there.
 
-The tool reads no network and calls no model. It refuses an --out path that exists, and an --out path whose folder is
-not found, before it reads any input. It refuses a result file that it cannot write. It refuses a comparator file or a
+The tool reads no network and calls no model. Before it reads any input, it refuses an --out path that exists, or
+whose folder is not found or is a file. It refuses a result file that it cannot write. It refuses a comparator file or a
 GSM8K file that is not found, or that the system does not let it read (read_file). It refuses a comparator file in
 which a JSON object holds a key more than once, at any depth, with the key, as the engine does (jsonkeys.unique_keys):
 plain json.loads keeps only the last value. It also refuses a comparator file that is not UTF-8 JSON, one that does
@@ -150,7 +150,8 @@ def main(argv=None):
         print(f"refused: {out} exists")
         return 2
     if not out.parent.is_dir():         # before any input is read
-        print(f"refused: the folder {out.parent} of {out} is not found")
+        print(f"refused: {out.parent} is not a folder" if out.parent.exists()
+              else f"refused: the folder {out.parent} of {out} is not found")
         return 2
     comp = Path(a.comparators)
     try:

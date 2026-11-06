@@ -672,24 +672,35 @@ class OverlapToolTests(unittest.TestCase):
                     for c in self.COMPARATORS + self.TRAIN + self.TEST:
                         self.assertNotIn(c["question"], text)
 
-    def test_an_out_path_whose_folder_is_not_found_is_refused_before_any_input_is_read(self):
-        """An --out path in a folder that does not exist, and one under a file: the tool refuses each in one line, in
-        the form of its refusal of an --out path that exists, before it reads the comparator file or a GSM8K file. It
-        writes no result (exit 2). Before, it read the inputs and then stopped with a FileNotFoundError traceback."""
+    def refused_before_any_input(self, make, want):
+        """Run the tool with the --out path that make(folder) gives, with read_file stubbed to fail. Check the one line
+        that want(out) gives, exit 2, no input read and no result written."""
         with tempfile.TemporaryDirectory() as d:
             d = Path(d)
             gsm = self.gsm8k_files(d)
             comp = d / "comparators.json"
             comp.write_text(json.dumps({"comparators": self.COMPARATORS}), encoding="utf-8")
+            out = make(d)
+            with mock.patch.object(OVERLAP_TOOL, "read_file", side_effect=AssertionError("an input was read")) as read:
+                rc, text = self.run_tool(comp, gsm, out)
+            self.assertEqual((rc, text), (2, want(out)))
+            read.assert_not_called()
+            self.assertFalse(out.exists())
+
+    def test_an_out_path_whose_folder_is_not_found_is_refused_before_any_input_is_read(self):
+        """An --out path in a folder that does not exist: the tool refuses it in one line, in the form of its refusal
+        of an --out path that exists, before it reads the comparator file or a GSM8K file. It writes no result (exit
+        2). Before, it read the inputs and then stopped with a FileNotFoundError traceback."""
+        self.refused_before_any_input(lambda d: d / "absent" / "overlap.json",
+                                      lambda out: f"refused: the folder {out.parent} of {out} is not found\n")
+
+    def test_an_out_path_whose_folder_is_a_file_is_refused_before_any_input_is_read(self):
+        """An --out path under a file: the tool says that the file is not a folder, in one line, before it reads any
+        input. It writes no result (exit 2). Before, it read the inputs and then stopped with a traceback."""
+        def make(d):
             (d / "a_file").write_text("x", encoding="utf-8")
-            for name, out in {"a folder that does not exist": d / "absent" / "overlap.json",
-                              "a file in place of the folder": d / "a_file" / "overlap.json"}.items():
-                with self.subTest(name), mock.patch.object(OVERLAP_TOOL, "read_file",
-                                                           side_effect=AssertionError("an input was read")) as read:
-                    rc, text = self.run_tool(comp, gsm, out)
-                    self.assertEqual((rc, text), (2, f"refused: the folder {out.parent} of {out} is not found\n"))
-                    read.assert_not_called()
-                    self.assertFalse(out.exists())
+            return d / "a_file" / "overlap.json"
+        self.refused_before_any_input(make, lambda out: f"refused: {out.parent} is not a folder\n")
 
     def test_a_result_that_cannot_be_written_is_refused_in_one_line(self):
         """The system refuses the write of the result (a PermissionError here): the tool refuses in one line, in the
