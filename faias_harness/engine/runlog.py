@@ -58,6 +58,10 @@ items, and, as M6, the identifiable responses of the affected ones. A schema 9 l
 of an external run (variant external) also holds the blocks target, model, budget and pacing of schema 5
 (external_blocks), and `check_log` hands them to external_header_problems, as for schema 5.
 
+The judge log (`faias-judge-log/1`, engine/judge_log.py) is not a run log: it is a second reading of the replies of a
+signed run log by a model judge (engine/judge.py). `check_log` and `verify --no-repo` hand it to its module, and
+`rescore` says that it is not rescored. No earlier schema changes.
+
 Four more commands, none of which makes a network call:
 
   rescore  --log <log>               scores each run's reply again with the scorer of this checkout; exit 1 on a
@@ -114,6 +118,7 @@ SCHEMA_SEC002 = "faias-harness-run-log/9"   # 9 (version 0.8), for TP-SEC-002 on
 SCHEMA_SEC003 = "faias-harness-run-log/10"  # 10 (version 0.8), for TP-SEC-003 on SRD-1 minimal (sec003_log.py)
 SCHEMA_MOD011 = "faias-harness-run-log/11"  # 11, for TP-MOD-011 on SRD-1 minimal (mod011_log.py)
 SCHEMA_SELFTEST = "faias-harness-selftest-log/1"    # the containment self-test of the harness (selftest/__init__.py)
+SCHEMA_JUDGE = "faias-judge-log/1"      # the judge pass over a signed run log (judge.py, judge_log.py)
 EXTERNAL_SCHEMAS = (SCHEMA_V3, SCHEMA_EXTERNAL)
 # the logs with the code block and the wider lock
 CODE_SCHEMAS = (SCHEMA, SCHEMA_EXTERNAL, SCHEMA_SEC006, SCHEMA_AGT012, SCHEMA_DAT009, SCHEMA_SEC002, SCHEMA_SEC003,
@@ -664,6 +669,9 @@ def check_log(path, repo=REPO, use_repo=True):
     if h.get("schema") == SCHEMA_SELFTEST:
         from .. import selftest
         return selftest.check(path, recs, repo=repo, use_repo=use_repo)
+    if h.get("schema") == SCHEMA_JUDGE:
+        from . import judge_log
+        return judge_log.check(recs, repo=repo, use_repo=use_repo)
     rec = sec001.load_record(repo=repo) if use_repo else None
     schema = h.get("schema")
     if schema not in KNOWN_SCHEMAS:
@@ -872,6 +880,9 @@ def _no_repo_lines(log_path):
             items_line = mod011_log.summary_line(recs)
         elif recs[0].get("schema") == SCHEMA_SELFTEST:
             items_line = f"probe records: {sum(1 for r in recs if r.get('type') == 'probe')} (a self-test log has no item set)"
+        elif recs[0].get("schema") == SCHEMA_JUDGE:
+            from . import judge_log
+            items_line = judge_log.summary_line(recs)
         else:
             status, detail = items_hash_from_log(recs[0], [r for r in recs if r.get("type") == "run"])
             items_line = f"items hash: {status} ({detail})"
@@ -916,6 +927,8 @@ def rescore_log(log_path, repo=REPO, replies=None):
         return sec003_log.rescore(recs, repo=repo)
     if recs[0].get("schema") == SCHEMA_SELFTEST:
         return ["a self-test log has no replies to score; run `python -m faias_harness.selftest rerun --log <log>`"], None
+    if recs[0].get("schema") == SCHEMA_JUDGE:
+        return ["a judge log is a second reading of a run log; it is not rescored. Rescore the source log"], None
     h, runs = recs[0], [r for r in recs if r.get("type") == "run"]
     used = sha256_hex(Path(sec001.__file__).read_bytes())
     logged = (h.get("code") or {}).get("scorer_sha256")
