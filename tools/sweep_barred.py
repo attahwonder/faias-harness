@@ -15,15 +15,15 @@ import re
 import sys
 from pathlib import Path
 
-try:
-    from faias_harness import yamlio
-except ImportError:      # run as a script: tools/ is on the path, the repository root is not
-    sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-    from faias_harness import yamlio
+REPO = Path(__file__).resolve().parents[1]
+if __name__ == "__main__":
+    # Run as a script: the checkout of this file goes first on the path, so its modules win over an installed copy of
+    # the package. An installed copy can be older, for example one with no engine/jsonkeys.py. A process that loads
+    # this file as a module (sec006._sweep_patterns, the tests) has its package already, so its path does not change.
+    sys.path.insert(0, str(REPO))
+from faias_harness import yamlio  # noqa: E402
 # The one helper for a repeated key in a JSON object: json.loads keeps its last value only.
 from faias_harness.engine.jsonkeys import unique_keys  # noqa: E402
-
-REPO = Path(__file__).resolve().parents[1]
 
 _REVERSED = [
     "nevroN", "azriM", "demmahoM", "imiK", "keeSpeeD", "oMiM", "veJ", "efaSepyT", "rrevif", "tidder",
