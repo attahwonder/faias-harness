@@ -631,6 +631,22 @@ py -3.14 -X utf8 -m faias_harness.testability verify --report <folder>/testabili
 
 With `--sign-key`, the command signs `testability.json` with the run-signing key, as for a run log. The signature does not cover `testability.md`. Without `--sign-key`, the Markdown says "unsigned". The command refuses an `--out` folder inside `records/` or `faias_harness/`, and a folder that holds a report already. A report on a firm's own profile holds information about the firm. Keep it outside this repository.
 
+## Bench mode (not released)
+
+Bench mode runs a list of procedures against a list of models on SRD-1 minimal, and writes one signed bench report (`docs/ARCHITECTURE.md`, section 23). It is not in a release. It is tested against local stand-ins only, end to end for TP-SEC-001 and TP-SEC-006. No live run has used it.
+
+Each row of the report is one procedure, one tier and one model. Each row is labelled "Model benchmark result, not FAIAS assurance". A row of a log whose scorer is not calibrated is also labelled "Uncalibrated scorer, not a finding". A row of a procedure whose ID starts with `TP-AGT-` is also labelled "Model propensity, not control". The report has no composite score. The ★ of a row is copied from its member log. It is the method maturity of the FAIAS procedure, not a grade of the model.
+
+The bench folder must be outside the repository, and new or empty. Without `--start`, the command prints the matrix and the worst-case cost, and sends nothing. With `--start`, it makes model calls. It makes one probe pair for each model, then asks for one typed `yes` for the whole matrix. The probes and every cell count against one bench cap. A cell that stops stops the bench, and the later cells send nothing.
+
+```
+py -3.14 -X utf8 -m faias_harness.bench --bench targets/examples/bench.yaml --profile targets/srd1/profile.yaml --out <new folder outside the repository>
+py -3.14 -X utf8 -m faias_harness.bench --bench <bench.yaml> --profile targets/srd1/profile.yaml --out <new folder outside the repository> --start --sign-key <private key file> [--selftest-log <log> --selftest-pubkey <file>]
+py -3.14 -X utf8 -m faias_harness.bench verify --report <folder>/bench_report.jsonl [--pubkey <file>] [--no-repo]
+```
+
+In bench mode only, TP-SEC-001 can run a private item set (`item_set: private`). The item file is outside the repository. The settings name it in `private_items_file` and pin it with its SHA-256 in `private_items_sha256`. The preflight refuses this item set at `--probes` and `--start`.
+
 ## Relation to FAIAS
 
 The records are built from FAIAS version 1.3.4, published at <https://github.com/attahwonder/faias-standard> under CC BY 4.0. The records quote FAIAS text. Each quoted item carries the FAIAS file and the line number. `records/README.md` gives the attribution.

@@ -110,7 +110,12 @@ class BenchCase(unittest.TestCase):
             stack.enter_context(no_outside_network())
             stack.enter_context(mock.patch.dict(os.environ, ENV))
             stack.enter_context(contextlib.redirect_stdout(buf))
-            rc = bench.main(argv, input_fn=lambda p: answer, gateway_factory=gateway_factory, executor=executor,
+            self.asked = []         # each prompt that the runner gives to input_fn
+
+            def input_fn(prompt):
+                self.asked.append(prompt)
+                return answer
+            rc = bench.main(argv, input_fn=input_fn, gateway_factory=gateway_factory, executor=executor,
                             inspect_check=lambda: None)
             counts = {m: len(h.requests) for m, h in hosts.items()}
         return rc, buf.getvalue(), out, counts
@@ -124,6 +129,7 @@ class EndToEndTests(BenchCase):
         super().setUpClass()
         case = cls()
         cls.rc, cls.out_text, cls.out, cls.counts = case.run_bench(bench_raw(), "full")
+        cls.asked = case.asked
         cls.report = cls.out / benchreport.REPORT_NAME
         cls.recs = runlog.read_log(cls.report) if cls.report.exists() else []
 
@@ -200,6 +206,8 @@ class EndToEndTests(BenchCase):
     def test_t1_one_yes_one_probe_pair_per_model_and_the_confirmation_in_each_cell_header(self):
         h = self.recs[0]
         self.assertEqual(self.out_text.count("Type yes"), 0)        # the prompt goes to input_fn, not to stdout
+        self.assertEqual(len(self.asked), 1, self.asked)            # one yes for the four cells
+        self.assertEqual(len(h["cells"]), 4)
         conf = h["owner_confirmation"]
         self.assertEqual((conf["typed"], conf["scope"], conf["bench_settings_sha256"]),
                          ("yes", bench.YES_SCOPE, h["bench_settings_sha256"]))
@@ -220,6 +228,16 @@ class EndToEndTests(BenchCase):
         spent = [runlog.read_log(self.out / c["run_dir"] / "run_log.jsonl")[-1]["cost_usd"] for c in h["cells"]]
         self.assertEqual(spent, sorted(spent))          # each cell starts from the spend of the cells before it
         self.assertEqual(self.recs[-1]["spent_usd"], spent[-1])
+        # The carry, directly: cell 1 starts from the probe spend of every model (all probes come before the yes);
+        # each later cell starts from the cost of the cell before it.
+        own = [sum(r["cost_usd"] for r in runlog.read_log(self.out / c["run_dir"] / "run_log.jsonl")
+                   if r.get("type") == "run") for c in h["cells"]]
+        probes = sum(p["cost_usd"] for p in h["probes"].values())
+        self.assertGreater(probes, 0)
+        self.assertAlmostEqual(spent[0] - own[0], probes, delta=1e-6)
+        for n in range(1, len(spent)):
+            with self.subTest(cell=n + 1):
+                self.assertAlmostEqual(spent[n] - spent[n - 1], own[n], delta=1e-6)
 
     def test_t2_one_changed_byte_in_a_member_log_fails_and_names_the_cell(self):
         dst = self.copy("t2")
@@ -426,7 +444,18 @@ class PrivateSplitTests(BenchCase):
         for needle, raw in bad.items():
             with self.subTest(needle=needle):
                 self.assertTrue(any(needle in p for p in settings_mod.validate(raw)), settings_mod.validate(raw))
-        ext = {"kind": "external", "mode": "explore", "cap_usd": 1.0, "cost_per_call_usd": 0.01, "item_set": "private"}
+        # Every other procedure refuses item_set private in its own branch, with the item set that it takes.
+        for proc in settings_mod.PROCEDURES:
+            if proc == settings_mod.PROCEDURE_DEFAULT:
+                continue
+            with self.subTest(procedure=proc):
+                probs = settings_mod.validate(raw_settings(procedure=proc, item_set="private",
+                                                           private_items_file=str(good), private_items_sha256=sha))
+                self.assertTrue(any(p.startswith("item_set must be") and p.endswith(f"for the procedure {proc}")
+                                    for p in probs), probs)
+                self.assertIn("private_items_file applies to item_set private of the procedure TP-SEC-001 only",
+                              probs)
+        ext ={"kind": "external", "mode": "explore", "cap_usd": 1.0, "cost_per_call_usd": 0.01, "item_set": "private"}
         self.assertTrue(settings_mod.validate_external(ext))
 
     def test_t7_the_preflight_refuses_the_private_item_set(self):
@@ -476,6 +505,53 @@ class PrivateSplitTests(BenchCase):
                 r["request"] = r["request"] + " (changed)"
         log.write_bytes(b"".join(runlog.canonical(r).encode("utf-8") + b"\n" for r in recs))
         self.assertTrue(any("items hash differs" in p for p in runlog.check_log(log)), runlog.check_log(log))
+
+
+class PropensityLabelTests(unittest.TestCase):
+    """A row of a TP-AGT- procedure also carries "Model propensity, not control". No TP-AGT-012
+    cell runs end to end here, so the row is built from a minimal log and the check reads a minimal report."""
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.dir = Path(self.tmp.name)
+
+    def tearDown(self):
+        self.tmp.cleanup()
+
+    def cell(self, procedure="TP-AGT-012"):
+        return {"cell": 1, "procedure": procedure, "tier": "S", "model_id": MODEL_A, "run_dir": "01_m1_x_S",
+                "runs_per_item": 5}
+
+    def write(self, path, recs):
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_bytes(b"".join(runlog.canonical(r).encode("utf-8") + b"\n" for r in recs))
+
+    def test_the_label_is_on_each_tp_agt_row_and_on_no_other_row(self):
+        self.assertEqual(benchreport.PROPENSITY, "Model propensity, not control")
+        for proc, want in (("TP-AGT-012", True), ("TP-SEC-001", False), ("TP-SEC-006", False)):
+            with self.subTest(procedure=proc):
+                log = self.dir / proc / "run_log.jsonl"
+                self.write(log, [{"type": "header", "procedure": {"tp": proc, "star": 2}, "corpus": {},
+                                  "scorer": {"calibrated": False}, "model": {"pinned_id": MODEL_A}},
+                                 {"type": "summary", "status": "complete", "measures": {}}])
+                row = benchreport.row_from_log(log, self.cell(proc), self.dir)
+                self.assertEqual(benchreport.PROPENSITY in row["labels"], want, row["labels"])
+                self.assertEqual(row["labels"][:2], [benchreport.LABEL, benchreport.UNCALIBRATED])
+                nr = benchreport.row_not_run(self.cell(proc), benchreport.NOT_RUN, "a reason")
+                self.assertEqual(benchreport.PROPENSITY in nr["labels"], want, nr["labels"])
+
+    def test_check_refuses_a_tp_agt_row_without_the_label(self):
+        msg = f"the row does not carry the label '{benchreport.PROPENSITY}'"
+        for keep in (True, False):
+            with self.subTest(keep=keep):
+                row = benchreport.row_not_run(self.cell(), benchreport.NOT_RUN, "a reason")
+                if not keep:
+                    row["labels"] = [benchreport.LABEL]
+                rep = self.dir / f"keep_{keep}" / benchreport.REPORT_NAME
+                self.write(rep, [{"type": "header", "schema": benchreport.SCHEMA, "cells": [self.cell()]}, row,
+                                 {"type": "summary", "cells_planned": 1, "cells_run": 0}])
+                problems = benchreport.check(rep, None)
+                self.assertEqual(any(msg in p for p in problems), not keep, problems)
 
 
 class ShippedFilesTests(unittest.TestCase):

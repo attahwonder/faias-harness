@@ -15,7 +15,8 @@ hash, the log's own label, the scorer status, the run status and the list of ste
 count of successes and items where the measure holds them, k (the runs per item) and a Wilson 95% interval on the item
 rate. With 0 successes the row says to report the upper bound only. A measure with no count of successes and items has
 no interval, and the row says so. Every row carries the label LABEL. A row of a log whose scorer is not calibrated
-also carries UNCALIBRATED. The report has no composite score.
+also carries UNCALIBRATED. A row whose procedure ID starts with "TP-AGT-" also carries PROPENSITY. The report has no
+composite score.
 
 A row of a cell that did not run says "not run" (a cell after the cell that stopped the bench), "refused" (a check
 just before the cell refused it) or "error" (the engine raised before it signed a log). Each gives the reason.
@@ -43,6 +44,10 @@ SCHEMA = "faias-bench-report/1"
 REPORT_NAME = "bench_report.jsonl"
 LABEL = "Model benchmark result, not FAIAS assurance"
 UNCALIBRATED = "Uncalibrated scorer, not a finding"
+# FAIAS treats a halt or gate that rests on the agent's own reasoning as a fail indicator
+# (PLAYBOOK_AGT_002.md:22), so a TP-AGT- row measures what the model tends to do, not a control of the system.
+PROPENSITY = "Model propensity, not control"
+PROPENSITY_PREFIX = "TP-AGT-"
 STAR_NOTE = ("the star label of each row is the method maturity of the FAIAS procedure, copied from the header of the "
              "member log; it is not a grade of the model, and the bench never computes or raises it")
 COMPOSITE = "none: each row is one procedure, one tier and one model, and the report does not combine rows"
@@ -111,6 +116,12 @@ def measure_row(m, k):
     return out
 
 
+def row_labels(procedure, calibrated=False):
+    """The labels of a row: LABEL; UNCALIBRATED unless the scorer is calibrated; PROPENSITY for a TP-AGT- procedure."""
+    return ([LABEL] + ([] if calibrated else [UNCALIBRATED])
+            + ([PROPENSITY] if str(procedure).startswith(PROPENSITY_PREFIX) else []))
+
+
 def row_from_log(log_path, cell, report_dir):
     """The row of a cell that ran, built from its member log. `cell` is the cell entry of the header."""
     log_path = Path(log_path)
@@ -130,7 +141,7 @@ def row_from_log(log_path, cell, report_dir):
         "tier": cell["tier"], "model_id": (h.get("model") or {}).get("pinned_id"),
         "variant": (h.get("variant") or {}).get("name"), "item_set": corpus.get("item_set"),
         "settings_hash": h.get("settings_hash"), "label": h.get("label"),
-        "labels": [LABEL] + ([] if calibrated else [UNCALIBRATED]), "scorer_calibrated": calibrated,
+        "labels": row_labels(cell["procedure"], calibrated), "scorer_calibrated": calibrated,
         "run_status": s.get("status") or "no summary", "measures": measures,
         "not_in_run": h.get("not_in_run", "not stated in the member log"),
     }
@@ -138,7 +149,9 @@ def row_from_log(log_path, cell, report_dir):
 
 def row_not_run(cell, status, reason):
     return {"type": "row", "cell": cell["cell"], "status": status, "procedure": cell["procedure"],
-            "tier": cell["tier"], "model_id": cell["model_id"], "labels": [LABEL], "reason": reason}
+            "tier": cell["tier"], "model_id": cell["model_id"],
+            "labels": [LABEL] + ([PROPENSITY] if str(cell["procedure"]).startswith(PROPENSITY_PREFIX) else []),
+            "reason": reason}
 
 
 class BenchReport:
@@ -212,6 +225,8 @@ def check(path, report_pem, pubkey_path=None, repo=REPO, use_repo=True):
         log = path.parent / str(cell.get("run_dir")) / "run_log.jsonl"
         if LABEL not in (row.get("labels") or []):
             problems.append(f"{where}: the row does not carry the label '{LABEL}'")
+        if str(cell.get("procedure")).startswith(PROPENSITY_PREFIX) and PROPENSITY not in (row.get("labels") or []):
+            problems.append(f"{where}: the row does not carry the label '{PROPENSITY}'")
         if row.get("status") not in ROW_STATES:
             problems.append(f"{where}: the row status is unknown")
             continue
