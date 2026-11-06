@@ -147,6 +147,8 @@ def row_from_log(log_path, cell, report_dir):
     }
     if "measure_status" in s:       # a Tier M engine log (tierm_log.py): item outcomes, no measure
         row.update(measure_status=s["measure_status"], item_outcomes=s.get("item_outcomes"))
+    if "sub_rows" in s:     # a Tier S DAT engine log (tiersdat_log.py): one row for each condition or reading
+        row["sub_rows"] = s["sub_rows"]
     return row
 
 

@@ -44,7 +44,7 @@ ATTESTATION_FILE = "docs/HARNESS_ATTESTATION.md"
 DRAFT_MARK = "draft; for the maintainer's approval"
 LOG_NAME = "selftest_log.jsonl"
 # may not start without a passing, matching self-test log
-GATED = ("TP-AGT-012", "TP-DAT-009", "TP-SEC-003", "TP-MOD-011")
+GATED = ("TP-AGT-012", "TP-DAT-009", "TP-SEC-003", "TP-MOD-011", "TP-DAT-007", "TP-DAT-008")
 PLAYBOOK = "PLAYBOOK_AGT_014.md"
 LOCK_COVERS = ("procedure, thresholds with bases, scope (probe plan and declared sites), code manifest, attestation "
                "hash, probes file hash, record file hash")
