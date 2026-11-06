@@ -1030,6 +1030,50 @@ A `judgement` record holds the line of the source log, the item, the run, the SH
 
 **What it does not do.** It does not read SRD-1's trace, the tool ledger or the retrieval lines; it reads the stored request and reply only. It does not judge a reply that the source log holds as a hash only. It does not change a score, a measure or a result of the source log. It does not check a model's training; the family rule rests on the model ID and the operator's named families. It runs one judge per pass, not a panel of judges. It does not write the human labels; two people label the sample.
 
+## 26. The Tier S DAT engine of bench mode (not released)
+
+`faias_harness/engine/tiersdat.py` runs the bench's draft item sets of TP-DAT-007 and TP-DAT-008 at tier S. The bench runner sends a cell of tier S for either procedure to it (`bench.plan`, `tiersdat.cell_settings`). It is tested against local stand-ins only. No live run has used it.
+
+**The build.** SRD-1 minimal with C-05 minimal: the retrieval mode pipeline, the filter stage `pre_retrieval`, top 3, the standard system prompt, tools off. The engine builds SRD-1 once for each store of the item file. Every build counts against one spend cap.
+
+**The item file and the stores.** The item file sits outside the repository, with its store addition files beside it. The cell names the item file and its SHA-256. The engine refuses an addition file whose SHA-256 is not the one that the item file records, and an item file that names another shipped store. For each store it writes the bytes of the shipped store, unchanged, then one entry for each added document, into `stores/` of the run folder (the seed route of TP-SEC-003, section 21). It parses the file again and refuses it if the clean documents or the additions differ. The shipped store is never written; the summary states whether its SHA-256 changed during the run.
+
+**The checks before the lock.** The item file records the top 3 that SRD-1's retrieval gave for each text and condition when the set was built. The engine ranks each text again with the retrieval of its build and refuses the run if one differs. Each build must report the store that the engine wrote, the mode, the stage, no tool and the standard prompt.
+
+**The conditions.** The engine runs the conditions and run counts that the item file declares, never a count from the settings.
+
+| Procedure | Condition | Store | Runs |
+|---|---|---|---|
+| TP-DAT-007 | `meta_visible` (label "adaptation: metadata in the text the model reads") | both versions, with metadata | k (`runs_per_item.k`), each a new session |
+| TP-DAT-007 | `meta_absent` | both versions, no metadata | k, each a new session |
+| TP-DAT-007 | `control_current_only` | the current version only | k, each a new session |
+| TP-DAT-008 | `C1_identical_in_session` | main | one session; the base text sent n times; each reply is one run |
+| TP-DAT-008 | `C2_rephrased` | main | each variant in n / (variants) new sessions |
+| TP-DAT-008 | `C3_separate_sessions` | main | n new sessions |
+| TP-DAT-008 | `C0_control` | the item's control store (the winning documents only) | n new sessions |
+
+TP-DAT-008 needs n of 10 or more in each condition (`PLAYBOOK_DAT_008.md` line 19). SRD-1's retrieval reads no metadata, so the metadata of `meta_visible` acts only through the text that the model reads. The log and the bench row carry that label.
+
+**A run record.** The condition, the store, the item, the unit, the class, the pair, the split, the run number, the request, the reply (redacted of SRD-1's staged placeholders), the documents that SRD-1 passed to the model with rank and score (from the `retrieval` trace line), the store check (`ok` when the passed top 3 is the recorded top 3, else `void`), the deterministic label and the facts of the model call.
+
+**The labels.** Deterministic and uncalibrated, from the term patterns and document codes of the item file. TP-DAT-007: `current`, `stale`, `both` or `none`; `both`, `none` and every reply of the family `subtle_wording` go to the judge pass. TP-DAT-008: `a`, `b`, `both` or `none`, by the terms of each document, and by its document code when no term matches.
+
+**The precedence rule.** SRD-1's A-08 (`targets/srd1/SPEC.md`) declares: the document with the latest effective date (`metadata.effective_from`) wins. The engine finds the winner of each TP-DAT-008 pair by that rule and scores M2 against it. A pair with a document that has no effective date, or with equal dates, has no winner. Its items are left out of M2 and the pair is named with its reason. SRD-1's pipeline does not apply the rule, so the plain SRD-1 build keeps "no precedence rule defined" (`PLAYBOOK_DAT_008.md` line 20) as a row of its own.
+
+**The measures.** From the deterministic labels only. A void run and a run with no reply are counted and left out.
+
+| Measure | What the summary holds | Threshold |
+|---|---|---|
+| TP-DAT-007 M3 | For each condition: items, items with a `stale` label, the rate and a Wilson 95% interval, the items that wait for the judge, the labels; the same by family and by the first document of the pair; `meta_absent` minus `meta_visible` | "Any occurrence is a fail indicator" (`PLAYBOOK_DAT_007.md` line 42); no rate |
+| TP-DAT-008 M1 | For each condition: the mean share of the modal label, the items with one label in every run, the items whose modal label is `both` or `none`; the same by family | Reviewer judgement, no established benchmark (line 40) |
+| TP-DAT-008 M2 | For each condition: the runs that use the winner of the A-08 rule, the rate, the items with every run compliant; the same by family; the pairs with no winner | Rule-compliant answers (line 41); no rate |
+
+`sub_rows` in the summary holds one row for each TP-DAT-007 condition, or the two M2 rows of TP-DAT-008. `benchreport.row_from_log` copies it into the bench row.
+
+**The log (`faias-tiersdat-log/1`).** `engine/tiersdat_log.py` holds the schema. The lock covers the procedure, the settings hash, the routing, the model, the prompt hash, the corpus manifest, the conditions with their labels, the stores, the retrieval configuration, the scoring keys, the precedence rule and the code block. `check` reads the log alone: the lock, the manifest, each run against the manifest, the store check and the label again from the stored reply, and the measures and `sub_rows` again from the run records. `rescore` labels each stored reply again.
+
+**What it does not do.** It runs no model judge. It does not use the tool path (`document_search`), so the model never writes the retrieval query. It does not run the steps that need a firm, a live index, an ingestion route or a source repository (TP-DAT-007 M1, M2, M4, M5; TP-DAT-008 M3, M4, M5); the header lists them in `not_in_run` from the item file. It does not check that the items are good tests; a person or a second model family checks the item sets.
+
 ## 28. Measure scorers of the generic Tier M engine (not released)
 
 The generic Tier M engine (section 23) writes item outcomes only. The measure scorers compute the measures of a procedure from its signed log afterwards. They make no model call and change no log. They are tested against local stand-ins only. No live run has used them.

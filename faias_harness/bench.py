@@ -16,7 +16,9 @@ Tiers. Tier M is SRD-1 minimal with its standard system prompt, tools and retrie
 turn. It takes TP-SEC-001, TP-SEC-006 and TP-SEC-002, with tools_enabled false, and any procedure with no engine of
 its own, through the generic Tier M engine (engine/tierm.py: an item file outside the repository, pinned by its
 SHA-256; item outcomes only, no measure; a procedure with no record is refused). Tier S is the procedure's own build
-of SRD-1 (its tools, its retrieval or its prompt variant), as the engine of that procedure runs it. Each cell runs the
+of SRD-1 (its tools, its retrieval or its prompt variant), as the engine of that procedure runs it. TP-DAT-007 and
+TP-DAT-008 run at tier S through the Tier S DAT engine (engine/tiersdat.py: a draft item file and its store
+additions outside the repository, pinned by SHA-256; deterministic labels and measures). Each cell runs the
 default variant of its procedure (standard; model_probe for TP-MOD-011). The bench runs no positive control.
 
 Order. For each model, in the order of the file, the runner runs the TP-SEC-001 cells first, then the other cells in
@@ -58,7 +60,7 @@ from pathlib import Path
 from cryptography.hazmat.primitives import serialization
 
 from . import preflight, selftest, yamlio
-from .engine import benchreport, runlog, sec001, spike, tierm
+from .engine import benchreport, runlog, sec001, spike, tierm, tiersdat
 from .profile import REPO, ProfileError, load_profile
 from .settings import (AGT012, DAT009, MOD011, PRIVATE_ITEM_SET, PROCEDURE_DEFAULT, PROCEDURES, SEC002, SEC003,
                        SEC006, SettingsError, from_raw, validate)
@@ -170,7 +172,7 @@ def form_problems(raw):
         if tier == "M" and proc not in TIER_M_PROCEDURES and proc in PROCEDURES:
             out.append(f"procedure {i}: tier M takes {', '.join(TIER_M_PROCEDURES)} only ({proc} runs its own build "
                        "of SRD-1, so it is tier S)")
-        if tier == "S" and proc not in PROCEDURES:
+        if tier == "S" and proc not in PROCEDURES and proc not in tiersdat.PROCEDURES:
             out.append(f"procedure {i}: {proc} has no engine of its own; the Tier M engine (tierm.py) runs it at tier "
                        "M only")
         if tier == "M" and st.get("tools_enabled") is True:
@@ -214,6 +216,12 @@ def plan(raw, out):
                 log_key, key_key = DEPENDENT[p["procedure"]]
                 cell_raw[log_key] = str(base.run_dir / "run_log.jsonl")
                 cell_raw[key_key] = str(out / PUBKEY_NAME)
+            if p["tier"] == "S" and p["procedure"] in tiersdat.PROCEDURES:     # the Tier S DAT engine
+                s, found = tiersdat.cell_settings(cell_raw)
+                problems += [f"{where}: {x}" for x in found]
+                if s is not None:
+                    cells.append(Cell(n, mi, model["model_id"], p["procedure"], p["tier"], s, run_dir))
+                continue
             if p["procedure"] not in PROCEDURES:        # no engine of its own: the generic Tier M engine
                 s, found = tierm.cell_settings(cell_raw)
                 problems += [f"{where}: {x}" for x in found]
@@ -244,6 +252,8 @@ def estimate(settings):
         return None
     if tierm.is_tierm(settings):
         return tierm.estimate(settings)
+    if tiersdat.is_tiersdat(settings):
+        return tiersdat.estimate(settings)
     if proc == SEC006:
         return run_sec006.estimate(settings)
     if proc == AGT012:
@@ -291,6 +301,8 @@ def cell_problems(profile, cell, sign_key, isolation, inspect_check, baseline_re
         problems += preflight.mod011_start_problems(s, v)
     elif tierm.is_tierm(s):
         problems += tierm.start_problems(s, v)
+    elif tiersdat.is_tiersdat(s):
+        problems += tiersdat.start_problems(s, v)
     if s.item_set == PRIVATE_ITEM_SET:
         problems += private_problems(s)
     return problems + selftest.gate_problems(cell.procedure, isolation, s.mode)
@@ -303,7 +315,7 @@ def exec_kwargs(cell, *, sign_key, confirmation, probes, prior_spent_usd, selfte
     if cell.procedure == AGT012:
         kw.update(selftest_log=selftest_log, selftest_pubkey=selftest_pubkey,
                   delays_ms=cell.settings.containment_plan()[0])
-    if cell.procedure in (DAT009, MOD011):
+    if cell.procedure in (DAT009, MOD011) or tiersdat.is_tiersdat(cell.settings):
         kw.update(selftest_log=selftest_log, selftest_pubkey=selftest_pubkey)
     if cell.procedure == SEC003:        # the engine takes no variant
         del kw["variant"]

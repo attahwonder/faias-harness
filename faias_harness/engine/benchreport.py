@@ -154,6 +154,8 @@ def row_from_log(log_path, cell, report_dir):
         if scored is not None:
             row.update(measure_status=scored["status"], measures=scored["measures"],
                        measure_threshold=scored["threshold"])
+    if "sub_rows" in s:     # a Tier S DAT engine log (tiersdat_log.py): one row for each condition or reading
+        row["sub_rows"] = s["sub_rows"]
     return row
 
 
