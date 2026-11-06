@@ -19,7 +19,9 @@ The steps, in order:
      the procedure of the cell and which holds a `dataset_guid`. Each item has a unique `id`, a `split` (dev or
      private) and exactly one of `text` (one customer turn) or `turns` (a list of customer turns, sent in order in one
      conversation). An item may hold `variants`: each with its own unique `id` and its own `text` or `turns`, in the
-     split of its item. Each text and variant text is a unit. No message quotes item text.
+     split of its item. Each text and variant text is a unit. No message quotes item text. Each unit carries the
+     scoring fields of its item or variant that the measure scorer of the procedure reads (`meta`;
+     tierm_measures.FIELDS); a procedure with no scorer has none.
   4. The checks that the file declares (declared_checks). Three forms: `deterministic` (a mapping of a check name to a
      regular expression and its flags, the form of the TP-CON-003 draft); `decision_values` with an `answer_suffix`
      that asks for a line "DECISION: <value>" (the form of the TP-MOD-014 draft: the extractor of its rubric, section 2,
@@ -37,8 +39,8 @@ The steps, in order:
   7. The summary: the item outcomes (tierm_log.outcomes), "item outcomes, measure not computed", the cost, the trace
      and the egress summary. Then the signature.
 
-The engine computes no measure of any procedure. A scorer for each procedure's measures does not exist yet. Tests use
-local stand-ins only. No live run has used this engine.
+The engine computes no measure of any procedure. For five procedures, the bench report computes the measures from the
+signed log afterwards (tierm_measures.py). Tests use local stand-ins only. No live run has used this engine.
 """
 import json
 import re
@@ -51,7 +53,7 @@ from .. import settings as settings_mod
 from ..adapters.srd1_http import Srd1ChatTarget
 from ..egress import EgressClient, EgressLog
 from ..errors import CapReached
-from . import jsonkeys, runlog, sec006, spike
+from . import jsonkeys, runlog, sec006, spike, tierm_measures
 
 REPO = Path(__file__).resolve().parents[2]
 KIND = "tierm"
@@ -220,6 +222,7 @@ class Unit:
     turns: tuple
     checks: tuple = ()
     judge: object = None
+    meta: dict = field(default_factory=dict, hash=False, compare=False)    # tierm_measures.unit_meta
     activity: str = "Tier M"
     objective: str = "item outcomes only; no measure is computed"
 
@@ -296,7 +299,9 @@ def parse_units(data, splits=SPLITS):
             out.append(f"{where}: its scoring names a check that the file does not declare")
         checks = tuple(names if wanted is None else [c for c in names if c in wanted])
         cls = i.get("class") if isinstance(i.get("class"), str) else None
-        group = [Unit(i["id"], i["id"], None, cls, i["split"], turns, checks, _judge_criteria(i))]
+        proc = data.get("procedure")
+        group = [Unit(i["id"], i["id"], None, cls, i["split"], turns, checks, _judge_criteria(i),
+                      tierm_measures.unit_meta(proc, i))]
         variants = i.get("variants", [])
         if not isinstance(variants, list):
             out.append(f"{where}: its variants are not a list")
@@ -314,7 +319,8 @@ def parse_units(data, splits=SPLITS):
                 out.append(f"{vw} ({v['id']}): its split differs from the split of its item")
             vturns, problems = _turns(v, f"{vw} ({v['id']})", limits)
             out += problems
-            group.append(Unit(v["id"], i["id"], i["id"], cls, i["split"], vturns, checks, _judge_criteria(i)))
+            group.append(Unit(v["id"], i["id"], i["id"], cls, i["split"], vturns, checks, _judge_criteria(i),
+                              tierm_measures.unit_meta(proc, v, variant=True)))
         if i["split"] in splits:
             units += group
     return units, out
