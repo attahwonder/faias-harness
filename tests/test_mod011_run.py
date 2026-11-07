@@ -352,7 +352,7 @@ class RunTests(unittest.TestCase):
         self.assertEqual(re.findall(r"\b(?:pass|fail|partial)\b", text, re.IGNORECASE), [])
 
     def test_egress_jsonl_of_the_run_folder_holds_the_requests_of_the_instrument_check_before_the_lock(self):
-        """Since 0.9.4. The instrument check sends through the egress client of the run, so egress.jsonl of the run
+        """The instrument check sends through the egress client of the run, so egress.jsonl of the run
         folder holds its requests before the lock: one message to SRD-1 for each instrument passage, and the model
         call of each. Before, no test read the file: a change that sent the check through a second client with a log
         in memory only passed every test."""

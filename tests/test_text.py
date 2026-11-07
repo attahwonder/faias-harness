@@ -1,4 +1,4 @@
-"""Text that the harness does not write itself (since 0.9.4).
+"""Text that the harness does not write itself.
 
 `text.clean` replaces each lone surrogate of a reply with U+FFFD. The tests of each path that a reply takes are in
 tests/test_external.py, test_e2e.py, test_gateway.py and test_srd1_tools.py; the test here is of the function alone.

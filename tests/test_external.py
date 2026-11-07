@@ -71,7 +71,7 @@ def ext_settings(**changes):
     return external_from_raw(raw), raw
 
 
-# A code field of neutral placeholder text, as a target may put text of its choice there (since 0.9.4).
+# A code field of neutral placeholder text, as a target may put text of its choice there.
 CODE_TEXT = "placeholder text in the code field"
 
 
@@ -490,7 +490,7 @@ class ExternalRunTests(unittest.TestCase):
 
     def test_an_error_of_the_engine_after_the_run_log_is_opened_keeps_its_traceback(self):
         """When the run folder holds run_log.jsonl, the engine passed the lock, and the error from the executor goes on
-        unchanged. (Since 0.9.4 a reply that holds a lone surrogate no longer gives such an error: see
+        unchanged. (A reply that holds a lone surrogate no longer gives such an error: see
         test_a_reply_with_a_lone_surrogate_through_each_adapter_ends_with_a_signed_log_and_the_replacement_character.)"""
         with StandInDirectLine(respond, secret=FAKE_KEY_VALUE) as dl:
             prof = self.dl_profile(dl)
@@ -507,7 +507,7 @@ class ExternalRunTests(unittest.TestCase):
                         self.pf(self.start_argv(prof, self.dir / f"locked_{exc.__name__}"), executor=run)
                     self.assertIs(cm.exception, raised)
 
-    # ---------- a lone surrogate in a reply (since 0.9.4): U+FFFD where the reply enters ----------
+    # ---------- a lone surrogate in a reply: U+FFFD where the reply enters ----------
 
     def surrogate_profiles(self, stack):
         """One profile for each channel adapter, each against its stand-in, which gives SURROGATE_REPLY to every
@@ -576,7 +576,7 @@ class ExternalRunTests(unittest.TestCase):
                     self.assertIn(f"  reply start: SHA-256 {runlog.sha256_hex(start)} (store_replies: hash_only", out)
                 self.assertTrue(runlog.verify_log(log, log.with_name("run_log.jsonl.sig"), self.pub, repo=REPO)[0])
 
-    # ---------- a code from the target's body (since 0.9.4): kept only in its fixed form ----------
+    # ---------- a code from the target's body: kept only in its fixed form ----------
 
     def test_a_code_of_another_form_is_in_no_record_and_no_printed_line_and_a_code_of_the_fixed_form_is(self):
         """The A2A JSON-RPC code is kept when it is an integer, and the Direct Line code when it matches

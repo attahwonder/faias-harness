@@ -930,7 +930,7 @@ class PreflightTests(unittest.TestCase):
         self.selftest = ["--selftest-log", str(_FIXTURE["log"]), "--selftest-pubkey", str(_FIXTURE["pub"])]
 
     def main(self, *argv, calls=None, probed=None, strict=False):
-        """The preflight in this process. With `strict` (since 0.9.4), stdout encodes as strict UTF-8, as a real
+        """The preflight in this process. With `strict`, stdout encodes as strict UTF-8, as a real
         stdout does for a lone surrogate (tests/helpers.StrictStdout)."""
         class G:
             class cap:
@@ -1171,7 +1171,7 @@ class PreflightTests(unittest.TestCase):
                                      [f"  - the item file: {round_trip_problem('P1-01', key)}"])
 
     def test_start_prints_an_item_id_with_a_lone_surrogate_as_an_escape_in_one_problem_line(self):
-        """Since 0.9.4. An item ID with a lone surrogate (the JSON escape \\ud83d alone in the item file). With a stdout
+        """An item ID with a lone surrogate (the JSON escape \\ud83d alone in the item file). With a stdout
         that encodes as strict UTF-8, as a real stdout does, --start prints the problem line with the escape \\ud83d,
         exits with 2, and calls neither the probes nor the executor. Before, the print raised UnicodeEncodeError."""
         items = fixture_set()["items"]

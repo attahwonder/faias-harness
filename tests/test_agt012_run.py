@@ -529,7 +529,7 @@ class StopTests(_Base):
 
 class EgressFileTests(_Base):
     def test_egress_jsonl_of_the_run_folder_holds_the_requests_of_the_switch_check_before_the_lock(self):
-        """Since 0.9.4. The switch check (step 1) sends through the egress client of the run, so egress.jsonl of the
+        """The switch check (step 1) sends through the egress client of the run, so egress.jsonl of the
         run folder holds its requests before the lock, in order: the switch on, a message that SRD-1 refuses with HTTP
         503, the switch off, and a message that SRD-1 accepts. Before, no test read the file for them."""
         items = [item("VA-01", "VA", "above_cap", "SYN-C-0003", "SYN-F-0007", "above", "C-09", ["above please"])]

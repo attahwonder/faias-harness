@@ -196,7 +196,7 @@ class ToolLoopTests(_World):
 
     def test_a_lone_surrogate_in_a_reply_and_in_the_tool_arguments_reaches_the_trace_as_the_replacement_character(
             self):
-        """Since 0.9.4. The stand-in writes JSON with escapes. The reply after the tool result holds a lone surrogate,
+        """The stand-in writes JSON with escapes. The reply after the tool result holds a lone surrogate,
         which the gateway replaces with U+FFFD. The tool arguments are JSON text inside the reply: there the escape
         \\ud83d is text, and it reads as a lone surrogate only when the orchestrator reads the arguments, which
         replaces it too. Before, the trace line of the tool call could not be written, and SRD-1 answered HTTP 502."""

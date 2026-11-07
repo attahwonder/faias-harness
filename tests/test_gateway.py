@@ -285,7 +285,7 @@ class ServedHostTests(unittest.TestCase):
 
 
 class LoneSurrogateTests(unittest.TestCase):
-    """A model host body with a lone surrogate (the JSON escape \\ud83d alone), since 0.9.4. The body is written with
+    """A model host body with a lone surrogate (the JSON escape \\ud83d alone). The body is written with
     json.dumps, as a host may send it, so the escape reaches the gateway as it is."""
 
     @staticmethod

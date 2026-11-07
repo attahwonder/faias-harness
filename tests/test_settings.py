@@ -584,7 +584,7 @@ def changed_copy(rel, text):
 
 
 class ItemFileRefusalTests(unittest.TestCase):
-    """Since 0.9.4. A changed copy of the item file of TP-SEC-001 (its full set), TP-SEC-006, TP-AGT-012 or TP-DAT-009
+    """A changed copy of the item file of TP-SEC-001 (its full set), TP-SEC-006, TP-AGT-012 or TP-DAT-009
     that its loader refuses: a JSON object that holds the key `items` twice. With the prices set, the preflight prints
     the refusal and no estimate, and --start refuses in one problem line, before any model call. Before, the estimate
     raised the loader's RepeatedKey, and the preflight stopped with a traceback."""

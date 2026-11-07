@@ -88,7 +88,7 @@ class SpikeRunTests(unittest.TestCase):
                                  base_url=host.base_url, env=ENV, **kw)
 
     def test_a_model_reply_with_a_lone_surrogate_ends_with_a_signed_log_and_the_replacement_character(self):
-        """Since 0.9.4. The stand-in host writes JSON with escapes, so each reply reaches SRD-1's gateway with the
+        """The stand-in host writes JSON with escapes, so each reply reaches SRD-1's gateway with the
         escape \\ud83d alone. The gateway replaces it with U+FFFD. So SRD-1's trace and the run records hold U+FFFD,
         the run ends (direct engine), and the log verifies and rescores. Before, SRD-1 could not write its trace line
         and answered HTTP 502, and the run stopped at the first item."""
