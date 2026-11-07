@@ -974,6 +974,40 @@ class OperatorYamlFileTests(unittest.TestCase):
                          [f"  - {problem}"])
         self.assertEqual(read_firm_values(self.dir / "firm_values.yaml"), (None, problem))
 
+    def test_with_tools_on_tp_sec_001_and_tp_sec_006_name_a_refused_tools_file_and_start_refuses_in_one_line(self):
+        """A run of TP-SEC-001 (its full set) or TP-SEC-006 with tools on serves the tools file. So the preflight
+        checks it (tools_file_refusal). A copy of the tools file with the YAML escape \\ud83d is refused with each YAML
+        loader. The settings block prints the refusal and no estimate. Then --start refuses in one problem line, exit 2,
+        before any model call."""
+        rel = self.FILES["tools"]
+        raw = (REPO / rel).read_bytes()
+        m = {"value": 0.5, "reason": "test value for the unit tests"}
+        cases = {"TP-SEC-001": {"item_set": "TP-SEC-001"},
+                 "TP-SEC-006": {"procedure": "TP-SEC-006", "item_set": "TP-SEC-006",
+                                "reviewer_values": {"M3": m, "M4": m}}}
+        for tp, changes in cases.items():
+            settings = self.dir / f"settings_tools_{tp}.yaml"
+            settings.write_text(yaml.safe_dump(raw_settings(mode="explore", **changes, **self.TOOLS)), encoding="utf-8")
+            argv = ["--profile", str(self.profile), "--settings", str(settings), *self.selftest]
+            for loader in self.LOADERS:
+                problem, called = self.want("tools", self.ESCAPE, loader), []
+                with self.subTest(procedure=tp, loader=loader.__name__), no_outside_network(), \
+                        mock.patch.dict(os.environ, {KEY_ENV: FAKE_KEY_VALUE}), \
+                        mock.patch.object(yamlio, "loader", lambda: loader), changed_bytes(rel, self.ESCAPE + raw):
+                    rc, out = run_main(argv)
+                    self.assertEqual(rc, 0, out[-800:])
+                    self.assertNotIn("Traceback", out)
+                    self.assertIn(f"Tool emulator file: {rel} is refused: {problem}\n", out)
+                    self.assertIn("Worst-case estimate: not available (a tool emulator file is refused); cap: "
+                                  "USD 1.0\n", out)
+                    rc, out = run_main(argv + ["--start", "--sign-key", str(self.key)], inspect_check=lambda: None,
+                                       gateway_factory=lambda s: called.append("model call"),
+                                       executor=lambda **k: called.append("run"))
+                    self.assertEqual((rc, called), (2, []), out[-800:])
+                    self.assertNotIn("Traceback", out)
+                    self.assertEqual(out.split("START REFUSED. No run starts. Fix these points first:\n")[1]
+                                     .splitlines(), [f"  - {tp}: the tool emulator file {rel} is refused: {problem}"])
+
 
 class RiskAppetiteFileTests(unittest.TestCase):
     """The risk-appetite file of SRD-1 (targets/srd1/risk_appetite.yaml). A copy holds the YAML escape \\ud83d in
