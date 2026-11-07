@@ -48,5 +48,5 @@ After each `send`, `last_exchange` holds what the channel showed. That is the ho
 - It retries only HTTP 429 and 503, where the channel did not process the request, at most twice by default.
 - The adapter declares the capabilities it implements in its `capabilities` attribute.
 - The adapter does not reach into production systems.
-- The adapter reads each response body through `ChannelTarget._json`. That function replaces each lone surrogate with U+FFFD. An example of a lone surrogate is the JSON escape `\ud83d` alone. So no record, hash or printed line sees one.
+- Each channel adapter reads each response body through `ChannelTarget._json`. That function replaces each lone surrogate with U+FFFD. An example of a lone surrogate is the JSON escape `\ud83d` alone. So no record, hash or printed line sees one.
 - An error message holds a code from the channel's body only in a fixed form. The A2A JSON-RPC code must be an integer. The Direct Line error code must match `[A-Za-z][A-Za-z0-9_.-]{0,63}`. Otherwise it says that the code has another form.
