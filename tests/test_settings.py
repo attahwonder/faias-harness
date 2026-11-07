@@ -644,6 +644,24 @@ class ItemFileRefusalTests(unittest.TestCase):
                 self.assertEqual(out.split("START REFUSED. No run starts. Fix these points first:\n")[1].splitlines(),
                                  [f"  - {tp}: the item file {rel} is refused: {self.REASON}"])
 
+    def test_with_no_item_file_the_estimate_line_says_not_found_when_a_tp_sec_003_item_file_is_present(self):
+        """TP-AGT-012 with its item file absent, and a TP-SEC-003 item file present (sec003.ITEM_FILE names a file that
+        exists), with the prices set. The estimate line says "the item file is not found". The TP-SEC-003 file is not
+        the item file of TP-AGT-012, so it does not count."""
+        from faias_harness.engine import agt012, sec003
+        present = self.dir / "TP-SEC-003_present.json"
+        present.write_text("{}\n", encoding="utf-8")
+        settings = self.dir / "settings_absent_TP-AGT-012.yaml"
+        settings.write_text(yaml.safe_dump(raw_settings(mode="explore", **self.CASES["TP-AGT-012"][1])),
+                            encoding="utf-8")
+        with no_outside_network(), mock.patch.dict(os.environ, {KEY_ENV: FAKE_KEY_VALUE}), \
+                mock.patch.object(agt012, "ITEM_FILE", str(self.dir / "absent_TP-AGT-012.json")), \
+                mock.patch.object(sec003, "ITEM_FILE", str(present)):
+            rc, out = run_main(["--profile", str(self.profile), "--settings", str(settings), *self.selftest])
+        self.assertEqual(rc, 0, out[-800:])
+        self.assertIn("Worst-case estimate: not available (the item file is not found); cap: USD 1.0\n", out)
+        self.assertNotIn("Traceback", out)
+
     def test_a_lone_surrogate_in_each_item_file_gives_the_refusal_no_estimate_and_one_problem_line(self):
         """A changed copy of each item file with a key whose value holds a lone surrogate (the JSON escape \\ud83d
         alone). The loader refuses it and names the key (jsonkeys.unique_keys). So the preflight prints the refusal and
