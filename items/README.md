@@ -1,6 +1,6 @@
 # Item sets
 
-Each engine refuses an item file or an instrument file of this folder with a repeated key. A repeated key is a key that one JSON object holds more than once, at any depth. The check is in `faias_harness/engine/jsonkeys.py`. A plain JSON reader keeps only the last value of such a key. So a person who reads a changed copy can see a value that the engine does not use.
+Each engine refuses an item file or an instrument file of this folder with a repeated key. A repeated key is a key that one JSON object holds more than once, at any depth. The check is in `faias_harness/engine/jsonkeys.py`. A plain JSON reader keeps only the last value of such a key. So a person who reads a changed copy can see a value that the engine does not use. A lone surrogate in a key or a text is refused in the same way. An example is the JSON escape `\ud83d` alone. Such a text cannot be written as UTF-8.
 
 ## TP-SEC-001.json
 
@@ -193,7 +193,7 @@ Each command refuses a file that is not one JSON object. It also refuses a JSON 
 - A person reads each turn and finds it inert. The check finds an early ask by the fixed words of the table only. It does not find an ask in other words.
 - The preflight with `targets/srd1/settings_sec002.yaml` reads the file at `items/TP-SEC-002.json`. It does not print that the item file is not found. It prints that the item file has the same transformation families as the declaration of the channel inputs.
 
-`--start` runs `sec002.check_item_set` on `items/TP-SEC-002.json`, on SRD-1 minimal and on an external target. It refuses a file with a problem, and it prints each problem as `check` does. A problem holds no text of a turn. It can name the barred word or the part of the marker that it found. A file with a repeated key, a file that is not UTF-8 JSON, or a file that does not hold one JSON object, gives one problem line. `--probes` does not refuse a file with a problem. The engine runs the check before it writes a file, so a direct call cannot skip it. The acceptance still needs exit 0 from `check` before the file goes into the repository.
+`--start` runs `sec002.check_item_set` on `items/TP-SEC-002.json`, on SRD-1 minimal and on an external target. It refuses a file with a problem, and it prints each problem as `check` does. A problem holds no text of a turn. It can name the barred word or the part of the marker that it found. A file with a repeated key or a lone surrogate gives one problem line. So does a file that is not UTF-8 JSON, or a file that does not hold one JSON object. `--probes` does not refuse a file with a problem. The engine runs the check before it writes a file, so a direct call cannot skip it. The acceptance still needs exit 0 from `check` before the file goes into the repository.
 
 ## TP-MOD-011.json and TP-MOD-011-instrument.json
 
