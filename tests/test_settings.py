@@ -951,6 +951,29 @@ class OperatorYamlFileTests(unittest.TestCase):
                     self.assertEqual(out.split("START REFUSED. No run starts. Fix these points first:\n")[1]
                                      .splitlines(), [f"  - {start}"])
 
+    def test_with_no_firm_values_file_start_of_tp_agt_012_refuses_in_one_problem_line(self):
+        """The firm-values file is absent. The table says that no file is found. Its reader gives one problem
+        (read_firm_values). Then --start of TP-AGT-012 refuses in that one problem line, exit 2, before any model call.
+        Before, the reader caught no OSError, and --start stopped with FileNotFoundError."""
+        problem = "cannot read firm_values.yaml: FileNotFoundError"
+        settings = self.dir / "settings_agt012.yaml"
+        settings.write_text(yaml.safe_dump(raw_settings(mode="explore", procedure="TP-AGT-012", item_set="TP-AGT-012",
+                                                        reviewer_values={}, **self.TOOLS)), encoding="utf-8")
+        argv, called = ["--profile", str(self.profile), "--settings", str(settings), *self.selftest], []
+        with no_outside_network(), mock.patch.dict(os.environ, {KEY_ENV: FAKE_KEY_VALUE}), \
+                absent_file(self.FILES["firm"]):
+            rc, out = run_main(argv)
+            self.assertEqual(rc, 0, out[-800:])
+            self.assertIn("Firm values: no file found; ", out)
+            rc, out = run_main(argv + ["--start", "--sign-key", str(self.key)], inspect_check=lambda: None,
+                               gateway_factory=lambda s: called.append("model call"),
+                               executor=lambda **k: called.append("run"))
+        self.assertEqual((rc, called), (2, []), out[-800:])
+        self.assertNotIn("Traceback", out)
+        self.assertEqual(out.split("START REFUSED. No run starts. Fix these points first:\n")[1].splitlines(),
+                         [f"  - {problem}"])
+        self.assertEqual(read_firm_values(self.dir / "firm_values.yaml"), (None, problem))
+
 
 class RiskAppetiteFileTests(unittest.TestCase):
     """The risk-appetite file of SRD-1 (targets/srd1/risk_appetite.yaml). A copy holds the YAML escape \\ud83d in
