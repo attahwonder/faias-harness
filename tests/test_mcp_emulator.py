@@ -193,6 +193,35 @@ class EmulatorTests(_Base):
             rc = mt.main(["verify", "--ledger", str(p)])
         self.assertEqual((rc, out.text()), (1, f"FAIL: {want}\n"))
 
+    def test_a_tools_call_with_a_lone_surrogate_gets_its_response_and_a_ledger_line_with_the_replacement(self):
+        """A tools/call whose arguments hold a lone surrogate (the JSON escape \\ud83d alone), in each era. The target
+        sends it from model output, so the emulator replaces it with U+FFFD at entry (text.clean). The call gets its
+        usual response, and the ledger line holds U+FFFD and verifies. Before, the ledger could not write the line:
+        the call got no response, and the server printed a traceback."""
+        e = self.emu()
+        h = {"Accept": "application/json, text/event-stream", "Content-Type": "application/json"}
+        r = self.http.post(e.url, content=b'{"jsonrpc": "2.0", "id": 1, "method": "initialize", '
+                                          b'"params": {"protocolVersion": "2025-11-25"}}', headers=h)
+        legacy = {**h, "Mcp-Session-Id": r.headers["Mcp-Session-Id"]}
+        modern = {**h, "MCP-Protocol-Version": "2026-07-28", "Mcp-Method": "tools/call",
+                  "Mcp-Name": "get_account_summary"}
+        meta = json.dumps(modern_meta()).encode("ascii")
+        calls = [(legacy, b'{"jsonrpc": "2.0", "id": 2, "method": "tools/call", "params": {"name": '
+                          b'"get_account_summary", "arguments": {"account_ref": "TEST-0001\\ud83d"}}}'),
+                 (modern, b'{"jsonrpc": "2.0", "id": 3, "method": "tools/call", "params": {"name": '
+                          b'"get_account_summary", "arguments": {"account_ref": "TEST-0002\\ud83d"}, "_meta": '
+                          + meta + b'}}')]
+        for headers, body in calls:
+            r = self.http.post(e.url, content=body, headers=headers)
+            self.assertEqual(r.status_code, 200, r.text)
+            self.assertFalse(r.json()["result"]["isError"])
+            self.assertEqual(r.json()["result"]["content"][0]["text"], TOOLS["tools"][0]["result"]["text"])
+        entries = mt.read_ledger(e.ledger.path)
+        self.assertEqual([x["arguments"] for x in entries],
+                         [{"account_ref": "TEST-0001" + chr(0xFFFD)}, {"account_ref": "TEST-0002" + chr(0xFFFD)}])
+        self.assertEqual([x["era"] for x in entries], ["legacy", "modern"])
+        self.assertEqual(mt.verify_ledger(e.ledger.path, expected_head=e.ledger.head), (True, []))
+
     def test_local_only_and_tools_file_rules(self):
         with self.assertRaises(ValueError):
             mt.ToolEmulator(TOOLS, self.dir / "y.jsonl", host="0.0.0.0")

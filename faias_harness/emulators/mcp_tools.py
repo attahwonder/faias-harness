@@ -40,6 +40,10 @@ What it does:
   result is an error, the reason for a refusal, and a hash chained to the line before. `verify_ledger` finds an
   edited, removed or reordered line. It does not stop a person who rewrites the whole file. The line of a
   document_search call (since 0.7) also holds `principal` and `returned_doc_ids` (handlers.py).
+- It reads each request as model output, because the target sends it. Each lone surrogate in the request (for
+  example the JSON escape \\ud83d alone) becomes U+FFFD (text.clean) before the request is handled, as where a reply
+  enters the harness. So a tools/call whose arguments hold one gets its usual response, and its ledger line holds
+  U+FFFD and verifies.
 - It reads and writes JSON as RFC 8259 defines it. A body that holds NaN, Infinity or -Infinity is not JSON. It
   gets HTTP 400 with error -32700 and no ledger line. So does a number such as 1e400, which reads as an infinity.
   An integer too large for a float reads, and the handler
@@ -83,7 +87,7 @@ from pathlib import Path
 import yaml
 
 from .. import __version__, yamlio
-from ..text import escape_streams, has_lone_surrogate
+from ..text import clean, escape_streams, has_lone_surrogate
 from . import handlers as handlers_mod
 
 MODERN = ("2026-07-28",)
@@ -442,7 +446,8 @@ class ToolEmulator:
                     return
                 raw = self.rfile.read(n)
                 try:
-                    msg = json.loads(raw.decode("utf-8"), parse_constant=_not_json)
+                    # Model output: each lone surrogate becomes U+FFFD, so the ledger line and the reply are UTF-8.
+                    msg = clean(json.loads(raw.decode("utf-8"), parse_constant=_not_json))
                     _canonical(msg)         # 1e400 reads as an infinity: refused as NaN is
                 except (ValueError, UnicodeDecodeError):
                     self._send(400, {"jsonrpc": "2.0", "id": None, "error": {"code": PARSE_ERROR, "message": "parse error"}})
