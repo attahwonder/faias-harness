@@ -573,5 +573,76 @@ class PreflightSettingsTests(unittest.TestCase):
                          [f"  - the item file {absent} is not found"])
 
 
+def changed_copy(rel, text):
+    """Each read of the item file `rel` gives `text`, as a changed copy of the file on disk would. The file does not
+    change, and every other file reads as it is."""
+    target, real = (REPO / rel).resolve(), Path.read_text
+
+    def read_text(self, *a, **k):
+        return text if self.resolve() == target else real(self, *a, **k)
+    return mock.patch.object(Path, "read_text", read_text)
+
+
+class ItemFileRefusalTests(unittest.TestCase):
+    """Since 0.9.4. A changed copy of the item file of TP-SEC-001 (its full set), TP-SEC-006, TP-AGT-012 or TP-DAT-009
+    that its loader refuses: a JSON object that holds the key `items` twice. With the prices set, the preflight prints
+    the refusal and no estimate, and --start refuses in one problem line, before any model call. Before, the estimate
+    raised the loader's RepeatedKey, and the preflight stopped with a traceback."""
+    TOOLS = {"tools_enabled": True, "tool_key_env": "FAIAS_TEST_TOOL_KEY"}
+    CASES = {"TP-SEC-001": ("items/TP-SEC-001.json", {"item_set": "TP-SEC-001"}),
+             "TP-SEC-006": ("items/TP-SEC-006.json", {"procedure": "TP-SEC-006", "item_set": "TP-SEC-006",
+                                                      "reviewer_values": {
+                                                          "M3": {"value": 0.5, "reason": "test value for the unit tests"},
+                                                          "M4": {"value": 0.5, "reason": "test value for the unit tests"}}}),
+             "TP-AGT-012": ("items/TP-AGT-012.json", {"procedure": "TP-AGT-012", "item_set": "TP-AGT-012",
+                                                      "reviewer_values": {}, **TOOLS}),
+             "TP-DAT-009": ("items/TP-DAT-009.json", {"procedure": "TP-DAT-009", "item_set": "TP-DAT-009",
+                                                      "reviewer_values": {}, **TOOLS})}
+    REASON = "a JSON object holds the key 'items' more than once"
+
+    @classmethod
+    def setUpClass(cls):
+        from tests.helpers import shared_selftest
+        log, _, pub = shared_selftest(REPO)
+        cls.selftest = ["--selftest-log", str(log), "--selftest-pubkey", str(pub)]
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.dir = Path(self.tmp.name)
+        att = self.dir / "attestation.txt"
+        att.write_text("Test system, synthetic data only.\n", encoding="utf-8")
+        doc = yaml.safe_load((REPO / "targets" / "srd1" / "profile.yaml").read_text(encoding="utf-8"))
+        doc["attestation_file"] = str(att)
+        self.profile = self.dir / "profile.yaml"
+        self.profile.write_text(yaml.safe_dump(doc), encoding="utf-8")
+        self.key = runlog.make_key(self.dir / "keys", repo=REPO)[0]
+
+    def tearDown(self):
+        self.tmp.cleanup()
+
+    def test_a_repeated_key_in_each_item_file_gives_the_refusal_no_estimate_and_one_problem_line(self):
+        for tp, (rel, changes) in self.CASES.items():
+            with self.subTest(procedure=tp):
+                settings = self.dir / f"settings_{tp}.yaml"
+                settings.write_text(yaml.safe_dump(raw_settings(mode="explore", **changes)), encoding="utf-8")
+                text = (REPO / rel).read_text(encoding="utf-8").lstrip()
+                self.assertTrue(text.startswith("{"))
+                called = []
+                argv = ["--profile", str(self.profile), "--settings", str(settings), *self.selftest]
+                with no_outside_network(), mock.patch.dict(os.environ, {KEY_ENV: FAKE_KEY_VALUE}), \
+                        changed_copy(rel, '{"items": [], ' + text[1:]):
+                    rc, out = run_main(argv)
+                    self.assertEqual(rc, 0, out[-800:])
+                    self.assertIn(f"Item file: {rel} is refused: {self.REASON}\n", out)
+                    self.assertIn("Worst-case estimate: not available (the item file is refused); cap: USD 1.0\n", out)
+                    rc, out = run_main(argv + ["--start", "--sign-key", str(self.key)], inspect_check=lambda: None,
+                                       gateway_factory=lambda s: called.append("model call"),
+                                       executor=lambda **k: called.append("run"))
+                self.assertEqual((rc, called), (2, []), out[-800:])
+                self.assertNotIn("Traceback", out)
+                self.assertEqual(out.split("START REFUSED. No run starts. Fix these points first:\n")[1].splitlines(),
+                                 [f"  - {tp}: the item file {rel} is refused: {self.REASON}"])
+
+
 if __name__ == "__main__":
     unittest.main()

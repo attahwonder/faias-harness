@@ -261,6 +261,31 @@ def report(profile, needs, records_dir=RECORDS_DIR):
     return counts
 
 
+def item_file_refusal(settings):
+    """(the item file, why its loader refuses it) for a run of TP-SEC-001 on its full set, TP-SEC-006, TP-AGT-012 or
+    TP-DAT-009, else None. Each loader raises a ValueError for a JSON object with a repeated key (jsonkeys.RepeatedKey;
+    the reason names the key) and for a file that is not UTF-8 JSON. It is None too when the file is not found, and
+    for the spike set, which the code holds. The preflight then acts as for TP-SEC-002 and TP-SEC-003: the settings
+    block prints the refusal and no estimate, and --start gives it as one problem line, before any model call."""
+    from .engine import agt012, dat009, sec001, sec006
+    if settings.procedure == sec001.TP and settings.item_set != sec001.TP:
+        return None
+    files = {sec001.TP: ("items/TP-SEC-001.json", lambda: sec001.load_items(sec001.TP, repo=REPO)),
+             SEC006: (f"items/{sec006.ITEM_SET}.json", lambda: sec006.load_set(repo=REPO)),
+             AGT012: (agt012.ITEM_FILE, lambda: agt012.load_set(repo=REPO)),
+             DAT009: (dat009.ITEM_FILE, lambda: dat009.load_set(repo=REPO))}
+    if settings.procedure not in files:
+        return None
+    path, load = files[settings.procedure]
+    if not (REPO / path).is_file():
+        return None
+    try:
+        load()
+    except ValueError as e:         # json.JSONDecodeError, UnicodeDecodeError and jsonkeys.RepeatedKey are ValueError
+        return path, str(e)
+    return None
+
+
 def settings_report(settings, estimate_usd):
     """Print the settings block of the preflight. It never prints the value of the key."""
     r = settings.routing()
@@ -314,15 +339,19 @@ def settings_report(settings, estimate_usd):
         mod011_report(settings)
     else:
         print(f"M4 bar: {m4}; reason: {settings.m4_reason or 'not set'}")
+    item_refusal = item_file_refusal(settings)
+    if item_refusal:
+        print(f"Item file: {item_refusal[0]} is refused: {item_refusal[1]}")
     pin, pout = settings.price_in_per_m, settings.price_out_per_m
     print(f"Prices (USD per million tokens): in {pin if pin is not None else 'not set'}, "
           f"out {pout if pout is not None else 'not set'}")
     cap = f"USD {settings.cap_usd}" if settings.cap_usd is not None else "not set"
-    if estimate_usd is None:      # prices set: TP-SEC-002 or TP-SEC-003 without a usable item file, or TP-MOD-011
+    if estimate_usd is None:      # prices set: an item file that is refused or not found, or TP-MOD-011
         why = ("prices not set" if pin is None or pout is None else
                "an item file or the instrument file is refused" if settings.procedure == MOD011 else
                _sec002_no_estimate() if settings.procedure == SEC002 else
-               "the item file is refused" if _sec003_item_file() else "the item file is not found")
+               "the item file is refused" if item_refusal or (settings.procedure == SEC003 and _sec003_item_file())
+               else "the item file is not found")
         print(f"Worst-case estimate: not available ({why}); cap: {cap}")
     else:
         note = "  WARNING: the estimate is above the cap; the run may stop at the cap" \
@@ -667,13 +696,13 @@ def sec006_start_problems(settings, variant="standard"):
 def agt012_start_problems(settings):
     """What a TP-AGT-012 run needs besides the SRD-1 conditions and the self-test gate. The item file must be
     found, and agt012.check_item_set must find no problem in it with the declared values. The run drives the tool,
-    so tools must be on."""
+    so tools must be on. An item file that its loader refuses is named once, by main (item_file_refusal)."""
     from .engine import agt012, run_agt012
     from targets.srd1.app.gate import load_risk_appetite
     problems = []
     if not (REPO / agt012.ITEM_FILE).is_file():
         problems.append(f"the item file {agt012.ITEM_FILE} is not found")
-    else:
+    elif item_file_refusal(settings) is None:
         values, _ = load_risk_appetite()
         problems += [f"the item file: {p}" for p in
                      run_agt012.item_set_problems(REPO, values.get("cap_gbp"), values.get("session_limit_gbp"))]
@@ -1102,7 +1131,9 @@ def main(argv=None, *, input_fn=input, gateway_factory=_default_gateway, executo
         print()
         from . import selftest
         from .engine import run_agt012, run_dat009, run_sec002, run_sec006, spike
-        if settings.procedure == SEC006:
+        if item_file_refusal(settings):     # no estimate: --start names the refusal
+            est = None
+        elif settings.procedure == SEC006:
             est = run_sec006.estimate(settings)
         elif settings.procedure == AGT012:
             est = run_agt012.estimate(settings)
@@ -1150,6 +1181,9 @@ def main(argv=None, *, input_fn=input, gateway_factory=_default_gateway, executo
         missing = inspect_check()
         if missing:
             problems.append(missing)
+        item_refusal = item_file_refusal(settings)
+        if item_refusal:
+            problems.append(f"{settings.procedure}: the item file {item_refusal[0]} is refused: {item_refusal[1]}")
         if settings.procedure == SEC006:
             problems += sec006_start_problems(settings, variant)
         if settings.procedure == AGT012:
