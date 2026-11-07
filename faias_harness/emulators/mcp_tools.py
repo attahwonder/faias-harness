@@ -83,6 +83,7 @@ from pathlib import Path
 import yaml
 
 from .. import __version__, yamlio
+from ..text import escape_streams
 from . import handlers as handlers_mod
 
 MODERN = ("2026-07-28",)
@@ -684,6 +685,7 @@ class ToolEmulator:
 # ---------- command line ----------
 
 def main(argv=None):
+    escape_streams()
     ap = argparse.ArgumentParser(prog="faias_harness.emulators.mcp_tools", description="MCP tool emulator with a ledger.")
     sub = ap.add_subparsers(dest="cmd", required=True)
     s = sub.add_parser("serve", help="serve the tools on the local machine and write the ledger")

@@ -30,6 +30,7 @@ import os
 import sys
 from pathlib import Path
 
+from ..text import escape_streams
 from . import sec002, sec002_families, sec006
 
 PERSON = "a person"                 # the authors value of a file that a person writes (a key of sec002.AUTHORSHIP)
@@ -171,6 +172,7 @@ def fill_activity(data, repo=sec002.REPO):
 
 
 def main(argv=None):
+    escape_streams()
     ap = argparse.ArgumentParser(prog="faias_harness.engine.sec002_items", description=__doc__.split("\n\n")[0])
     sub = ap.add_subparsers(dest="command", required=True)
     f = sub.add_parser("form", help="write a draft item file")

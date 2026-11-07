@@ -37,8 +37,8 @@ import yaml
 from faias_harness import preflight, selftest, settings as sm, yamlio
 from faias_harness.adapters.srd1_http import Srd1ChatError, Srd1ChatTarget
 from faias_harness.engine import run_sec003, runlog, sec001, sec003, sec003_log, sec006, spike
-from tests.helpers import (FAKE_KEY_VALUE, KEY_ENV, StandInModelHost, make_settings, no_outside_network, raw_settings,
-                           shared_selftest)
+from tests.helpers import (FAKE_KEY_VALUE, KEY_ENV, StandInModelHost, StrictStdout, make_settings, no_outside_network,
+                           raw_settings, shared_selftest)
 from tests.test_sec003 import (CLEAN_FILE, FIXTURE_ITEMS, ROUND_TRIP_TRIGGERS, SURROGATE_TRIGGERS, YAML_LOADERS,
                                fixture_set, round_trip_problem)
 from tests.test_sec003_log import assert_each_fault_gives_its_problems, seeded_faults
@@ -929,7 +929,9 @@ class PreflightTests(unittest.TestCase):
         self.key = runlog.make_key(self.dir / "keys", repo=REPO)[0]
         self.selftest = ["--selftest-log", str(_FIXTURE["log"]), "--selftest-pubkey", str(_FIXTURE["pub"])]
 
-    def main(self, *argv, calls=None, probed=None):
+    def main(self, *argv, calls=None, probed=None, strict=False):
+        """The preflight in this process. With `strict` (since 0.9.4), stdout encodes as strict UTF-8, as a real
+        stdout does for a lone surrogate (tests/helpers.StrictStdout)."""
         class G:
             class cap:
                 spent_usd = 0.0
@@ -947,13 +949,14 @@ class PreflightTests(unittest.TestCase):
                 probed.append(g)
             return probes
 
-        out = io.StringIO()
+        out = StrictStdout() if strict else io.StringIO()
         with no_outside_network(), mock.patch.dict("os.environ", {KEY_ENV: FAKE_KEY_VALUE}), \
-                mock.patch.object(spike, "run_probes", run_probes), contextlib.redirect_stdout(out):
+                mock.patch.object(spike, "run_probes", run_probes), \
+                contextlib.redirect_stdout(out.stream if strict else out):
             rc = preflight.main(["--profile", str(self.profile), "--settings", str(self.settings), *argv],
                                 input_fn=lambda p: "yes", gateway_factory=lambda s: G(), executor=executor,
                                 inspect_check=lambda: None)
-        return rc, out.getvalue()
+        return rc, out.text() if strict else out.getvalue()
 
     def test_the_report_prints_the_sec003_lines_and_no_estimate_while_the_item_file_is_absent(self):
         rc, out = self.main(*self.selftest)
@@ -1166,6 +1169,22 @@ class PreflightTests(unittest.TestCase):
                     self.assertNotIn("Traceback", out)
                     self.assertEqual(out.split("Fix these points first:\n")[1].splitlines(),
                                      [f"  - the item file: {round_trip_problem('P1-01', key)}"])
+
+    def test_start_prints_an_item_id_with_a_lone_surrogate_as_an_escape_in_one_problem_line(self):
+        """Since 0.9.4. An item ID with a lone surrogate (the JSON escape \\ud83d alone in the item file). With a stdout
+        that encodes as strict UTF-8, as a real stdout does, --start prints the problem line with the escape \\ud83d,
+        exits with 2, and calls neither the probes nor the executor. Before, the print raised UnicodeEncodeError."""
+        items = fixture_set()["items"]
+        items[0]["id"] = "P1-01\ud83d"
+        path = items_file(self.dir, "surrogate_id", items)
+        calls, probed = [], []
+        with mock.patch.object(sec003, "ITEM_FILE", str(path)):
+            rc, out = self.main("--start", "--sign-key", str(self.key), *self.selftest, calls=calls, probed=probed,
+                                strict=True)
+        self.assertEqual((rc, calls, probed), (2, [], []), out)
+        self.assertNotIn("Traceback", out)
+        self.assertEqual(out.split("Fix these points first:\n")[1].splitlines(),
+                         ["  - the item file: P1-01\\ud83d: the ID does not match the form P1-<nn>"])
 
     def test_start_refuses_a_set_with_no_item_in_one_problem_line(self):
         """No field items, and an empty list: --start refuses in one problem line, the problem of the item check,

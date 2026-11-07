@@ -20,6 +20,7 @@ try:
 except ImportError:      # run as a script: tools/ is on the path, the repository root is not
     sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
     from faias_harness import yamlio
+from faias_harness.text import escape_streams  # noqa: E402
 
 REPO = Path(__file__).resolve().parents[1]
 RECORDS = REPO / "records"
@@ -187,6 +188,7 @@ def build(play, tp, cls, overrides, rel):
 
 
 def main():
+    escape_streams()
     ap = argparse.ArgumentParser()
     ap.add_argument("--faias", required=True, help="path to the FAIAS tree (the folder with V3_Testing_Playbook)")
     a = ap.parse_args()

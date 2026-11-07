@@ -7,6 +7,7 @@ import atexit
 import contextlib
 import copy
 import errno
+import io
 import ipaddress
 import itertools
 import json
@@ -141,6 +142,21 @@ def lock_time_twice_clock():
     the first value. A clock that moves in steps (Python before 3.13 on Windows) can give that time again."""
     start, calls = time.time_ns(), itertools.count()
     return lambda: start + max(0, next(calls) - 1)
+
+
+class StrictStdout:
+    """A stdout for a test that encodes as strict UTF-8. A real stdout fails on a lone surrogate in the same way: with
+    -X utf8 its error handler is surrogateescape, which fails on a high surrogate such as U+D83D. A command that calls
+    faias_harness.text.escape_streams sets this stream to backslashreplace, as it sets the real stdout. Use `stream`
+    with contextlib.redirect_stdout; `text()` gives what was printed."""
+
+    def __init__(self):
+        self.raw = io.BytesIO()
+        self.stream = io.TextIOWrapper(self.raw, encoding="utf-8", errors="strict", newline="\n", write_through=True)
+
+    def text(self):
+        self.stream.flush()
+        return self.raw.getvalue().decode("utf-8")
 
 
 def _is_local(host):

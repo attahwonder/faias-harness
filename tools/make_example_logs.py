@@ -37,6 +37,7 @@ if str(REPO) not in sys.path:
 
 from faias_harness import settings as settings_mod  # noqa: E402
 from faias_harness.engine import run_sec006, runlog, spike  # noqa: E402
+from faias_harness.text import escape_streams  # noqa: E402
 from tests.helpers import FAKE_KEY_VALUE, KEY_ENV, StandInModelHost, no_outside_network  # noqa: E402
 
 _SPEC = importlib.util.spec_from_file_location("faias_harness_sweep", REPO / "tools" / "sweep_barred.py")
@@ -119,6 +120,7 @@ def make_once(tmp, priv, pub):
 
 
 def main(argv=None, tries=TRIES):
+    escape_streams()
     ap = argparse.ArgumentParser(description="Make the two example logs (local stand-in, throw-away key).")
     ap.add_argument("--out", default=str(OUT), help="the folder for the logs (default: examples/logs)")
     out = Path(ap.parse_args(argv).out)

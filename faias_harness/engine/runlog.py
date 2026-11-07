@@ -99,6 +99,7 @@ from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 
 from .. import __version__
+from ..text import escape_streams
 from . import sec001
 
 REPO = Path(__file__).resolve().parents[2]
@@ -1132,6 +1133,7 @@ def results(paths, pubkey_path=None, repo=REPO, use_repo=True):
 
 
 def main(argv=None):
+    escape_streams()
     ap = argparse.ArgumentParser(prog="faias_harness.engine.runlog",
                                  description="Run-signing key, sign, verify, rescore and stamp.")
     sub = ap.add_subparsers(dest="cmd", required=True)

@@ -24,6 +24,7 @@ if __name__ == "__main__":
 from faias_harness import yamlio  # noqa: E402
 # The one helper for a repeated key in a JSON object: json.loads keeps its last value only.
 from faias_harness.engine.jsonkeys import unique_keys  # noqa: E402
+from faias_harness.text import escape_streams  # noqa: E402
 
 _REVERSED = [
     "nevroN", "azriM", "demmahoM", "imiK", "keeSpeeD", "oMiM", "veJ", "efaSepyT", "rrevif", "tidder",
@@ -162,6 +163,7 @@ def sweep_record(path, faias, fails, allowed):
 
 
 def main(argv=None):
+    escape_streams()
     ap = argparse.ArgumentParser()
     ap.add_argument("--faias", default=None, help="path to the FAIAS tree, needed to allow cited text in records")
     ap.add_argument("--root", default=str(REPO))

@@ -95,6 +95,7 @@ from pathlib import Path
 from . import yamlio
 from .profile import REPO, ProfileError, load_profile
 from .settings import AGT012, DAT009, MOD011, SEC002, SEC003, SEC006, SettingsError, load_settings
+from .text import escape_streams
 
 NEEDS_FILE = REPO / "records" / "capability_needs.yaml"
 RECORDS_DIR = REPO / "records"
@@ -1038,6 +1039,7 @@ def _inspect_missing():
 
 def main(argv=None, *, input_fn=input, gateway_factory=_default_gateway, executor=_default_executor,
          inspect_check=_inspect_missing, external_executor=_default_external_executor):
+    escape_streams()
     ap = argparse.ArgumentParser(prog="faias_harness.preflight", description=__doc__.split("\n\n")[0])
     ap.add_argument("--profile", required=True, help="path to a target profile YAML")
     ap.add_argument("--settings", help="path to the settings YAML of an engine run")

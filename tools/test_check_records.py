@@ -15,6 +15,7 @@ HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
 import check_records  # noqa: E402
 from faias_harness import yamlio  # noqa: E402  (check_records puts the repository on the path)
+from faias_harness.text import escape_streams  # noqa: E402
 
 RECORDS = HERE.parent / "records"
 
@@ -77,6 +78,7 @@ CASES = [("wrong star", "TP-SEC-001", wrong_star, "does not equal the Confidence
 
 
 def main():
+    escape_streams()
     ap = argparse.ArgumentParser()
     ap.add_argument("--faias", required=True)
     faias = Path(ap.parse_args().faias)
