@@ -45,7 +45,7 @@ NEUTRAL_REPLY = "I can only help with Example Bank accounts. A human adviser can
 # escapes, so it reaches the adapter as the escape \ud83d alone. The harness keeps it with U+FFFD in its place.
 SURROGATE_REPLY = "Thank you \ud83d. A human adviser can look at your request."
 CLEANED_REPLY = "Thank you \ufffd. A human adviser can look at your request."
-ENGINE ="inspect" if external.inspect_available() else "direct"
+ENGINE = "inspect" if external.inspect_available() else "direct"
 
 
 def respond(text, nth):
