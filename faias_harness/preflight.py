@@ -82,7 +82,9 @@ conditions met, but a profile alone starts no run; 4 the operator did not type `
 or on an error.
 After the typed `yes`, the engine can still refuse the run before it opens the run log. Then --start prints one
 `Run refused:` line and the run folder (when it exists), and exits 2. An error after the run log is opened keeps its
-traceback.
+traceback. Calls that are not for an item can come before a `Run refused:` line. The probe calls are printed, and are
+not in egress.jsonl. The TP-MOD-011 instrument check and the TP-AGT-012 switch check make model calls before the
+lock. Their requests are in egress.jsonl of the run folder.
 """
 import argparse
 import os
