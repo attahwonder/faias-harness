@@ -79,13 +79,16 @@ def estimate(settings, repo=REPO):
 
     With tools on, each call also carries the tool definitions, and each turn counts at 1 + MAX_TOOL_ROUNDS calls, as
     in spike.estimate. The estimate does not count the tool calls and the tool results that a turn adds to the
-    messages. The gateway checks the cap before each call."""
+    messages. The gateway checks the cap before each call. It is None too when the item file is not found."""
     if settings.price_in_per_m is None or settings.price_out_per_m is None:
         return None
     _, gw, orch, _ = spike._srd1()
     tools, per_turn = _tools(settings)
     system = [{"role": "system", "content": orch.load_system_prompt()}]
-    items, seqs = sec006.load_items(repo)
+    try:
+        items, seqs = sec006.load_items(repo)
+    except FileNotFoundError:
+        return None
     tokens = sum(gw.estimate_tokens(system + [{"role": "user", "content": i.text}], tools) for i in items)
     calls = len(items)
     for s in seqs:

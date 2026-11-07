@@ -574,6 +574,38 @@ class PreflightSettingsTests(unittest.TestCase):
                          [f"  - the item file {absent} is not found"])
 
 
+@contextlib.contextmanager
+def absent_file(rel):
+    """Each read of the file `rel` acts as for an absent file: Path.is_file gives False, and read_text, read_bytes and
+    open raise FileNotFoundError. The file does not change, and every other file reads as it is."""
+    target = (REPO / rel).resolve()
+    real_is_file, real_read_text, real_read_bytes, real_open = Path.is_file, Path.read_text, Path.read_bytes, open
+
+    def gone(p):
+        return Path(p).resolve() == target
+
+    def is_file(self):
+        return False if gone(self) else real_is_file(self)
+
+    def read_text(self, *a, **k):
+        if gone(self):
+            raise FileNotFoundError(2, "No such file or directory", str(self))
+        return real_read_text(self, *a, **k)
+
+    def read_bytes(self):
+        if gone(self):
+            raise FileNotFoundError(2, "No such file or directory", str(self))
+        return real_read_bytes(self)
+
+    def opener(file, *a, **k):
+        if isinstance(file, (str, os.PathLike)) and gone(file):
+            raise FileNotFoundError(2, "No such file or directory", str(file))
+        return real_open(file, *a, **k)
+    with mock.patch.object(Path, "is_file", is_file), mock.patch.object(Path, "read_text", read_text), \
+            mock.patch.object(Path, "read_bytes", read_bytes), mock.patch("builtins.open", opener):
+        yield
+
+
 def changed_copy(rel, text):
     """Each read of the item file `rel` gives `text`, as a changed copy of the file on disk would. The file does not
     change, and every other file reads as it is."""
@@ -661,6 +693,30 @@ class ItemFileRefusalTests(unittest.TestCase):
         self.assertEqual(rc, 0, out[-800:])
         self.assertIn("Worst-case estimate: not available (the item file is not found); cap: USD 1.0\n", out)
         self.assertNotIn("Traceback", out)
+
+    def test_with_no_item_file_each_procedure_gives_no_estimate_and_start_refuses_in_one_problem_line(self):
+        """The item file of each procedure is not found, and the prices are set. The estimate line says "the item file
+        is not found", and --start refuses in one problem line that names the file, before any model call. Before, the
+        preflight of TP-SEC-001 (full set), TP-SEC-006 and TP-DAT-009 stopped with FileNotFoundError at the
+        estimate."""
+        for tp, (rel, changes) in self.CASES.items():
+            with self.subTest(procedure=tp):
+                settings = self.dir / f"settings_absent_{tp}.yaml"
+                settings.write_text(yaml.safe_dump(raw_settings(mode="explore", **changes)), encoding="utf-8")
+                called = []
+                argv = ["--profile", str(self.profile), "--settings", str(settings), *self.selftest]
+                with no_outside_network(), mock.patch.dict(os.environ, {KEY_ENV: FAKE_KEY_VALUE}), absent_file(rel):
+                    rc, out = run_main(argv)
+                    self.assertEqual(rc, 0, out[-800:])
+                    self.assertIn("Worst-case estimate: not available (the item file is not found); cap: USD 1.0\n",
+                                  out)
+                    rc, out = run_main(argv + ["--start", "--sign-key", str(self.key)], inspect_check=lambda: None,
+                                       gateway_factory=lambda s: called.append("model call"),
+                                       executor=lambda **k: called.append("run"))
+                self.assertEqual((rc, called), (2, []), out[-800:])
+                self.assertNotIn("Traceback", out)
+                self.assertEqual(out.split("START REFUSED. No run starts. Fix these points first:\n")[1].splitlines(),
+                                 [f"  - the item file {rel} is not found"])
 
     def test_a_lone_surrogate_in_each_item_file_gives_the_refusal_no_estimate_and_one_problem_line(self):
         """A changed copy of each item file with a key whose value holds a lone surrogate (the JSON escape \\ud83d

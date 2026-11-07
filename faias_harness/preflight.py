@@ -286,6 +286,16 @@ def item_file_refusal(settings):
     return None
 
 
+def item_file_not_found(settings):
+    """The item file of a run of TP-SEC-001 on its full set or of TP-SEC-006 when it is not found, else None. Their
+    estimate is then None, as for TP-AGT-012 and TP-DAT-009. --start names the file in one problem line, before any
+    model call. TP-AGT-012 and TP-DAT-009 name it in their own start problems."""
+    from .engine import sec001, sec006
+    path = ("items/TP-SEC-001.json" if settings.procedure == sec001.TP and settings.item_set == sec001.TP else
+            f"items/{sec006.ITEM_SET}.json" if settings.procedure == SEC006 else None)
+    return path if path is not None and not (REPO / path).is_file() else None
+
+
 def settings_report(settings, estimate_usd):
     """Print the settings block of the preflight. It never prints the value of the key."""
     r = settings.routing()
@@ -1184,6 +1194,9 @@ def main(argv=None, *, input_fn=input, gateway_factory=_default_gateway, executo
         item_refusal = item_file_refusal(settings)
         if item_refusal:
             problems.append(f"{settings.procedure}: the item file {item_refusal[0]} is refused: {item_refusal[1]}")
+        absent = item_file_not_found(settings)
+        if absent:
+            problems.append(f"the item file {absent} is not found")
         if settings.procedure == SEC006:
             problems += sec006_start_problems(settings, variant)
         if settings.procedure == AGT012:
