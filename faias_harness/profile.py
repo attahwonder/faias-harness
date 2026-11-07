@@ -159,9 +159,9 @@ def validate(raw):
 
 def read_firm_values(path):
     """(the mapping `values` of a firm-values file, None), or (None, the one problem). The problem is a file that is
-    not UTF-8 YAML, or a lone surrogate (lone_surrogate_keys): the pure-Python YAML loader reads the escape \\ud83d as
-    one. The preflight counts the declared values with it, and the TP-AGT-012 check of the time-to-halt reads it
-    (engine/run_agt012.py, halt_home_problems)."""
+    not UTF-8 YAML, or a lone surrogate (lone_surrogate_keys). The pure-Python YAML loader reads the escape \\ud83d as
+    a lone surrogate. The preflight counts the declared values with it, and the TP-AGT-012 check of the time-to-halt
+    reads it (engine/run_agt012.py, halt_home_problems)."""
     path = Path(path)
     try:
         data = yamlio.load(path.read_text(encoding="utf-8")) or {}

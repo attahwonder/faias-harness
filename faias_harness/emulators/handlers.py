@@ -59,7 +59,7 @@ def load_store(path):
     except (UnicodeDecodeError, yaml.YAMLError) as e:
         raise StoreError(f"cannot read the store ({type(e).__name__})") from None
     lone = lone_surrogate_keys(data)
-    if lone:        # the pure-Python YAML loader reads the escape \ud83d as a lone surrogate; libyaml refuses it
+    if lone:        # the pure-Python YAML loader reads the escape \ud83d as a lone surrogate, but libyaml refuses it
         raise StoreError(lone_surrogate_problem("the store", lone))
     if not isinstance(data, dict) or not (isinstance(data.get("accounts"), list)
                                           or isinstance(data.get("documents"), list)):

@@ -576,7 +576,7 @@ class PreflightSettingsTests(unittest.TestCase):
 
 @contextlib.contextmanager
 def absent_file(rel):
-    """Each read of the file `rel` acts as for an absent file: Path.is_file gives False, and read_text, read_bytes and
+    """Each read of the file `rel` acts as for an absent file. Path.is_file gives False, and read_text, read_bytes and
     open raise FileNotFoundError. The file does not change, and every other file reads as it is."""
     target = (REPO / rel).resolve()
     real_is_file, real_read_text, real_read_bytes, real_open = Path.is_file, Path.read_text, Path.read_bytes, open
@@ -618,9 +618,9 @@ def changed_copy(rel, text):
 
 @contextlib.contextmanager
 def changed_bytes(rel, data):
-    """Each read of the file `rel` gives the bytes `data`: read_bytes gives them, and read_text decodes them as a read
-    of a changed copy would (strict, so bytes that are not UTF-8 raise UnicodeDecodeError). The file does not change,
-    and every other file reads as it is."""
+    """Each read of the file `rel` gives the bytes `data`. `read_bytes` gives them as they are. `read_text` decodes
+    them strictly, as a read of a changed copy does, so bytes that are not UTF-8 raise UnicodeDecodeError. The file
+    does not change, and every other file reads as it is."""
     target, real_text, real_bytes = (REPO / rel).resolve(), Path.read_text, Path.read_bytes
 
     def read_bytes(self):
@@ -829,15 +829,15 @@ class LoneSurrogateYamlTests(unittest.TestCase):
 
 
 class OperatorYamlFileTests(unittest.TestCase):
-    """The other YAML files of the operator: the firm-values file, the tools file and the store of the tool emulator,
-    and the TP-SEC-002 declaration of the channel inputs. A copy of each file starts with the line `probe: <value>`.
-    The value is the YAML escape \\ud83d, or the bytes ED A0 BD (a surrogate written as if it were UTF-8). The
-    pure-Python YAML loader reads the escape as a lone surrogate, and the loader of the file refuses it with one problem
-    that names the key. libyaml refuses the escape (a ScannerError), and both loaders refuse the bytes, which are not
-    UTF-8. Each refusal has the form of the other refusals of that file. The preflight prints it, and --start refuses
-    in one problem line, before any model call. An emoji and U+FFFD pass. Before, the pure-Python loader passed the
-    escape. The bytes or the ScannerError stopped the preflight with a traceback, and the bytes stopped the tool
-    emulator with UnicodeDecodeError."""
+    """Four more YAML files of the operator. Three are the firm-values file, the tools file and the store of the tool
+    emulator. The fourth is the TP-SEC-002 declaration of the channel inputs. A copy of each file starts with the line
+    `probe: <value>`. The value is the YAML escape \\ud83d, or the bytes ED A0 BD. The bytes are a surrogate written as
+    if it were UTF-8. The pure-Python YAML loader reads the escape as a lone surrogate. The loader of the file refuses
+    it with one problem that names the key. The libyaml loader refuses the escape (a ScannerError). Both loaders
+    refuse the bytes, which are not UTF-8. Each refusal has the form of the other refusals of that file. The
+    preflight prints it, and --start refuses in one problem line, before any model call. An emoji and U+FFFD pass.
+    Before, the pure-Python loader passed the escape. The bytes or the ScannerError stopped the preflight with a
+    traceback, and the bytes stopped the tool emulator with UnicodeDecodeError."""
     LOADERS = [yaml.SafeLoader] + ([yaml.CSafeLoader] if hasattr(yaml, "CSafeLoader") else [])
     FILES = {"firm": "targets/srd1/firm_values.yaml", "tools": "targets/srd1/tools.yaml",
              "store": "targets/srd1/data/synthetic_bank.yaml", "e2": "targets/srd1/channel_inputs.yaml"}

@@ -141,8 +141,8 @@ def firm_value_keys(records_dir=RECORDS_DIR):
 
 
 def declared_firm_values(profile, keys):
-    """(number of keys with a non-null value in the profile's firm-values file, None), or (None, None) if there is no
-    file. A file that read_firm_values refuses gives (None, the problem)."""
+    """(the number of keys with a non-null value in the firm-values file of the profile, None). With no file, it is
+    (None, None). A file that read_firm_values refuses gives (None, the problem)."""
     if profile.firm_values is None or not profile.firm_values.is_file():
         return None, None
     values, problem = read_firm_values(profile.firm_values)
@@ -294,9 +294,9 @@ def item_file_refusal(settings):
 def tools_file_refusal(settings):
     """(the file, why it is refused) for a run that serves a tools file through the tool emulator, else None. A run of
     TP-AGT-012 or TP-DAT-009 serves one, and a run of TP-SEC-001 or TP-SEC-006 with tools on. The emulator reads the
-    tools file and its store (mcp_tools.load_tools, handlers.load_store). Each refuses a file that is not UTF-8 YAML, a
-    lone surrogate, and a file that is not of its form. The preflight then gives no estimate, the settings block
-    prints the refusal, and --start gives it as one problem line, before any model call."""
+    tools file and its store (mcp_tools.load_tools, handlers.load_store). Each refuses a lone surrogate, a file that is
+    not UTF-8 YAML and a file not of its form. The preflight then gives no estimate, and the settings block
+    prints the refusal. With --start, the refusal is one problem line, before any model call."""
     from .emulators import handlers, mcp_tools
     from .engine import run_dat009, sec001, toolrun
     if settings.procedure == DAT009:
@@ -323,9 +323,9 @@ def tools_file_refusal(settings):
 
 
 def item_file_not_found(settings):
-    """The item file of a run of TP-SEC-001 on its full set or of TP-SEC-006 when it is not found, else None. Their
-    estimate is then None, as for TP-AGT-012 and TP-DAT-009. --start names the file in one problem line, before any
-    model call. TP-AGT-012 and TP-DAT-009 name it in their own start problems."""
+    """The item file of a run of TP-SEC-001 (full set) or TP-SEC-006 when it is not found, else None. Their estimate
+    is then None, as for TP-AGT-012 and TP-DAT-009. Then --start names the file in one problem line, before any model
+    call. TP-AGT-012 and TP-DAT-009 name it in their own start problems."""
     from .engine import sec001, sec006
     path = ("items/TP-SEC-001.json" if settings.procedure == sec001.TP and settings.item_set == sec001.TP else
             f"items/{sec006.ITEM_SET}.json" if settings.procedure == SEC006 else None)
@@ -702,7 +702,7 @@ def sec006_baseline(settings, variant="standard"):
     from .engine import run_sec006, sec006_log
     if not settings.m4_baseline_log:
         return sec006_log.run_label(None), [], []
-    if tools_file_refusal(settings):        # the tool definitions hash needs the tools file; main names the refusal
+    if tools_file_refusal(settings):        # the tool definitions hash needs the tools file, and main names the refusal
         return sec006_log.run_label(None), ["M4 baseline check: not made (a tool emulator file is refused)"], []
     try:
         base = sec006_log.read_baseline(settings.m4_baseline_log, pubkey=settings.m4_baseline_pubkey)
@@ -747,10 +747,10 @@ def sec006_start_problems(settings, variant="standard"):
 def agt012_start_problems(settings):
     """What a TP-AGT-012 run needs besides the SRD-1 conditions and the self-test gate. The item file must be
     found, and agt012.check_item_set must find no problem in it with the declared values. The run drives the tool,
-    so tools must be on. An item file that its loader refuses is named once, by main (item_file_refusal), and so is a
+    so tools must be on. An item file that its loader refuses is named once, by main (item_file_refusal). So is a
     tools file or a store that the emulator refuses (tools_file_refusal). The two homes of the time-to-halt must
-    agree, and the firm-values file must be read (run_agt012.halt_home_problems), as the engine checks before the
-    lock."""
+    agree, and the firm-values file must be read (run_agt012.halt_home_problems). The engine checks the same before
+    the lock."""
     from .engine import agt012, run_agt012
     from targets.srd1.app.gate import load_risk_appetite
     problems = []

@@ -10,7 +10,7 @@ loader; or a file name). Each test runs the command with a stdout that encodes a
 (tests/helpers.StrictStdout). The command prints the escape and stops with no traceback. One test runs a command in a
 new process, with the real stdout. The JSON readers and the settings and profile loaders refuse a lone surrogate in
 the text of a file (tests/test_items.py and test_settings.py), so the tests of the preflight and of the TP-SEC-002 item
-tool give a file name that holds one. The loader of the tools file refuses one too, so the test of the tool emulator
+tool give a file name that holds one. The loader of the tools file refuses one too. So the test of the tool emulator
 gets the problem of the loader. That problem gives the key by repr, with the escape.
 
 No test contacts a host outside the local machine.

@@ -101,9 +101,9 @@ def read_e2(path=E2_FILE, repo=REPO):
     """The e2 block of the header: the declaration of the channel inputs (evidence output E2, line 52), quoted with its
     SHA-256, who declared it and when, its status, and the languages and the transformation families that it lists.
     It also holds product_owner_declared (sec002_log.E2_DECLARED, since 0.8): true or false as the file gives it, or
-    None when the file has no such field. Raises ValueError when the file cannot be read, holds a lone surrogate
-    (text.lone_surrogate_keys), lacks one of E2_FIELDS, or gives product_owner_declared a value that is not true or
-    false."""
+    None when the file has no such field. Raises ValueError when the file cannot be read or holds a lone surrogate
+    (text.lone_surrogate_keys). It raises it too for a file that lacks one of E2_FIELDS. So does a value of
+    product_owner_declared other than true or false."""
     p = Path(path) if Path(path).is_absolute() else Path(repo) / path
     try:
         text = p.read_text(encoding="utf-8")
@@ -112,7 +112,7 @@ def read_e2(path=E2_FILE, repo=REPO):
         raise ValueError(f"the declaration of the channel inputs cannot be read ({type(e).__name__}): "
                          f"{p.name}") from None
     lone = lone_surrogate_keys(data)
-    if lone:        # the pure-Python YAML loader reads the escape \ud83d as a lone surrogate; libyaml refuses it
+    if lone:        # the pure-Python YAML loader reads the escape \ud83d as a lone surrogate, but libyaml refuses it
         raise ValueError(lone_surrogate_problem(f"the declaration of the channel inputs ({p.name})", lone))
     data = data if isinstance(data, dict) else {}
     missing = [k for k in E2_FIELDS if data.get(k) in (None, "")

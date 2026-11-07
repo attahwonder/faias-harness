@@ -196,8 +196,8 @@ class EmulatorTests(_Base):
     def test_a_tools_call_with_a_lone_surrogate_gets_its_response_and_a_ledger_line_with_the_replacement(self):
         """A tools/call whose arguments hold a lone surrogate (the JSON escape \\ud83d alone), in each era. The target
         sends it from model output, so the emulator replaces it with U+FFFD at entry (text.clean). The call gets its
-        usual response, and the ledger line holds U+FFFD and verifies. Before, the ledger could not write the line:
-        the call got no response, and the server printed a traceback."""
+        usual response, and the ledger line holds U+FFFD and verifies. Before, the ledger failed to write the line.
+        The call got no response, and the server printed a traceback."""
         e = self.emu()
         h = {"Accept": "application/json, text/event-stream", "Content-Type": "application/json"}
         r = self.http.post(e.url, content=b'{"jsonrpc": "2.0", "id": 1, "method": "initialize", '

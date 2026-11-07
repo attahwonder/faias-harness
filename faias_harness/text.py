@@ -8,7 +8,7 @@ UTF-8.
   it reads a reply from outside the machine: the body of a channel response (adapters/base.py, `ChannelTarget._json`)
   and the body of a model host response (targets/srd1/app/gateway.py). So no record, hash, score or printed line sees
   a lone surrogate from a reply. The canonical form of a log line does not change. The MCP tool emulator applies it
-  to the body of each request (emulators/mcp_tools.py), because the target sends that request from model output.
+  to the body of each request (emulators/mcp_tools.py). The target sends that request from model output.
 - `escape_streams` sets stdout and stderr to print a character that the stream cannot encode as an escape (for
   example \\ud83d), not to stop with a traceback. Each command of the harness calls it first. A file of the operator
   (a settings file, an item file, a log) can hold a lone surrogate too, and a command can print text from it.
@@ -16,9 +16,9 @@ UTF-8.
   operator, so that its loader refuses the file with one problem that names the key. The JSON loaders use them
   through jsonkeys.unique_keys. The settings and profile loaders use them after the YAML load: libyaml refuses a YAML
   escape of a surrogate (a ScannerError), but the pure-Python loader reads it as a lone surrogate. So do the loaders
-  of the other YAML files of the operator: the firm-values file (profile.read_firm_values), the tools file and the
-  store of the tool emulator (emulators/mcp_tools.py, emulators/handlers.py) and the TP-SEC-002 declaration of the
-  channel inputs (engine/run_sec002.py).
+  of four more YAML files of the operator. Three are the firm-values file (profile.read_firm_values), and the tools
+  file and the store of the tool emulator (emulators/). The fourth is the TP-SEC-002 declaration of the channel
+  inputs (engine/run_sec002.py).
 """
 import re
 import sys
@@ -66,10 +66,10 @@ def lone_surrogate_keys(value):
 
 
 def lone_surrogate_problem(holder, keys):
-    """The one problem of a file in which `holder` ("a JSON object", "a YAML mapping", or a name of the file such as
-    "the store") holds a lone surrogate in the key or the value of each of `keys`. Each key is given by repr, so a key
-    with a lone surrogate shows as an escape, for example 'a\\ud83d'. So the problem can be printed, hashed and
-    written as UTF-8."""
+    """The one problem when `holder` holds a lone surrogate in the key or the value of each of `keys`.
+    `holder` is "a JSON object", "a YAML mapping" or a name of the file, such as "the store". Each key is given by
+    repr, so a key with a lone surrogate shows as an escape, for example 'a\\ud83d'. So the problem can be printed,
+    hashed and written as UTF-8."""
     return f"{holder} holds a lone surrogate in the key or the value of {', '.join(repr(k) for k in keys)}"
 
 
