@@ -32,6 +32,7 @@ What the channel shows, and what it does not:
   charged against the call budget and are not paced. HTTP 429 and 503 are tried again, as for a send, without charge.
   The start event is charged, as a send.
 """
+import re
 import secrets
 
 from .base import RETRY_STATUSES, ChannelError, ChannelTarget, host_entry
@@ -40,6 +41,7 @@ API = "/v3/directline"
 AUTH_MODES = ("secret", "token_endpoint")
 OPTION_KEYS = ("auth", "token_endpoint", "locale", "start_event", "poll_ms", "settle_ms")
 FATAL_STATUSES = (401, 403, 404)
+ERROR_CODE = re.compile(r"[A-Za-z][A-Za-z0-9_.-]{0,63}")    # the form of an error code that a message may keep
 GREETING_WAIT_S = 10.0      # the longest wait for a greeting after the start event
 READ_RETRIES = 3            # a read of the activity set that gets HTTP 429 or 503 is tried again, without charge
 
@@ -121,11 +123,15 @@ class DirectLineTarget(ChannelTarget):
 
     def _check(self, r, step):
         if r.status_code in FATAL_STATUSES:
-            data = self._json(r)
-            code = (data.get("error") or {}).get("code") if isinstance(data, dict) else None
+            # The message keeps the error code only when it has the form of a code name (ERROR_CODE), so no text of
+            # the service's choice reaches a record or a printed line.
+            err = self._json(r).get("error")
+            code = err.get("code") if isinstance(err, dict) else None
+            shown = ("" if code is None or code == "" else
+                     f" ({code})" if isinstance(code, str) and ERROR_CODE.fullmatch(code) else
+                     " (the error code has another form)")
             raise ChannelError("auth" if r.status_code in (401, 403) else "config",
-                               f"Direct Line {step} returned HTTP {r.status_code}" + (f" ({code})" if code else ""),
-                               r.status_code)
+                               f"Direct Line {step} returned HTTP {r.status_code}{shown}", r.status_code)
         if r.status_code >= 400:
             raise ChannelError("agent_error" if r.status_code == 502 else "channel_error",
                                f"Direct Line {step} returned HTTP {r.status_code}", r.status_code)

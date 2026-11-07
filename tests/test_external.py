@@ -24,7 +24,7 @@ from unittest import mock
 import yaml
 
 from faias_harness import preflight
-from faias_harness.adapters.base import ChannelError
+from faias_harness.adapters.base import CallBudget, ChannelError
 from faias_harness.engine import external, runlog, sec001, sec002, sec002_families, sec002_log
 from faias_harness.profile import load_profile
 from faias_harness.settings import external_from_raw, load_settings, validate_external
@@ -69,6 +69,37 @@ def ext_settings(**changes):
     problems = validate_external(raw)
     assert not problems, problems
     return external_from_raw(raw), raw
+
+
+# A code field of neutral placeholder text, as a target may put text of its choice there (since 0.9.4).
+CODE_TEXT = "placeholder text in the code field"
+
+
+class CodeA2A(StandInA2A):
+    """An A2A agent that answers each send with a JSON-RPC error whose code is `code`."""
+
+    def __init__(self, code, **kw):
+        super().__init__(**kw)
+        self.code = code
+
+    def route(self, method, path, query, headers, body):
+        if (body or {}).get("method") in ("SendMessage", "message/send"):
+            return 200, {"jsonrpc": "2.0", "id": body.get("id"),
+                         "error": {"code": self.code, "message": "a test error"}}, None
+        return super().route(method, path, query, headers, body)
+
+
+class CodeDirectLine(StandInDirectLine):
+    """A Direct Line service that refuses each token request with HTTP 403 and the error code `code`."""
+
+    def __init__(self, code, **kw):
+        super().__init__(**kw)
+        self.code = code
+
+    def route(self, method, path, query, headers, body):
+        if path == "/v3/directline/tokens/generate":
+            return 403, {"error": {"code": self.code, "message": "a test error"}}, None
+        return super().route(method, path, query, headers, body)
 
 
 class ExternalRunTests(unittest.TestCase):
@@ -544,6 +575,54 @@ class ExternalRunTests(unittest.TestCase):
                     self.assertEqual(probe["reply_start_sha256"], runlog.sha256_hex(start))
                     self.assertIn(f"  reply start: SHA-256 {runlog.sha256_hex(start)} (store_replies: hash_only", out)
                 self.assertTrue(runlog.verify_log(log, log.with_name("run_log.jsonl.sig"), self.pub, repo=REPO)[0])
+
+    # ---------- a code from the target's body (since 0.9.4): kept only in its fixed form ----------
+
+    def test_a_code_of_another_form_is_in_no_record_and_no_printed_line_and_a_code_of_the_fixed_form_is(self):
+        """The A2A JSON-RPC code is kept when it is an integer, and the Direct Line code when it matches
+        [A-Za-z][A-Za-z0-9_.-]{0,63}. A code of another form (CODE_TEXT, a number in text, a bool or a float for A2A;
+        CODE_TEXT, a name too long, a number or a leading digit for Direct Line) is in no probe record, no call record
+        of the session check, no printed probe line and no file of the run folder. The message says that the code has
+        another form. Before, the message held the code as the target sent it."""
+        long_name = "A" * 65
+        cases = [
+            ("a2a", CodeA2A, {"version": "1.0"}, -32001, "the A2A agent returned JSON-RPC error -32001"),
+            *[("a2a", CodeA2A, {"version": "1.0"}, code, "the A2A agent returned a JSON-RPC error whose code is not an "
+               "integer") for code in (CODE_TEXT, "-32001", True, 1.5)],
+            ("directline", CodeDirectLine, {"auth": "secret", **{"poll_ms": 50, "settle_ms": 0}}, "Bad.Argument_1-x",
+             "Direct Line token generation returned HTTP 403 (Bad.Argument_1-x)"),
+            *[("directline", CodeDirectLine, {"auth": "secret", "poll_ms": 50, "settle_ms": 0}, code,
+               "Direct Line token generation returned HTTP 403 (the error code has another form)")
+              for code in (CODE_TEXT, long_name, 403, "1BadArgument")],
+        ]
+        settings, _ = ext_settings()
+        for n, (adapter, stand_in, opts, code, message) in enumerate(cases):
+            with self.subTest(adapter=adapter, code=code):
+                kw = {"secret": FAKE_KEY_VALUE} if adapter == "directline" else {"key": FAKE_KEY_VALUE}
+                with stand_in(code, **kw) as s:
+                    prof = self.profile(adapter, s.base_url, opts, name=f"code_{n}.yaml")
+                    rc, out = self.pf(["--profile", str(prof), "--settings", str(self.write_settings()), "--probes"])
+                    records = []
+                    for check in (False, True):
+                        budget = CallBudget(settings.cap_usd, settings.cost_per_call_usd, settings.max_calls)
+                        with no_outside_network():
+                            egress = external.make_egress(load_profile(prof))
+                            try:
+                                target = external.make_target(load_profile(prof), settings, egress, budget, env=ENV,
+                                                              sleep=lambda x: None)
+                                records.append(external.channel_probe(target, session_check=check))
+                            finally:
+                                egress.close()
+                    res = self.run_ext(prof, settings, name=f"code_run_{n}", sleep=lambda x: None)
+                self.assertEqual(rc, 0, out[-600:])
+                probe, check = records
+                details = [probe["detail"], check["detail"], check["session_check"]["calls"][0]["detail"]]
+                self.assertEqual(details, [message] * 3)
+                self.assertIn(f": {message}\n", out)
+                files = b"".join(p.read_bytes() for p in res.run_dir.rglob("*") if p.is_file())
+                if isinstance(code, str) and code not in message:
+                    for text in (out, runlog.canonical(records), files.decode("utf-8")):
+                        self.assertNotIn(code, text)
 
     def test_another_error_type_of_the_engine_is_not_caught(self):
         with StandInDirectLine(respond, secret=FAKE_KEY_VALUE) as dl:

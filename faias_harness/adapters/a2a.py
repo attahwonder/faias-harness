@@ -138,9 +138,13 @@ class A2ATarget(ChannelTarget):
                                f"the A2A endpoint returned HTTP {r.status_code}", r.status_code)
         data = self._json(r)
         if isinstance(data, dict) and isinstance(data.get("error"), dict):
+            # The message keeps the code only when it is an integer (its JSON-RPC form), so no text of the agent's
+            # choice reaches a record or a printed line.
             code = data["error"].get("code")
-            kind = "config" if code == -32601 else "channel_error"
-            raise ChannelError(kind, f"the A2A agent returned JSON-RPC error {code}")
+            fixed = isinstance(code, int) and not isinstance(code, bool)
+            kind = "config" if fixed and code == -32601 else "channel_error"
+            raise ChannelError(kind, f"the A2A agent returned JSON-RPC error {code}" if fixed else
+                               "the A2A agent returned a JSON-RPC error whose code is not an integer")
         return (data or {}).get("result")
 
     def _message(self, text, context_id):
