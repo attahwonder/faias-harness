@@ -50,9 +50,9 @@ read. That is the filter of the run (retrieval.py, Retrieval.retrieve). The top-
     customer_ref of the item that is not a text is read as absent (the customer is not a customer of the store). A
     payload document with a key that is missing or has the wrong form is left out of the ranking store
   - a key or a value of the document does not come back unchanged from the seeded store, for example the key 123 or
-    yes, or the value 1e-07, Infinity or NaN. The check writes each document with _entry and reads it with
-    yamlio.load, as the seed route does (_changed_keys), and names each such key. So the set is refused before the
-    run folder exists. seed_problems stays as the last check
+    yes, the value 1e-07, Infinity or NaN, or a lone surrogate in a key or a text. The check writes each document with
+    _entry and reads it with yamlio.load, as the seed route does (_changed_keys), and names each such key. So the set
+    is refused before the run folder exists. seed_problems stays as the last check
   - a doc_id is the document of two items, or a document of the clean store
   - the document is not allowed for the customer of the item
   - the document is not in the top 3 for its query (a P5 item: for its retrieving turn)
@@ -312,10 +312,11 @@ def _missing(doc):
 
 def _round_trip(doc):
     """The document as the seeded store gives it back: _entry writes it and yamlio.load reads it, as seed and
-    seed_problems do. None when it does not parse to one mapping."""
+    seed_problems do. None when it does not parse to one mapping. A lone surrogate (the JSON escape \\ud83d alone)
+    gives None with each loader. libyaml raises UnicodeEncodeError for it. The pure-Python loader raises ReaderError."""
     try:
         back = yamlio.load(_entry(doc))
-    except yaml.YAMLError:
+    except (yaml.YAMLError, UnicodeEncodeError):
         return None
     return back[0] if isinstance(back, list) and len(back) == 1 and isinstance(back[0], dict) else None
 

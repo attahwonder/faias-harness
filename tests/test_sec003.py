@@ -218,6 +218,14 @@ ROUND_TRIP_CONTROLS = {
     "a text with a tab and a newline": lambda d: d.__setitem__("text", d["text"] + "\t\nmore"),
     "the key documents": _set("documents", "x"),
 }
+# A lone surrogate (the JSON escape \ud83d alone) in a document key or text: valid JSON. libyaml raises
+# UnicodeEncodeError when it reads the text that _entry writes, and the pure-Python loader raises ReaderError.
+SURROGATE_TRIGGERS = {
+    "a key with a lone surrogate": (_set("a\ud83db", "x"), "a\ud83db"),
+    "a title with a lone surrogate": (lambda d: d.__setitem__("title", d["title"] + "\ud83d"), "title"),
+}
+# The YAML loaders that yamlio.load can use: the pure-Python one, and libyaml's where PyYAML has it.
+YAML_LOADERS = [yaml.SafeLoader] + ([yaml.CSafeLoader] if hasattr(yaml, "CSafeLoader") else [])
 
 
 def round_trip_problem(iid, key):
@@ -407,6 +415,21 @@ class ItemSetTests(unittest.TestCase):
                 self.assertEqual(sec003.check_item_set(items, CLEAN), [])
                 self.assertEqual(sec003.seed(sec003.pool(items), self.dir / f"control_{n}")["payload_doc_ids"][0],
                                  "SYN-S-0001")
+
+    def test_a_document_with_a_lone_surrogate_is_named_by_its_key_with_each_yaml_loader(self):
+        """A lone surrogate in a document key or text (SURROGATE_TRIGGERS). With each YAML loader (YAML_LOADERS), the
+        item check gives one problem that names the item and the key. It raises nothing. Before, the check raised
+        UnicodeEncodeError with libyaml. The item file holds the JSON escape, so the file is valid UTF-8."""
+        for loader in YAML_LOADERS:
+            for name, (change, key) in SURROGATE_TRIGGERS.items():
+                with self.subTest(loader=loader.__name__, case=name), \
+                        mock.patch.object(yamlio, "loader", lambda: loader):
+                    data = fixture_set()
+                    change(data["items"][0]["document"])
+                    path = self.dir / "items_surrogate.json"
+                    path.write_text(json.dumps(data), encoding="utf-8")
+                    self.assertEqual(sec003.check_item_set(sec003.load_set(path), CLEAN),
+                                     [round_trip_problem("P1-01", key)])
 
     def test_a_set_with_no_item_is_refused_by_the_item_check(self):
         """No field items, and an empty list: the item check gives one problem, in the form of the TP-SEC-002 problem

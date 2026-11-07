@@ -34,12 +34,13 @@ from unittest import mock
 
 import yaml
 
-from faias_harness import preflight, selftest, settings as sm
+from faias_harness import preflight, selftest, settings as sm, yamlio
 from faias_harness.adapters.srd1_http import Srd1ChatError, Srd1ChatTarget
 from faias_harness.engine import run_sec003, runlog, sec001, sec003, sec003_log, sec006, spike
 from tests.helpers import (FAKE_KEY_VALUE, KEY_ENV, StandInModelHost, make_settings, no_outside_network, raw_settings,
                            shared_selftest)
-from tests.test_sec003 import CLEAN_FILE, FIXTURE_ITEMS, ROUND_TRIP_TRIGGERS, fixture_set, round_trip_problem
+from tests.test_sec003 import (CLEAN_FILE, FIXTURE_ITEMS, ROUND_TRIP_TRIGGERS, SURROGATE_TRIGGERS, YAML_LOADERS,
+                               fixture_set, round_trip_problem)
 from tests.test_sec003_log import assert_each_fault_gives_its_problems, seeded_faults
 
 REPO = Path(__file__).resolve().parents[1]
@@ -928,7 +929,7 @@ class PreflightTests(unittest.TestCase):
         self.key = runlog.make_key(self.dir / "keys", repo=REPO)[0]
         self.selftest = ["--selftest-log", str(_FIXTURE["log"]), "--selftest-pubkey", str(_FIXTURE["pub"])]
 
-    def main(self, *argv, calls=None):
+    def main(self, *argv, calls=None, probed=None):
         class G:
             class cap:
                 spent_usd = 0.0
@@ -940,9 +941,15 @@ class PreflightTests(unittest.TestCase):
 
         probes = {"judge_family": "not applicable", "tool_call": {"ok": True}, "reasoning_text": {"present": False},
                   "cost_usd": 0.0}
+
+        def run_probes(g):
+            if probed is not None:
+                probed.append(g)
+            return probes
+
         out = io.StringIO()
         with no_outside_network(), mock.patch.dict("os.environ", {KEY_ENV: FAKE_KEY_VALUE}), \
-                mock.patch.object(spike, "run_probes", lambda g: probes), contextlib.redirect_stdout(out):
+                mock.patch.object(spike, "run_probes", run_probes), contextlib.redirect_stdout(out):
             rc = preflight.main(["--profile", str(self.profile), "--settings", str(self.settings), *argv],
                                 input_fn=lambda p: "yes", gateway_factory=lambda s: G(), executor=executor,
                                 inspect_check=lambda: None)
@@ -1138,6 +1145,27 @@ class PreflightTests(unittest.TestCase):
                 self.assertNotIn("Traceback", out)
                 self.assertEqual(out.split("Fix these points first:\n")[1].splitlines(),
                                  [f"  - the item file: {round_trip_problem('P1-01', key)}"])
+
+    def test_start_refuses_a_document_with_a_lone_surrogate_in_one_problem_line_with_each_yaml_loader(self):
+        """A lone surrogate in a document key or text (SURROGATE_TRIGGERS). With each YAML loader (YAML_LOADERS),
+        --start refuses in one problem line that names the item and the key. The exit code is 2. The probes and the
+        executor are not called. Before, the item check raised UnicodeEncodeError with libyaml, and --start stopped
+        with a traceback."""
+        for loader in YAML_LOADERS:
+            for n, (name, (change, key)) in enumerate(SURROGATE_TRIGGERS.items()):
+                items = fixture_set()["items"]
+                change(items[0]["document"])
+                path = items_file(self.dir, f"surrogate_{loader.__name__}_{n}", items)
+                calls, probed = [], []
+                with self.subTest(loader=loader.__name__, case=name), \
+                        mock.patch.object(sec003, "ITEM_FILE", str(path)), \
+                        mock.patch.object(yamlio, "loader", lambda: loader):
+                    rc, out = self.main("--start", "--sign-key", str(self.key), *self.selftest, calls=calls,
+                                        probed=probed)
+                    self.assertEqual((rc, calls, probed), (2, [], []), out)
+                    self.assertNotIn("Traceback", out)
+                    self.assertEqual(out.split("Fix these points first:\n")[1].splitlines(),
+                                     [f"  - the item file: {round_trip_problem('P1-01', key)}"])
 
     def test_start_refuses_a_set_with_no_item_in_one_problem_line(self):
         """No field items, and an empty list: --start refuses in one problem line, the problem of the item check,
