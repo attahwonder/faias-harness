@@ -1,6 +1,6 @@
 # Changelog
 
-## 0.9.3 (7 November 2026 — date of the push)
+## 0.9.3 (7 November 2026)
 
 This release closes the second gap in the last entry of the 0.9.2 section. It also closes two more gaps of the same kind. Three cases now give a refusal of one or two lines in place of a traceback. The first is a TP-SEC-003 item file with a document that changes in the seeded store. The second is a refusal of the engine at `--start` before it opens the run log. The third is an `--out` path of `tools/mod011_overlap.py` whose folder is not found. Some gaps remain. The last entry lists them.
 
