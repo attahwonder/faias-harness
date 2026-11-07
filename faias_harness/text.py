@@ -15,7 +15,10 @@ UTF-8.
 - `has_lone_surrogate`, `lone_surrogate_keys` and `lone_surrogate_problem` find a lone surrogate in a file of the
   operator, so that its loader refuses the file with one problem that names the key. The JSON loaders use them
   through jsonkeys.unique_keys. The settings and profile loaders use them after the YAML load: libyaml refuses a YAML
-  escape of a surrogate (a ScannerError), but the pure-Python loader reads it as a lone surrogate.
+  escape of a surrogate (a ScannerError), but the pure-Python loader reads it as a lone surrogate. So do the loaders
+  of the other YAML files of the operator: the firm-values file (profile.read_firm_values), the tools file and the
+  store of the tool emulator (emulators/mcp_tools.py, emulators/handlers.py) and the TP-SEC-002 declaration of the
+  channel inputs (engine/run_sec002.py).
 """
 import re
 import sys
@@ -63,9 +66,10 @@ def lone_surrogate_keys(value):
 
 
 def lone_surrogate_problem(holder, keys):
-    """The one problem of a file in which `holder` ("a JSON object", "a YAML mapping") holds a lone surrogate in the key
-    or the value of each of `keys`. Each key is given by repr, so a key with a lone surrogate shows as an escape, for
-    example 'a\\ud83d'. So the problem can be printed, hashed and written as UTF-8."""
+    """The one problem of a file in which `holder` ("a JSON object", "a YAML mapping", or a name of the file such as
+    "the store") holds a lone surrogate in the key or the value of each of `keys`. Each key is given by repr, so a key
+    with a lone surrogate shows as an escape, for example 'a\\ud83d'. So the problem can be printed, hashed and
+    written as UTF-8."""
     return f"{holder} holds a lone surrogate in the key or the value of {', '.join(repr(k) for k in keys)}"
 
 

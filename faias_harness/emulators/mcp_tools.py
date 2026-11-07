@@ -87,7 +87,7 @@ from pathlib import Path
 import yaml
 
 from .. import __version__, yamlio
-from ..text import clean, escape_streams, has_lone_surrogate
+from ..text import clean, escape_streams, has_lone_surrogate, lone_surrogate_keys, lone_surrogate_problem
 from . import handlers as handlers_mod
 
 MODERN = ("2026-07-28",)
@@ -169,11 +169,15 @@ def validate_tools(raw):
 
 
 def load_tools(path):
-    """The tools file, checked. A relative `store` path is read from the folder of the tools file."""
+    """The tools file, checked. A relative `store` path is read from the folder of the tools file. A file that is not
+    UTF-8 YAML, or that holds a lone surrogate (text.lone_surrogate_keys), is refused with one problem."""
     try:
         raw = yamlio.load(Path(path).read_text(encoding="utf-8"))
-    except (OSError, yaml.YAMLError) as e:
+    except (OSError, UnicodeDecodeError, yaml.YAMLError) as e:
         raise ToolsError([f"cannot read the tools file ({type(e).__name__})"])
+    lone = lone_surrogate_keys(raw)
+    if lone:        # the pure-Python YAML loader reads the escape \ud83d as a lone surrogate; libyaml refuses it
+        raise ToolsError([lone_surrogate_problem("the tools file", lone)])
     problems = validate_tools(raw)
     if problems:
         raise ToolsError(problems)

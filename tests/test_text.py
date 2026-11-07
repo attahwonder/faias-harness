@@ -10,7 +10,8 @@ loader; or a file name). Each test runs the command with a stdout that encodes a
 (tests/helpers.StrictStdout). The command prints the escape and stops with no traceback. One test runs a command in a
 new process, with the real stdout. The JSON readers and the settings and profile loaders refuse a lone surrogate in
 the text of a file (tests/test_items.py and test_settings.py), so the tests of the preflight and of the TP-SEC-002 item
-tool give a file name that holds one.
+tool give a file name that holds one. The loader of the tools file refuses one too, so the test of the tool emulator
+gets the problem of the loader. That problem gives the key by repr, with the escape.
 
 No test contacts a host outside the local machine.
 """
@@ -124,8 +125,8 @@ class PrintedTextTests(unittest.TestCase):
         with mock.patch.object(yamlio, "loader", lambda: yaml.SafeLoader):
             rc, out = self.run_main(mcp_tools.main, ["serve", "--tools", str(tools), "--ledger",
                                                      str(self.dir / "ledger.jsonl")])
-        self.assertTrue(out.startswith("refused: "), out)
-        self.assertIn(f"tool 1: unknown field(s) note{ESCAPED}", out)
+        self.assertEqual(out, f"refused: the tools file holds a lone surrogate in the key or the value of "
+                              f"'note{ESCAPED}'\n")
         self.assertEqual(rc, 2)
         self.assertFalse((self.dir / "ledger.jsonl").exists())
 

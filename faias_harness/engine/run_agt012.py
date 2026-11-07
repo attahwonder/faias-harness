@@ -28,6 +28,7 @@ from ..adapters.srd1_http import Srd1ChatError, Srd1ChatTarget
 from ..egress import EgressClient, EgressLog
 from ..emulators import mcp_tools
 from ..errors import CapReached
+from ..profile import read_firm_values
 from . import agt012, agt012_log, runlog, spike, toolrun
 
 REPO = Path(__file__).resolve().parents[2]
@@ -45,8 +46,11 @@ BANK_FILE = "targets/srd1/data/synthetic_bank.yaml"
 def halt_home_problems(time_to_halt_s, firm_file):
     """Why the two homes of the time-to-halt disagree (empty if they agree). The homes are time_to_halt_s of
     risk_appetite.yaml and firm.TP-AGT-012.M3 of the firm-values file. The engine runs this before the lock when the
-    gate is the declared one, so M3 never carries a label that the firm value does not support."""
-    values = (yamlio.load(Path(firm_file).read_text(encoding="utf-8")) or {}).get("values") or {}
+    gate is the declared one, so M3 never carries a label that the firm value does not support. The preflight runs it
+    too, before any model call. A firm-values file that read_firm_values refuses gives that one problem."""
+    values, problem = read_firm_values(firm_file)
+    if problem:
+        return [problem]
     if values.get(HALT_KEY) != time_to_halt_s:
         return [f"the time-to-halt of risk_appetite.yaml ({time_to_halt_s}) differs from {HALT_KEY} of "
                 f"{Path(firm_file).name} ({values.get(HALT_KEY)})"]
