@@ -23,7 +23,7 @@ from unittest import mock
 
 import yaml
 
-from faias_harness import preflight
+from faias_harness import preflight, yamlio
 from faias_harness.adapters.base import CallBudget, ChannelError
 from faias_harness.engine import external, runlog, sec001, sec002, sec002_families, sec002_log
 from faias_harness.profile import load_profile
@@ -575,6 +575,47 @@ class ExternalRunTests(unittest.TestCase):
                     self.assertEqual(probe["reply_start_sha256"], runlog.sha256_hex(start))
                     self.assertIn(f"  reply start: SHA-256 {runlog.sha256_hex(start)} (store_replies: hash_only", out)
                 self.assertTrue(runlog.verify_log(log, log.with_name("run_log.jsonl.sig"), self.pub, repo=REPO)[0])
+
+    # ---------- a lone surrogate in the settings or the profile: refused at load ----------
+
+    def test_a_lone_surrogate_in_the_settings_or_the_profile_is_refused_at_load_before_the_typed_yes(self):
+        """The YAML escape \\ud83d in a settings value (declared.target_version), and in the profile name. With each
+        YAML loader, --start refuses at load in one problem line, with exit 2. The typed yes is not asked, and no run
+        folder is made. With the pure-Python loader the problem names the key; libyaml refuses the escape. Before, with
+        the pure-Python loader, the settings value stopped the preflight with a traceback at the settings hash, and the
+        profile name reached the lock of the run header after the typed yes."""
+        loaders = [yaml.SafeLoader] + ([yaml.CSafeLoader] if hasattr(yaml, "CSafeLoader") else [])
+        with StandInDirectLine(respond, secret=FAKE_KEY_VALUE) as dl:
+            prof = self.dl_profile(dl)
+            text = prof.read_text(encoding="utf-8")
+            self.assertEqual(text.count("name: stand-in directline\n"), 1)
+            bad_prof = self.dir / "p_lone_surrogate.yaml"
+            bad_prof.write_text(text.replace("name: stand-in directline\n", 'name: "stand-in \\ud83d"\n'),
+                                encoding="ascii")
+            good = self.write_settings()
+            text = good.read_text(encoding="utf-8")
+            self.assertEqual(text.count("target_version: 1.0.3\n"), 1)
+            bad = self.dir / "settings_lone_surrogate.yaml"
+            bad.write_text(text.replace("target_version: 1.0.3\n", 'target_version: "1.0.3 \\ud83d"\n'),
+                           encoding="ascii")
+            for loader in loaders:
+                for name, p, s, head, key in (("settings", prof, bad, "SETTINGS INVALID. No run starts:",
+                                               "target_version"), ("profile", bad_prof, good, "PROFILE INVALID:", "name")):
+                    run_dir = self.dir / f"lone_{name}_{loader.__name__}"
+                    with self.subTest(file=name, loader=loader.__name__), \
+                            mock.patch.object(yamlio, "loader", lambda: loader):
+                        rc, out = self.pf(["--profile", str(p), "--settings", str(s), "--start", "--sign-key",
+                                           str(self.priv), "--run-dir", str(run_dir)], answer="no")
+                        self.assertEqual(rc, 2, out[-600:])         # a typed "no" would give 4
+                        problems = out.split(head + "\n")[1]
+                        if loader is yaml.SafeLoader:
+                            self.assertEqual(problems, f"  - a YAML mapping holds a lone surrogate in the key or the "
+                                                       f"value of '{key}'\n")
+                        else:
+                            self.assertIn("ScannerError" if name == "settings" else
+                                          "found invalid Unicode character escape code", problems)
+                        self.assertFalse(run_dir.exists())
+                        self.assertNotIn("Traceback", out)
 
     # ---------- a code from the target's body: kept only in its fixed form ----------
 

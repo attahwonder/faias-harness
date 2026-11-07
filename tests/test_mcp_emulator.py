@@ -5,6 +5,7 @@ A pass shows that the emulator follows the rules tested here. It does not show t
 with it.
 """
 import base64
+import contextlib
 import json
 import tempfile
 import unittest
@@ -13,7 +14,7 @@ from pathlib import Path
 import httpx
 
 from faias_harness.emulators import mcp_tools as mt
-from tests.helpers import FAKE_KEY_VALUE, no_outside_network
+from tests.helpers import FAKE_KEY_VALUE, StrictStdout, no_outside_network
 
 REPO = Path(__file__).resolve().parents[1]
 TOOLS = mt.load_tools(REPO / "targets" / "examples" / "mcp_tools.yaml")
@@ -168,6 +169,29 @@ class EmulatorTests(_Base):
                 self.assertTrue(problems)
         with self.assertRaises(FileExistsError):
             mt.Ledger(path)
+
+    def test_verify_names_a_line_with_a_lone_surrogate_in_one_line_with_no_traceback(self):
+        """A ledger line changed to hold a lone surrogate (the JSON escape \\ud83d alone). Such a text cannot be written
+        as UTF-8, so its hash cannot be computed. verify_ledger names the line in one problem, and the command verify
+        prints it in one FAIL line with exit 1, as for its other problems. A stdout that encodes as strict UTF-8 prints
+        the line. Before, verify stopped with UnicodeEncodeError when it hashed the line."""
+        e = self.emu()
+        sid = self.post(e, {"jsonrpc": "2.0", "id": 1, "method": "initialize",
+                            "params": {"protocolVersion": "2025-11-25"}}).headers["Mcp-Session-Id"]
+        for i in range(3):
+            self.post(e, {"jsonrpc": "2.0", "id": 10 + i, "method": "tools/call", "params": {
+                "name": "get_account_summary", "arguments": {"account_ref": f"TEST-000{i}"}}}, {"Mcp-Session-Id": sid})
+        lines = e.ledger.path.read_text(encoding="utf-8").splitlines()
+        self.assertEqual(lines[1].count("TEST-0001"), 1)
+        p = self.dir / "lone_surrogate.jsonl"
+        p.write_text("\n".join([lines[0], lines[1].replace("TEST-0001", "TEST-0001\\ud83d"), lines[2]]) + "\n",
+                     encoding="utf-8")
+        want = "line 2: the line holds a lone surrogate, so its hash cannot be checked"
+        self.assertEqual(mt.verify_ledger(p, expected_head=e.ledger.head), (False, [want]))
+        out = StrictStdout()
+        with contextlib.redirect_stdout(out.stream):
+            rc = mt.main(["verify", "--ledger", str(p)])
+        self.assertEqual((rc, out.text()), (1, f"FAIL: {want}\n"))
 
     def test_local_only_and_tools_file_rules(self):
         with self.assertRaises(ValueError):

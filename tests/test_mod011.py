@@ -22,7 +22,7 @@ from unittest import mock
 from faias_harness import settings as sm
 from faias_harness.engine import mod011, sec001, sec006
 from targets.srd1.app import orchestrator
-from tests.helpers import EVIDENCE_RAW
+from tests.helpers import EVIDENCE_RAW, StrictStdout
 
 REPO = Path(__file__).resolve().parents[1]
 ENTRY = mod011.ALLOW_LIST["gsm8k"]
@@ -545,6 +545,26 @@ class OverlapToolTests(unittest.TestCase):
                                                      f"key {key} more than once\n")
                     for c in self.COMPARATORS:
                         self.assertNotIn(c["question"], buf.getvalue())
+
+    def test_a_comparator_file_with_a_lone_surrogate_is_refused_in_one_line_and_no_result_is_written(self):
+        """A comparator ID that holds a lone surrogate (the JSON escape \\ud83d alone). The tool refuses the file in one
+        line that names the key, with exit 2, and writes no file. A stdout that encodes as strict UTF-8 prints the
+        line. Before, the tool stopped with UnicodeEncodeError before it wrote the result."""
+        comps = copy.deepcopy(self.COMPARATORS)
+        comps[0]["id"] += "\ud83d"
+        with tempfile.TemporaryDirectory() as d:
+            d = Path(d)
+            for name, rows in (("train.jsonl", self.TRAIN), ("test.jsonl", self.TEST)):
+                (d / name).write_text("".join(json.dumps(r) + "\n" for r in rows), encoding="utf-8")
+            comp, out = d / "comparators.json", d / "overlap.json"
+            comp.write_text(json.dumps({"comparators": comps}), encoding="ascii")
+            buf = StrictStdout()
+            with redirect_stdout(buf.stream):
+                rc = OVERLAP_TOOL.main(["--comparators", str(comp), "--gsm8k", str(d / "train.jsonl"),
+                                        str(d / "test.jsonl"), "--out", str(out)])
+            self.assertEqual((rc, buf.text()), (2, f"refused: the comparator file {comp}: a JSON object holds a lone "
+                                                   "surrogate in the key or the value of 'id'\n"))
+            self.assertEqual(sorted(p.name for p in d.iterdir()), ["comparators.json", "test.jsonl", "train.jsonl"])
 
     def test_a_comparator_file_that_cannot_be_read_is_refused_in_the_words_of_tp_sec_002_and_no_result_is_written(self):
         """A comparator file that is not UTF-8 JSON, one that does not hold one JSON object, and one whose field

@@ -1,4 +1,4 @@
-"""Two rules for text that the harness does not write itself.
+"""Rules for text that the harness does not write itself.
 
 A JSON body can hold a lone surrogate: the escape \\ud83d with no low half after it. Python reads it as one code point
 from U+D800 to U+DFFF, and such a string cannot be written as UTF-8. A log line, a SHA-256 and a printed line all need
@@ -11,6 +11,10 @@ UTF-8.
 - `escape_streams` sets stdout and stderr to print a character that the stream cannot encode as an escape (for
   example \\ud83d), not to stop with a traceback. Each command of the harness calls it first. A file of the operator
   (a settings file, an item file, a log) can hold a lone surrogate too, and a command can print text from it.
+- `has_lone_surrogate`, `lone_surrogate_keys` and `lone_surrogate_problem` find a lone surrogate in a file of the
+  operator, so that its loader refuses the file with one problem that names the key. The JSON loaders use them
+  through jsonkeys.unique_keys. The settings and profile loaders use them after the YAML load: libyaml refuses a YAML
+  escape of a surrogate (a ScannerError), but the pure-Python loader reads it as a lone surrogate.
 """
 import re
 import sys
@@ -29,6 +33,39 @@ def clean(value):
     if isinstance(value, list):
         return [clean(v) for v in value]
     return value
+
+
+def has_lone_surrogate(value):
+    """True when `value` holds a lone surrogate: a string, or a string in a list at any depth. A dict is not read:
+    the JSON hook (jsonkeys.unique_keys) reads each object at its own call, and lone_surrogate_keys reads each
+    mapping."""
+    if isinstance(value, str):
+        return LONE_SURROGATE.search(value) is not None
+    if isinstance(value, list):
+        return any(has_lone_surrogate(v) for v in value)
+    return False
+
+
+def lone_surrogate_keys(value):
+    """The keys of each mapping in `value`, at any depth, whose key or value holds a lone surrogate
+    (has_lone_surrogate), in the order of the file, each once."""
+    out = []
+    if isinstance(value, dict):
+        for k, v in value.items():
+            if has_lone_surrogate(k) or has_lone_surrogate(v):
+                out.append(k)
+            out += lone_surrogate_keys(v)
+    elif isinstance(value, list):
+        for v in value:
+            out += lone_surrogate_keys(v)
+    return list(dict.fromkeys(out))
+
+
+def lone_surrogate_problem(holder, keys):
+    """The one problem of a file in which `holder` ("a JSON object", "a YAML mapping") holds a lone surrogate in the key
+    or the value of each of `keys`. Each key is given by repr, so a key with a lone surrogate shows as an escape, for
+    example 'a\\ud83d'. So the problem can be printed, hashed and written as UTF-8."""
+    return f"{holder} holds a lone surrogate in the key or the value of {', '.join(repr(k) for k in keys)}"
 
 
 def escape_streams():

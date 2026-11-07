@@ -95,6 +95,7 @@ from pathlib import Path
 import yaml
 
 from . import yamlio
+from .text import lone_surrogate_keys, lone_surrogate_problem
 
 TOP_REQUIRED = ["provider", "model_id", "mode", "routing", "price_in_per_m", "price_out_per_m", "cap_usd",
                 "api_key_env"]
@@ -753,8 +754,11 @@ def load_settings(path):
     path = Path(path)
     try:
         raw = yamlio.load(path.read_text(encoding="utf-8"))
-    except (OSError, yaml.YAMLError) as e:
+    except (OSError, UnicodeDecodeError, yaml.YAMLError) as e:
         raise SettingsError([f"cannot read {path.name}: {type(e).__name__}"])
+    lone = lone_surrogate_keys(raw)
+    if lone:        # the pure-Python YAML loader reads the escape \ud83d as a lone surrogate; libyaml refuses it
+        raise SettingsError([lone_surrogate_problem("a YAML mapping", lone)])
     if isinstance(raw, dict) and raw.get("kind") == "external":
         problems = validate_external(raw)
         if problems:

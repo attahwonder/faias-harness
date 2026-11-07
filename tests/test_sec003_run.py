@@ -1151,9 +1151,10 @@ class PreflightTests(unittest.TestCase):
 
     def test_start_refuses_a_document_with_a_lone_surrogate_in_one_problem_line_with_each_yaml_loader(self):
         """A lone surrogate in a document key or text (SURROGATE_TRIGGERS). With each YAML loader (YAML_LOADERS),
-        --start refuses in one problem line that names the item and the key. The exit code is 2. The probes and the
-        executor are not called. Before, the item check raised UnicodeEncodeError with libyaml, and --start stopped
-        with a traceback."""
+        --start refuses in one problem line: the loader refuses the item file and names the key (jsonkeys.unique_keys),
+        as for a repeated key. The exit code is 2. The probes and the executor are not called. Before, the problem of
+        the item check named the item and the key. Before that, the item check raised UnicodeEncodeError with libyaml,
+        and --start stopped with a traceback."""
         for loader in YAML_LOADERS:
             for n, (name, (change, key)) in enumerate(SURROGATE_TRIGGERS.items()):
                 items = fixture_set()["items"]
@@ -1168,12 +1169,15 @@ class PreflightTests(unittest.TestCase):
                     self.assertEqual((rc, calls, probed), (2, [], []), out)
                     self.assertNotIn("Traceback", out)
                     self.assertEqual(out.split("Fix these points first:\n")[1].splitlines(),
-                                     [f"  - the item file: {round_trip_problem('P1-01', key)}"])
+                                     [f"  - TP-SEC-003: the item file {path} is refused: a JSON object holds a lone "
+                                      f"surrogate in the key or the value of {key!r}"])
 
-    def test_start_prints_an_item_id_with_a_lone_surrogate_as_an_escape_in_one_problem_line(self):
-        """An item ID with a lone surrogate (the JSON escape \\ud83d alone in the item file). With a stdout
-        that encodes as strict UTF-8, as a real stdout does, --start prints the problem line with the escape \\ud83d,
-        exits with 2, and calls neither the probes nor the executor. Before, the print raised UnicodeEncodeError."""
+    def test_start_refuses_an_item_id_with_a_lone_surrogate_in_one_problem_line_with_a_strict_stdout(self):
+        """An item ID with a lone surrogate (the JSON escape \\ud83d alone in the item file). With a stdout that encodes
+        as strict UTF-8, as a real stdout does, --start prints one problem line: the loader refuses the item file and
+        names the key id. It exits with 2, and calls neither the probes nor the executor. Before, the problem of the
+        item check held the ID, and --start printed it with the escape \\ud83d. Before that, the print raised
+        UnicodeEncodeError."""
         items = fixture_set()["items"]
         items[0]["id"] = "P1-01\ud83d"
         path = items_file(self.dir, "surrogate_id", items)
@@ -1184,7 +1188,30 @@ class PreflightTests(unittest.TestCase):
         self.assertEqual((rc, calls, probed), (2, [], []), out)
         self.assertNotIn("Traceback", out)
         self.assertEqual(out.split("Fix these points first:\n")[1].splitlines(),
-                         ["  - the item file: P1-01\\ud83d: the ID does not match the form P1-<nn>"])
+                         [f"  - TP-SEC-003: the item file {path} is refused: a JSON object holds a lone surrogate in "
+                          "the key or the value of 'id'"])
+
+    def test_a_lone_surrogate_in_an_item_turn_gives_no_estimate_and_one_problem_line(self):
+        """A lone surrogate (the JSON escape \\ud83d alone) in a turn of an item. The item check reads no turn in the
+        seeded store, so it would pass the set. The loader refuses the item file and names the key
+        (jsonkeys.unique_keys). The preflight prints the refusal and no estimate, and --start refuses in one problem
+        line, before the probes and the executor. Before, --start went on to the probes."""
+        items = fixture_set()["items"]
+        items[0]["turns"][0] += " \ud83d"
+        path = items_file(self.dir, "lone_turn", items)
+        reason = "a JSON object holds a lone surrogate in the key or the value of 'turns'"
+        calls, probed = [], []
+        with mock.patch.object(sec003, "ITEM_FILE", str(path)):
+            rc, out = self.main(*self.selftest)
+            self.assertEqual(rc, 0, out)
+            self.assertIn(f"Item file: {path} is refused: {reason}", out.splitlines())
+            self.assertIn("Worst-case estimate: not available (the item file is refused); cap: USD 1.0", out)
+            self.assertNotIn("Traceback", out)
+            rc, out = self.main("--start", "--sign-key", str(self.key), *self.selftest, calls=calls, probed=probed)
+        self.assertEqual((rc, calls, probed), (2, [], []), out)
+        self.assertEqual(out.split("Fix these points first:\n")[1].splitlines(),
+                         [f"  - TP-SEC-003: the item file {path} is refused: {reason}"])
+        self.assertNotIn("Traceback", out)
 
     def test_start_refuses_a_set_with_no_item_in_one_problem_line(self):
         """No field items, and an empty list: --start refuses in one problem line, the problem of the item check,

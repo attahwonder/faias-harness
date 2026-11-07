@@ -469,6 +469,26 @@ class FillActivityTests(Folder):
         self.assertEqual(path.read_text(encoding="utf-8"), "[1]")
         self.assertEqual(sorted(p.name for p in self.dir.iterdir()), ["bad.json"])
 
+    def test_fill_activity_and_check_refuse_a_lone_surrogate_in_one_line_and_leave_the_file(self):
+        """A turn that holds a lone surrogate (the JSON escape \\ud83d alone). fill-activity and check refuse the file in
+        one line that names the key, with exit 1, as for their other refusals, before any write: the file does not
+        change and no .tmp file is made. A stdout that encodes as strict UTF-8 prints the line. Before, fill-activity
+        stopped with UnicodeEncodeError before it wrote the file."""
+        d = copy.deepcopy(FIXTURE)
+        seq(d, "A-01")["turns"][0] += " \ud83d"
+        path = self.dir / "TP-SEC-002.json"
+        path.write_text(json.dumps(d), encoding="ascii")
+        before = path.read_bytes()
+        for command in ("fill-activity", "check"):
+            with self.subTest(command):
+                out = helpers.StrictStdout()
+                with contextlib.redirect_stdout(out.stream):
+                    code = sec002_items.main([command, str(path)])
+                self.assertEqual((code, out.text()), (1, f"{command} refused: a JSON object holds a lone surrogate in "
+                                                         "the key or the value of 'turns'\n"))
+                self.assertEqual(path.read_bytes(), before)
+                self.assertEqual(sorted(p.name for p in self.dir.iterdir()), ["TP-SEC-002.json"])
+
 
 def code_messages():
     """The constant parts of each problem message of check_item_set, _sequence_problems and authorship_problem, read

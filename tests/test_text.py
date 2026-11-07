@@ -8,7 +8,9 @@ command of the harness calls it first. The tests here give each command that can
 operator a file that holds a lone surrogate (the JSON escape \\ud83d alone; in YAML, read with the pure-Python
 loader; or a file name). Each test runs the command with a stdout that encodes as strict UTF-8
 (tests/helpers.StrictStdout). The command prints the escape and stops with no traceback. One test runs a command in a
-new process, with the real stdout. The test of the preflight (a TP-SEC-003 item ID) is in tests/test_sec003_run.py.
+new process, with the real stdout. The JSON readers and the settings and profile loaders refuse a lone surrogate in
+the text of a file (tests/test_items.py and test_settings.py), so the tests of the preflight and of the TP-SEC-002 item
+tool give a file name that holds one.
 
 No test contacts a host outside the local machine.
 """
@@ -25,7 +27,7 @@ from unittest import mock
 
 import yaml
 
-from faias_harness import selftest, testability, yamlio
+from faias_harness import preflight, selftest, testability, yamlio
 from faias_harness.emulators import mcp_tools
 from faias_harness.engine import runlog, sec002_items
 from tests.helpers import StrictStdout
@@ -127,16 +129,31 @@ class PrintedTextTests(unittest.TestCase):
         self.assertEqual(rc, 2)
         self.assertFalse((self.dir / "ledger.jsonl").exists())
 
-    def test_sec002_items_check_prints_a_sequence_id_with_the_escape(self):
-        data = item_file()
-        seq = data["tracks"]["A"][0]
-        seq["id"] = seq["id"] + S
-        path = self.dir / "TP-SEC-002.json"
-        path.write_text(json.dumps(data), encoding="ascii")
+    def file_name(self, stem, suffix):
+        """A path in the test folder whose file name holds a lone surrogate: U+D83D on Windows, and elsewhere the byte
+        FF as Python reads it from the file system (U+DCFF)."""
+        return self.dir / (f"{stem}{S}{suffix}" if os.name == "nt" else os.fsdecode(stem.encode() + b"\xff" +
+                                                                                   suffix.encode()))
+
+    def test_sec002_items_check_prints_a_file_name_with_the_escape(self):
+        path = self.file_name("TP-SEC-002", ".json")
+        try:
+            path.write_text(json.dumps(item_file()), encoding="ascii")
+        except (OSError, UnicodeError) as e:
+            self.skipTest(f"this file system takes no such file name ({type(e).__name__})")
         rc, out = self.run_main(sec002_items.main, ["check", str(path)])
-        self.assertIn(ESCAPED, out)
-        self.assertNotIn(S, out)
+        shown = str(path).encode("utf-8", "backslashreplace").decode("utf-8")
+        self.assertIn(f"TP-SEC-002 item file: {shown}\n", out)
         self.assertEqual(rc, 1, out)
+
+    def test_preflight_prints_a_profile_path_with_the_escape(self):
+        """A profile path that holds a lone surrogate and is not found: the preflight prints the problem with the
+        escape, exits with 2, and stops with no traceback."""
+        path = self.file_name("profile", ".yaml")
+        rc, out = self.run_main(preflight.main, ["--profile", str(path)])
+        shown = str(path).encode("utf-8", "backslashreplace").decode("utf-8")
+        self.assertTrue(out.startswith(f"PROFILE INVALID:\n  - cannot read {shown}: "), out)
+        self.assertEqual(rc, 2, out)
 
     def test_sweep_barred_prints_a_file_name_with_the_escape(self):
         root = self.dir / "root"

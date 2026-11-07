@@ -14,6 +14,7 @@ import yaml
 
 from . import yamlio
 from .capabilities import CAPABILITIES
+from .text import lone_surrogate_keys, lone_surrogate_problem
 
 REPO = Path(__file__).resolve().parents[1]
 
@@ -160,8 +161,11 @@ def load_profile(path):
     path = Path(path)
     try:
         raw = yamlio.load(path.read_text(encoding="utf-8"))
-    except (OSError, yaml.YAMLError) as e:
+    except (OSError, UnicodeDecodeError, yaml.YAMLError) as e:
         raise ProfileError([f"cannot read {path}: {e}"])
+    lone = lone_surrogate_keys(raw)
+    if lone:        # the pure-Python YAML loader reads the escape \ud83d as a lone surrogate; libyaml refuses it
+        raise ProfileError([lone_surrogate_problem("a YAML mapping", lone)])
     problems = validate(raw)
     if problems:
         raise ProfileError(problems)

@@ -9,9 +9,10 @@ from unittest import mock
 
 import yaml
 
-from faias_harness import preflight, settings as sm
+from faias_harness import preflight, settings as sm, yamlio
 from faias_harness.engine import runlog
 from faias_harness.egress import EgressClient
+from faias_harness.profile import ProfileError, load_profile
 from tests.helpers import (EVIDENCE_RAW, FAKE_KEY_VALUE, KEY_ENV, make_settings, no_outside_network, raw_settings)
 
 REPO = Path(__file__).resolve().parents[1]
@@ -642,6 +643,97 @@ class ItemFileRefusalTests(unittest.TestCase):
                 self.assertNotIn("Traceback", out)
                 self.assertEqual(out.split("START REFUSED. No run starts. Fix these points first:\n")[1].splitlines(),
                                  [f"  - {tp}: the item file {rel} is refused: {self.REASON}"])
+
+    def test_a_lone_surrogate_in_each_item_file_gives_the_refusal_no_estimate_and_one_problem_line(self):
+        """A changed copy of each item file with a key whose value holds a lone surrogate (the JSON escape \\ud83d
+        alone). The loader refuses it and names the key (jsonkeys.unique_keys). So the preflight prints the refusal and
+        no estimate, and --start refuses in one problem line, before any model call. Before, the loader read the
+        copy."""
+        reason = "a JSON object holds a lone surrogate in the key or the value of 'note'"
+        for tp, (rel, changes) in self.CASES.items():
+            with self.subTest(procedure=tp):
+                settings = self.dir / f"settings_lone_{tp}.yaml"
+                settings.write_text(yaml.safe_dump(raw_settings(mode="explore", **changes)), encoding="utf-8")
+                text = (REPO / rel).read_text(encoding="utf-8").lstrip()
+                self.assertTrue(text.startswith("{"))
+                called = []
+                argv = ["--profile", str(self.profile), "--settings", str(settings), *self.selftest]
+                with no_outside_network(), mock.patch.dict(os.environ, {KEY_ENV: FAKE_KEY_VALUE}), \
+                        changed_copy(rel, '{"note": "a placeholder \\ud83d", ' + text[1:]):
+                    rc, out = run_main(argv)
+                    self.assertEqual(rc, 0, out[-800:])
+                    self.assertIn(f"Item file: {rel} is refused: {reason}\n", out)
+                    self.assertIn("Worst-case estimate: not available (the item file is refused); cap: USD 1.0\n", out)
+                    rc, out = run_main(argv + ["--start", "--sign-key", str(self.key)], inspect_check=lambda: None,
+                                       gateway_factory=lambda s: called.append("model call"),
+                                       executor=lambda **k: called.append("run"))
+                self.assertEqual((rc, called), (2, []), out[-800:])
+                self.assertNotIn("Traceback", out)
+                self.assertEqual(out.split("START REFUSED. No run starts. Fix these points first:\n")[1].splitlines(),
+                                 [f"  - {tp}: the item file {rel} is refused: {reason}"])
+
+
+class LoneSurrogateYamlTests(unittest.TestCase):
+    """A settings file and a profile that hold the YAML escape \\ud83d in a value, or the bytes ED A0 BD (a surrogate
+    written as if it were UTF-8). The pure-Python YAML loader reads the escape as a lone surrogate, and the loader of
+    the harness refuses it with one problem that names the key. libyaml refuses the escape (a ScannerError). Both
+    loaders refuse the bytes, which are not UTF-8. The escape pair of an emoji is refused too: libyaml refuses it, and
+    the pure-Python loader reads two lone surrogates. An emoji and U+FFFD pass. Before, the pure-Python loader passed
+    the escape, and the bytes stopped the preflight with UnicodeDecodeError."""
+    LOADERS = [yaml.SafeLoader] + ([yaml.CSafeLoader] if hasattr(yaml, "CSafeLoader") else [])
+
+    def setUp(self):
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        self.dir = Path(tmp.name)
+
+    def files(self, value):
+        """A settings file with `value` as its model_id, and a profile with `value` as its name. `value` is YAML text."""
+        settings = self.dir / "settings.yaml"
+        settings.write_bytes(yaml.safe_dump(raw_settings(mode="explore", model_id="VALUE")).encode("ascii")
+                             .replace(b"VALUE", value))
+        doc = yaml.safe_load((REPO / "targets" / "srd1" / "profile.yaml").read_text(encoding="utf-8"))
+        profile = self.dir / "profile.yaml"
+        profile.write_bytes(yaml.safe_dump({**doc, "name": "VALUE"}).encode("ascii").replace(b"VALUE", value))
+        return (("model_id", settings, sm.load_settings, sm.SettingsError),
+                ("name", profile, load_profile, ProfileError))
+
+    def problems(self, load, error, path, loader):
+        with mock.patch.object(yamlio, "loader", lambda: loader), self.assertRaises(error) as cm:
+            load(path)
+        return cm.exception.problems
+
+    def test_the_settings_and_the_profile_loaders_refuse_a_lone_surrogate_with_each_yaml_loader(self):
+        for value in (b'"example \\ud83d"', b'"example \\ud83d\\ude00"'):
+            for key, path, load, error in self.files(value):
+                for loader in self.LOADERS:
+                    with self.subTest(value=value, file=path.name, loader=loader.__name__):
+                        problems = self.problems(load, error, path, loader)
+                        if loader is yaml.SafeLoader:
+                            self.assertEqual(problems, [f"a YAML mapping holds a lone surrogate in the key or the "
+                                                        f"value of '{key}'"])
+                        elif error is sm.SettingsError:
+                            self.assertEqual(problems, ["cannot read settings.yaml: ScannerError"])
+                        else:
+                            self.assertEqual(len(problems), 1, problems)
+                            self.assertIn("found invalid Unicode character escape code", problems[0])
+
+    def test_the_bytes_of_a_surrogate_are_refused_as_not_utf8_and_an_emoji_and_the_replacement_character_pass(self):
+        for key, path, load, error in self.files(b"'example \xed\xa0\xbd'"):
+            for loader in self.LOADERS:
+                with self.subTest(file=path.name, loader=loader.__name__):
+                    problems = self.problems(load, error, path, loader)
+                    want = ("cannot read settings.yaml: UnicodeDecodeError" if error is sm.SettingsError else
+                            f"cannot read {path}: 'utf-8' codec can't decode byte 0xed")
+                    self.assertEqual(len(problems), 1, problems)
+                    self.assertTrue(problems[0].startswith(want), problems)
+        valid = f"example {chr(0x1F600)} {chr(0xFFFD)}"
+        for key, path, load, error in self.files(f'"{valid}"'.encode("utf-8")):
+            for loader in self.LOADERS:
+                with self.subTest(file=path.name, loader=loader.__name__), \
+                        mock.patch.object(yamlio, "loader", lambda: loader):
+                    loaded = load(path)
+                    self.assertEqual(loaded.model_id if key == "model_id" else loaded.name, valid)
 
 
 if __name__ == "__main__":

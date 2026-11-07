@@ -83,7 +83,7 @@ from pathlib import Path
 import yaml
 
 from .. import __version__, yamlio
-from ..text import escape_streams
+from ..text import escape_streams, has_lone_surrogate
 from . import handlers as handlers_mod
 
 MODERN = ("2026-07-28",)
@@ -238,7 +238,8 @@ read_tool_ledger = read_ledger
 
 def verify_ledger(path, expected_head=None):
     """(ok, problems). Checks each line's hash, the chain, and the order of seq. With `expected_head`, also finds a
-    removed last line."""
+    removed last line. A line that holds a lone surrogate (for example the JSON escape \\ud83d alone) cannot be written
+    as UTF-8, so its hash cannot be computed. The problem names the line."""
     problems, prev = [], GENESIS
     try:
         entries = read_ledger(path)
@@ -250,8 +251,10 @@ def verify_ledger(path, expected_head=None):
             problems.append(f"line {n}: seq is {e.get('seq')}, expected {n}")
         if e.get("prev") != prev:
             problems.append(f"line {n}: the chain is broken (prev does not match the line before)")
-        calc = hashlib.sha256((e.get("prev", "") + _canonical(e)).encode("utf-8")).hexdigest()
-        if h != calc:
+        text = e.get("prev", "") + _canonical(e)
+        if has_lone_surrogate(text):
+            problems.append(f"line {n}: the line holds a lone surrogate, so its hash cannot be checked")
+        elif h != hashlib.sha256(text.encode("utf-8")).hexdigest():
             problems.append(f"line {n}: the hash does not match the content")
         prev = h or ""
     if expected_head is not None and prev != expected_head:

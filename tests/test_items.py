@@ -146,5 +146,64 @@ class RepeatedKeyTests(unittest.TestCase):
         self.assertEqual(len(run_mod011._read_json(REPO / mod011.ITEM_FILE)["items"]), 50)
 
 
+class LoneSurrogateTests(unittest.TestCase):
+    """jsonkeys.unique_keys refuses a JSON object that holds a lone surrogate (the JSON escape \\ud83d with no low half)
+    in a key or a text value, with LoneSurrogate (a RepeatedKey), and names the key. Each reader of a JSON file of the
+    operator reads with it. An emoji (in JSON escapes, a surrogate pair) and U+FFFD pass. The files are neutral JSON in
+    a temporary folder."""
+    S, LOW = "\ud83d", "\udc00"                                 # a lone high and a lone low surrogate
+    VALID = f"x {chr(0x1F600)} {chr(0xFFFD)} y"                 # an emoji and U+FFFD
+
+    def setUp(self):
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        self.repo = Path(tmp.name)
+
+    def test_a_lone_surrogate_in_a_key_or_a_text_is_refused_with_the_key(self):
+        S, LOW = self.S, self.LOW
+        cases = {"a text": ({"a": "x" + S}, ["a"]), "a low surrogate": ({"a": LOW + "x"}, ["a"]),
+                 "a low surrogate, then a high one": ({"a": LOW + S}, ["a"]), "a key": ({"k" + S: 1}, ["k" + S]),
+                 "a text in a list": ({"turns": ["ok", ["x" + S]]}, ["turns"]),
+                 "a nested object": ({"doc": {"title": "x" + S}, "b": 1}, ["title"]),
+                 "two keys": ({"a": S, "b": 1, "c": [S]}, ["a", "c"])}
+        for name, (value, keys) in cases.items():
+            with self.subTest(name):
+                with self.assertRaises(jsonkeys.LoneSurrogate) as cm:
+                    json.loads(json.dumps(value), object_pairs_hook=jsonkeys.unique_keys)
+                self.assertIsInstance(cm.exception, jsonkeys.RepeatedKey)
+                self.assertEqual(str(cm.exception), "a JSON object holds a lone surrogate in the key or the value of "
+                                 + ", ".join(repr(k) for k in keys))
+                str(cm.exception).encode("utf-8")          # the problem can be printed, hashed and written
+        with self.assertRaises(jsonkeys.RepeatedKey) as cm:     # a repeated key is named first
+            json.loads('{"a": "\\ud83d", "a": 1}', object_pairs_hook=jsonkeys.unique_keys)
+        self.assertEqual(str(cm.exception), "a JSON object holds the key 'a' more than once")
+
+    def test_an_emoji_a_surrogate_pair_and_the_replacement_character_pass(self):
+        value = {"a": self.VALID, "b": [self.VALID], self.VALID: {"c": self.VALID}}
+        escaped = json.dumps(value)
+        self.assertIn("\\ud83d\\ude00", escaped)                # the emoji as a surrogate pair of escapes
+        for text in (escaped, json.dumps(value, ensure_ascii=False)):
+            with self.subTest(ascii=text.isascii()):
+                self.assertEqual(json.loads(text, object_pairs_hook=jsonkeys.unique_keys), value)
+
+    def test_each_reader_of_a_json_file_of_the_operator_refuses_a_lone_surrogate_and_reads_a_valid_text(self):
+        """The TP-SEC-002 item file (the engine and the writer's kit) and the TP-SEC-003 item file. The readers of the
+        TP-MOD-011 comparator file and overlap result are tested in tests/test_mod011_run.py and test_mod011.py."""
+        from faias_harness.engine import sec002_items, sec003
+        path = self.repo / sec002.ITEM_FILE                     # under the folder given as the repository
+        path.parent.mkdir(parents=True)
+        readers = {"sec002.load_set": lambda: sec002.load_set(repo=self.repo),
+                   "sec002_items.read": lambda: sec002_items.read(path), "sec003.load_set": lambda: sec003.load_set(path)}
+        for name, read in readers.items():
+            with self.subTest(name):
+                path.write_text(json.dumps({"items": [{"turns": ["a", self.VALID]}]}), encoding="ascii")
+                read()
+                path.write_text(json.dumps({"items": [{"turns": ["a", "b " + self.S]}]}), encoding="ascii")
+                with self.assertRaises((jsonkeys.LoneSurrogate, sec002_items.Refused)) as cm:
+                    read()
+                self.assertEqual(str(cm.exception),
+                                 "a JSON object holds a lone surrogate in the key or the value of 'turns'")
+
+
 if __name__ == "__main__":
     unittest.main()
