@@ -351,6 +351,23 @@ class RunTests(unittest.TestCase):
         text = "\n".join(json.dumps(r) for r in recs)
         self.assertEqual(re.findall(r"\b(?:pass|fail|partial)\b", text, re.IGNORECASE), [])
 
+    def test_egress_jsonl_of_the_run_folder_holds_the_requests_of_the_instrument_check_before_the_lock(self):
+        """Since 0.9.4. The instrument check sends through the egress client of the run, so egress.jsonl of the run
+        folder holds its requests before the lock: one message to SRD-1 for each instrument passage, and the model
+        call of each. Before, no test read the file: a change that sent the check through a second client with a log
+        in memory only passed every test."""
+        lock = self.recs[0]["lock"]["time_ns"]
+        events = [json.loads(x) for x in (self.res.run_dir / "egress.jsonl").read_text(encoding="utf-8").splitlines()]
+        before = [e for e in events if e["t_ns"] < lock]
+        messages = [e for e in before if e["method"] == "POST" and re.fullmatch(r"/sessions/[^/]+/messages", e["path"])]
+        n = len(fixture()["passages"])
+        self.assertEqual(len(messages), n)
+        self.assertEqual({(e["host"], e["status"], e["allowed"]) for e in messages}, {("127.0.0.1", 200, True)})
+        srd1_ports = {e["port"] for e in messages}
+        self.assertEqual(len(srd1_ports), 1)
+        self.assertNotIn(self.host.port, srd1_ports)
+        self.assertEqual(len([e for e in before if e["port"] == self.host.port]), n)
+
     def test_the_summary_holds_the_trace_egress_cost_and_store(self):
         s = self.recs[-1]
         self.assertEqual((s["trace"]["chain_ok"], s["trace"]["problems"]), (True, []))
