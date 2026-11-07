@@ -952,5 +952,109 @@ class OperatorYamlFileTests(unittest.TestCase):
                                      .splitlines(), [f"  - {start}"])
 
 
+class RiskAppetiteFileTests(unittest.TestCase):
+    """The risk-appetite file of SRD-1 (targets/srd1/risk_appetite.yaml). A copy holds the YAML escape \\ud83d in
+    declared_by. A second copy holds the bytes ED A0 BD there. In the third case the file is absent. Its reader
+    (gate.read_risk_appetite) refuses each with one problem, and load_risk_appetite raises it as RiskFileError. The
+    preflight of TP-AGT-012 prints the refusal, and --start refuses in one problem line, exit 2, before any model call.
+    The shipped file and a valid text pass. Before, the pure-Python loader passed the escape, and the header copied it
+    after the typed `yes`. The escape with libyaml, the bytes and an absent file stopped the preflight with a
+    traceback."""
+    LOADERS = [yaml.SafeLoader] + ([yaml.CSafeLoader] if hasattr(yaml, "CSafeLoader") else [])
+    REL = "targets/srd1/risk_appetite.yaml"
+    LINE = b'declared_by: "the owner (maintainer)"'
+    TOOLS = {"tools_enabled": True, "tool_key_env": "FAIAS_TEST_TOOL_KEY"}
+
+    @classmethod
+    def setUpClass(cls):
+        from tests.helpers import shared_selftest
+        log, _, pub = shared_selftest(REPO)
+        cls.selftest = ["--selftest-log", str(log), "--selftest-pubkey", str(pub)]
+        cls.raw = (REPO / cls.REL).read_bytes()
+
+    def setUp(self):
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        self.dir = Path(tmp.name)
+        att = self.dir / "attestation.txt"
+        att.write_text("Test system, synthetic data only.\n", encoding="utf-8")
+        doc = yaml.safe_load((REPO / "targets" / "srd1" / "profile.yaml").read_text(encoding="utf-8"))
+        doc["attestation_file"] = str(att)
+        self.profile = self.dir / "profile.yaml"
+        self.profile.write_text(yaml.safe_dump(doc), encoding="utf-8")
+        self.key = runlog.make_key(self.dir / "keys", repo=REPO)[0]
+
+    def cases(self):
+        """(name, the bytes of the file or None for an absent file, the YAML loader, the one problem)."""
+        self.assertEqual(self.raw.count(self.LINE), 1)
+        escape = self.raw.replace(self.LINE, b'declared_by: "the owner \\ud83d"')
+        not_utf8 = self.raw.replace(self.LINE, b'declared_by: "the owner \xed\xa0\xbd"')
+        lone = "risk_appetite.yaml holds a lone surrogate in the key or the value of 'declared_by'"
+        return ([("escape", escape, loader, lone if loader is yaml.SafeLoader else
+                  "cannot read risk_appetite.yaml: ScannerError") for loader in self.LOADERS]
+                + [("bytes", not_utf8, self.LOADERS[-1], "cannot read risk_appetite.yaml: UnicodeDecodeError"),
+                   ("absent", None, self.LOADERS[-1], "cannot read risk_appetite.yaml: FileNotFoundError")])
+
+    def file_as(self, data):
+        """Each read of the risk-appetite file gives the bytes `data`. When `data` is None, it acts as for an absent
+        file."""
+        return absent_file(self.REL) if data is None else changed_bytes(self.REL, data)
+
+    def test_the_reader_refuses_each_case_with_one_problem_and_the_shipped_file_and_a_valid_text_pass(self):
+        import hashlib
+
+        from targets.srd1.app import gate
+        for name, data, loader, problem in self.cases():
+            with self.subTest(file=name, loader=loader.__name__), mock.patch.object(yamlio, "loader", lambda: loader), \
+                    self.file_as(data):
+                with self.assertRaises(ValueError) as cm:
+                    gate.load_risk_appetite()
+                self.assertEqual(str(cm.exception), problem)
+                with self.assertRaises(ValueError) as cm:
+                    gate.RefundGate.from_file()
+                self.assertEqual(str(cm.exception), problem)
+                self.assertEqual(gate.read_risk_appetite(), (None, None, problem))
+        valid = f"the owner {chr(0x1F600)} {chr(0xFFFD)}"
+        for loader in self.LOADERS:
+            with self.subTest(file="valid", loader=loader.__name__), \
+                    mock.patch.object(yamlio, "loader", lambda: loader), \
+                    changed_bytes(self.REL, self.raw.replace(self.LINE, f'declared_by: "{valid}"'.encode("utf-8"))):
+                self.assertEqual(gate.load_risk_appetite()[0]["declared_by"], valid)
+                values, _, problem = gate.read_risk_appetite()
+                self.assertEqual((values["declared_by"], problem), (valid, None))
+            with self.subTest(file="shipped", loader=loader.__name__), \
+                    mock.patch.object(yamlio, "loader", lambda: loader):
+                values, sha256, problem = gate.read_risk_appetite()
+                self.assertIsNone(problem)
+                self.assertEqual(sha256, hashlib.sha256(self.raw).hexdigest())
+                self.assertEqual(gate.load_risk_appetite(), (values, sha256))
+                keys = ("cap_gbp", "session_limit_gbp", "time_to_halt_s", "declared_by", "declared_on")
+                self.assertEqual({k: values[k] for k in keys},
+                                 {"cap_gbp": 25, "session_limit_gbp": 50, "time_to_halt_s": 5,
+                                  "declared_by": "the owner (maintainer)", "declared_on": "2026-10-29"})
+
+    def test_the_preflight_of_tp_agt_012_names_the_refusal_and_start_refuses_in_one_problem_line(self):
+        settings = self.dir / "settings_agt012.yaml"
+        settings.write_text(yaml.safe_dump(raw_settings(mode="explore", procedure="TP-AGT-012", item_set="TP-AGT-012",
+                                                        reviewer_values={}, **self.TOOLS)), encoding="utf-8")
+        argv = ["--profile", str(self.profile), "--settings", str(settings), *self.selftest]
+        for name, data, loader, problem in self.cases():
+            line, called = f"the risk-appetite file {self.REL} is refused: {problem}", []
+            with self.subTest(file=name, loader=loader.__name__), no_outside_network(), \
+                    mock.patch.dict(os.environ, {KEY_ENV: FAKE_KEY_VALUE}), \
+                    mock.patch.object(yamlio, "loader", lambda: loader), self.file_as(data):
+                rc, out = run_main(argv)
+                self.assertEqual(rc, 0, out[-800:])
+                self.assertNotIn("Traceback", out)
+                self.assertIn(f"  - {line}\n", out)
+                rc, out = run_main(argv + ["--start", "--sign-key", str(self.key)], inspect_check=lambda: None,
+                                   gateway_factory=lambda s: called.append("model call"),
+                                   executor=lambda **k: called.append("run"))
+                self.assertEqual((rc, called), (2, []), out[-800:])
+                self.assertNotIn("Traceback", out)
+                self.assertEqual(out.split("START REFUSED. No run starts. Fix these points first:\n")[1].splitlines(),
+                                 [f"  - {line}"])
+
+
 if __name__ == "__main__":
     unittest.main()

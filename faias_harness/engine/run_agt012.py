@@ -11,7 +11,8 @@ round and measures the time to the last ledger line.
 The self-test gate. A run needs a containment self-test log that passes. Its code manifest must match the checkout.
 The executor checks it before the lock with selftest.gate_problems, the same rule as the preflight. In evidence mode the
 log's signature must verify against a pinned public key (selftest_pubkey). The header embeds the log's SHA-256. A
-null cap or limit refuses the run before the lock (the target refuses the tool anyway).
+null cap or limit refuses the run before the lock (the target refuses the tool anyway). So does a risk-appetite file
+that its reader refuses (gate.read_risk_appetite).
 
 No live call has used this engine. The tests use the stand-in host and the local emulator. The owner declared the
 risk values on 29 October 2026 (targets/srd1/risk_appetite.yaml). No run starts until the containment self-test
@@ -430,6 +431,10 @@ def execute(settings, *, run_dir, sign_key, confirmation, items=None, probes=Non
     gate_problems = selftest.gate_problems(agt012.TP, isolation_status, settings.mode)
     if gate_problems:
         raise RuntimeError("TP-AGT-012 is gated: " + "; ".join(gate_problems))
+    from targets.srd1.app import gate as gate_mod
+    declaration, _, risk_refused = gate_mod.read_risk_appetite()   # who declared the values, and when (the header)
+    if risk_refused:
+        raise RuntimeError("TP-AGT-012: the run is refused before the lock: " + risk_refused)
     declared = gate is None                             # the gate of the declared values (risk_appetite.yaml)
     gate = gate or build.RefundGate.from_file()         # null values raise GateNotDeclared before any file
     if objective_s is None:                             # the declared time-to-halt (risk_appetite.yaml); may be null
@@ -475,14 +480,12 @@ def execute(settings, *, run_dir, sign_key, confirmation, items=None, probes=Non
         target = Srd1ChatTarget(srd1.server.url, egress,
                                 timeout=gw.max_call_seconds(egress.timeout) + spike.LOCAL_MARGIN_S,
                                 tools_url=tool_run.url, ledger_path=tool_run.emulator.ledger.path)
-        from targets.srd1.app import gate as gate_mod
         switch_confirm = _confirm_switch(target)
         structural = _structural_inspection(target, variant, tool_run.emulator.store_path,
                                             tool_run.emulator.store_sha256)
         action_classes = [{"class": a["class"], "tool": a["tool"], "gate": a["gate"],
                            "layer": structural["declared_layer"], "cap": gate.cap_gbp, "limit": gate.session_limit_gbp}
                           for a in gate_mod.IRREVERSIBLE_ACTIONS]
-        declaration = gate_mod.load_risk_appetite()[0]      # who declared the values, and when, from the file
         risk_appetite = {"cap_gbp": gate.cap_gbp, "session_limit_gbp": gate.session_limit_gbp,
                          "time_to_halt_s": objective_s, "source": gate.source, "sha256": gate.sha256,
                          "declared_by": declaration.get("declared_by"), "declared_on": declaration.get("declared_on"),

@@ -221,13 +221,19 @@ def start_problems(profile, settings=None):
 
 def tools_problems(settings):
     """With tools on (since 0.6): the refund gate needs its declared values. With tools off: none. A TP-DAT-009 run
-    reads no refund gate (its tool arm serves document_search only), so none."""
+    reads no refund gate (its tool arm serves document_search only), so none. A risk-appetite file that its reader
+    refuses (gate.read_risk_appetite) gives that one problem. A TP-AGT-012 run needs tools on, so the problem comes
+    from here for it too."""
     if not getattr(settings, "tools_enabled", False) or settings.procedure == DAT009:
         return []
     from .engine import spike
     spike._srd1()
     from targets.srd1.app import gate
-    return [f"{p} (targets/srd1/risk_appetite.yaml): SRD-1 does not enable its tool" for p in gate.declared_problems()]
+    try:
+        declared = gate.declared_problems()
+    except gate.RiskFileError as e:
+        return [f"the risk-appetite file targets/srd1/risk_appetite.yaml is refused: {e}"]
+    return [f"{p} (targets/srd1/risk_appetite.yaml): SRD-1 does not enable its tool" for p in declared]
 
 
 def report(profile, needs, records_dir=RECORDS_DIR):
@@ -748,20 +754,23 @@ def agt012_start_problems(settings):
     """What a TP-AGT-012 run needs besides the SRD-1 conditions and the self-test gate. The item file must be
     found, and agt012.check_item_set must find no problem in it with the declared values. The run drives the tool,
     so tools must be on. An item file that its loader refuses is named once, by main (item_file_refusal). So is a
-    tools file or a store that the emulator refuses (tools_file_refusal). The two homes of the time-to-halt must
-    agree, and the firm-values file must be read (run_agt012.halt_home_problems). The engine checks the same before
-    the lock."""
+    tools file or a store that the emulator refuses (tools_file_refusal). So is a risk-appetite file that its reader
+    refuses (gate.read_risk_appetite), by tools_problems. The checks that need its values are then not made. The two
+    homes of the time-to-halt must agree, and the firm-values file must be read (run_agt012.halt_home_problems). The
+    engine checks the same before the lock."""
     from .engine import agt012, run_agt012
-    from targets.srd1.app.gate import load_risk_appetite
+    from targets.srd1.app.gate import read_risk_appetite
     problems = []
-    values, _ = load_risk_appetite()
+    values, _, risk_refused = read_risk_appetite()
     if not (REPO / agt012.ITEM_FILE).is_file():
         problems.append(f"the item file {agt012.ITEM_FILE} is not found")
-    elif item_file_refusal(settings) is None and tools_file_refusal(settings) is None:
+    elif risk_refused is None and item_file_refusal(settings) is None and tools_file_refusal(settings) is None:
         problems += [f"the item file: {p}" for p in
                      run_agt012.item_set_problems(REPO, values.get("cap_gbp"), values.get("session_limit_gbp"))]
     if not getattr(settings, "tools_enabled", False):
         problems.append("TP-AGT-012 needs tools_enabled: true")
+    if risk_refused:
+        return problems
     return problems + run_agt012.halt_home_problems(values.get("time_to_halt_s"), REPO / run_agt012.FIRM_VALUES_FILE)
 
 

@@ -18,7 +18,8 @@ UTF-8.
   escape of a surrogate (a ScannerError), but the pure-Python loader reads it as a lone surrogate. So do the loaders
   of four more YAML files of the operator. Three are the firm-values file (profile.read_firm_values), and the tools
   file and the store of the tool emulator (emulators/). The fourth is the TP-SEC-002 declaration of the channel
-  inputs (engine/run_sec002.py).
+  inputs (engine/run_sec002.py). The reader of the SRD-1 risk-appetite file uses them too
+  (targets/srd1/app/gate.py, read_risk_appetite).
 """
 import re
 import sys

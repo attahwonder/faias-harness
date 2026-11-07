@@ -8,7 +8,9 @@ zero or less is held. An integer too large for a float is above the cap.
 
 The cap and the limit come from the risk-appetite file (A-03). The owner declared them on 29 October 2026. The cap is
 25 GBP, and the session limit is 50 GBP. With a null value the gate cannot be built, so the orchestrator does not enable
-tools ("refund cap not declared").
+tools ("refund cap not declared"). The reader of the file (read_risk_appetite) gives one problem for a file that
+cannot be read. It does the same for a file that is not UTF-8 YAML and for a lone surrogate. The function
+load_risk_appetite raises that problem as RiskFileError.
 
 Since 0.7, config_read("gate") also names the irreversible actions (IRREVERSIBLE_ACTIONS: one class, the fee
 refund, SPEC.md section 3, C-09), the function that checks, and the SHA-256 of this file. TP-AGT-012 reads them
@@ -18,7 +20,10 @@ import hashlib
 import math
 from pathlib import Path
 
+import yaml
+
 from faias_harness import yamlio
+from faias_harness.text import lone_surrogate_keys, lone_surrogate_problem
 
 RISK_FILE = Path(__file__).resolve().parents[1] / "risk_appetite.yaml"
 MODULE = "targets/srd1/app/gate.py"
@@ -33,6 +38,10 @@ class GateNotDeclared(ValueError):
     pass
 
 
+class RiskFileError(ValueError):
+    """The risk-appetite file is refused (read_risk_appetite). The message is the one problem."""
+
+
 def _num(v):
     """A finite int or float, not a bool. NaN and the infinities are not numbers here."""
     if isinstance(v, bool) or not isinstance(v, (int, float)):
@@ -40,11 +49,31 @@ def _num(v):
     return isinstance(v, int) or math.isfinite(v)
 
 
+def read_risk_appetite(path=RISK_FILE):
+    """(the fee-refund values, the SHA-256 of the file, None), or (None, None, the one problem). The problem is a
+    file that cannot be read, for example an absent file. It can also be a file that is not UTF-8 YAML, or a lone
+    surrogate (lone_surrogate_keys). The pure-Python YAML loader reads the escape \\ud83d as a lone surrogate, and
+    libyaml refuses it. The preflight reads the file with it before any model call, and the TP-AGT-012 engine before
+    the lock. The header of a TP-AGT-012 run copies declared_by and declared_on from this read."""
+    path = Path(path)
+    try:
+        raw = path.read_bytes()
+        data = yamlio.load(raw.decode("utf-8")) or {}
+    except (OSError, UnicodeDecodeError, yaml.YAMLError) as e:
+        return None, None, f"cannot read {path.name}: {type(e).__name__}"
+    lone = lone_surrogate_keys(data)
+    if lone:
+        return None, None, lone_surrogate_problem(path.name, lone)
+    return (data.get("fee_refund") or {}), hashlib.sha256(raw).hexdigest(), None
+
+
 def load_risk_appetite(path=RISK_FILE):
-    """(the fee-refund values, the SHA-256 of the file)."""
-    raw = Path(path).read_bytes()
-    data = yamlio.load(raw.decode("utf-8")) or {}
-    return (data.get("fee_refund") or {}), hashlib.sha256(raw).hexdigest()
+    """(the fee-refund values, the SHA-256 of the file). A file that read_risk_appetite refuses raises RiskFileError
+    with the one problem."""
+    values, sha256, problem = read_risk_appetite(path)
+    if problem:
+        raise RiskFileError(problem)
+    return values, sha256
 
 
 def declared_problems(path=RISK_FILE):
