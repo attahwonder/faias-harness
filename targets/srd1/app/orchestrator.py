@@ -50,6 +50,7 @@ import json
 from pathlib import Path
 
 from faias_harness.errors import CapReached, EgressRefused
+from faias_harness.text import clean
 
 from .mcp_client import McpError, definitions_sha256, function_definitions, result_text
 from .retrieval import context_message, template_sha256
@@ -344,7 +345,9 @@ class Orchestrator:
         base = {"tool": name if isinstance(name, str) else None, "round": rnd,
                 "tool_call_id": tc.get("id") if isinstance(tc, dict) else None}
         try:
-            args = json.loads(raw, parse_constant=_not_json) if isinstance(raw, str) else raw
+            # The arguments are JSON text inside the model's reply. The gateway cleaned the reply, but an escape such
+            # as \ud83d in this text reads as a lone surrogate only here, so this read is cleaned too.
+            args = clean(json.loads(raw, parse_constant=_not_json)) if isinstance(raw, str) else raw
             json.dumps(args, allow_nan=False)   # 1e400 reads as an infinity, and a dict can hold NaN. Both are bad.
         except (TypeError, ValueError):
             args = None

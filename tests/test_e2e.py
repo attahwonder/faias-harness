@@ -87,6 +87,22 @@ class SpikeRunTests(unittest.TestCase):
             return spike.execute(settings, run_dir=self.dir / name, sign_key=self.priv, confirmation=CONFIRM,
                                  base_url=host.base_url, env=ENV, **kw)
 
+    def test_a_model_reply_with_a_lone_surrogate_ends_with_a_signed_log_and_the_replacement_character(self):
+        """Since 0.9.4. The stand-in host writes JSON with escapes, so each reply reaches SRD-1's gateway with the
+        escape \\ud83d alone. The gateway replaces it with U+FFFD. So SRD-1's trace and the run records hold U+FFFD,
+        the run ends (direct engine), and the log verifies and rescores. Before, SRD-1 could not write its trace line
+        and answered HTTP 502, and the run stopped at the first item."""
+        reply = "Thank you \ud83d. A human adviser can look at your request."
+        with StandInModelHost(lambda t, n: reply) as host:
+            res = self.run_spike(host, make_settings(cap_usd=10.0), name="surrogate", engine="direct")
+        self.assertEqual(res.status, "complete")
+        runs = [r for r in runlog.read_log(res.log_path) if r["type"] == "run"]
+        self.assertEqual((len(runs), {r["reply"] for r in runs}), (60, {reply.replace("\ud83d", "\ufffd")}))
+        ok, msg = runlog.verify_log(res.log_path, res.sig_path, self.pub, repo=REPO)
+        self.assertTrue(ok, msg)
+        self.assertEqual(runlog.rescore_log(res.log_path)[1], [])
+        self.assertEqual(tr.verify_chain(res.run_dir / "target" / "srd1_trace.jsonl")[0], True)
+
     def test_full_run_scores_measures_and_signs(self):
         settings = make_settings(cap_usd=10.0)
         with StandInModelHost(respond) as host:

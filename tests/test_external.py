@@ -41,7 +41,11 @@ CONFIRM = {"typed": "yes", "time": "2026-10-22T00:00:00Z"}
 # Full text on the external path needs a reason (since 0.8). The tests that rescore a log keep the replies.
 FULL = {"store_replies": "full", "store_replies_reason": "the unit tests rescore the log"}
 NEUTRAL_REPLY = "I can only help with Example Bank accounts. A human adviser can look at your request."
-ENGINE = "inspect" if external.inspect_available() else "direct"
+# A neutral reply with a lone surrogate (U+D83D, a high surrogate with no low half). The stand-ins write JSON with
+# escapes, so it reaches the adapter as the escape \ud83d alone. The harness keeps it with U+FFFD in its place.
+SURROGATE_REPLY = "Thank you \ud83d. A human adviser can look at your request."
+CLEANED_REPLY = "Thank you \ufffd. A human adviser can look at your request."
+ENGINE ="inspect" if external.inspect_available() else "direct"
 
 
 def respond(text, nth):
@@ -454,10 +458,9 @@ class ExternalRunTests(unittest.TestCase):
                         self.assertNotIn("Traceback", out)
 
     def test_an_error_of_the_engine_after_the_run_log_is_opened_keeps_its_traceback(self):
-        """When the run folder holds run_log.jsonl, the engine passed the lock, and the error goes on unchanged: from
-        an executor of the test, and from the direct engine on a reply that holds a lone surrogate (the JSON escape
-        \\ud83d alone). Then the UnicodeEncodeError, a ValueError, comes after one message of the run reached the
-        channel, and the log is not signed."""
+        """When the run folder holds run_log.jsonl, the engine passed the lock, and the error from the executor goes on
+        unchanged. (Since 0.9.4 a reply that holds a lone surrogate no longer gives such an error: see
+        test_a_reply_with_a_lone_surrogate_through_each_adapter_ends_with_a_signed_log_and_the_replacement_character.)"""
         with StandInDirectLine(respond, secret=FAKE_KEY_VALUE) as dl:
             prof = self.dl_profile(dl)
             for exc in (RuntimeError, ValueError):
@@ -472,22 +475,75 @@ class ExternalRunTests(unittest.TestCase):
                     with self.assertRaises(exc) as cm:
                         self.pf(self.start_argv(prof, self.dir / f"locked_{exc.__name__}"), executor=run)
                     self.assertIs(cm.exception, raised)
-        sent = []
 
-        def surrogate(text, nth):           # the probe gets a plain reply, each message of the run the lone surrogate
-            sent.append(text)
-            return NEUTRAL_REPLY if text == external.PROBE_MESSAGE else "Hello \ud83d there"
+    # ---------- a lone surrogate in a reply (since 0.9.4): U+FFFD where the reply enters ----------
 
+    def surrogate_profiles(self, stack):
+        """One profile for each channel adapter, each against its stand-in, which gives SURROGATE_REPLY to every
+        message. `stack` (an ExitStack) holds the stand-ins open."""
+        def reply(*a):
+            return SURROGATE_REPLY
+        dl = stack.enter_context(StandInDirectLine(reply, secret=FAKE_KEY_VALUE))
+        rs = stack.enter_context(StandInResponses(reply, key=FAKE_KEY_VALUE))
+        a2a = stack.enter_context(StandInA2A(reply, key=FAKE_KEY_VALUE))
+        app = stack.enter_context(StandInJsonApp(reply, key_header="X-Api-Key", key=FAKE_KEY_VALUE))
+        host = stack.enter_context(StandInModelHost(reply))
         opts = {"request": {"message": "{message}"}, "reply_path": "data.reply.text", "auth_header": "X-Api-Key"}
-        run_dir = self.dir / "surrogate"
-        with StandInJsonApp(surrogate, key_header="X-Api-Key", key=FAKE_KEY_VALUE) as app:
-            prof = self.profile("json-http", app.base_url + "/api/chat", opts, name="surrogate.yaml")
-            with self.assertRaises(UnicodeEncodeError):
-                self.pf(self.start_argv(prof, run_dir), executor=lambda **kw: external.execute(engine="direct", **kw))
-        self.assertEqual(sent[0], external.PROBE_MESSAGE)
-        self.assertEqual(len(sent), 2)              # the probe and one message of the run
-        self.assertTrue((run_dir / "run_log.jsonl").is_file())
-        self.assertFalse((run_dir / "run_log.jsonl.sig").exists())
+        return {"directline": self.profile("directline", dl.base_url, {"auth": "secret", "poll_ms": 50, "settle_ms": 0},
+                                           name="s_dl.yaml"),
+                "openai-responses": self.profile("openai-responses", rs.base_url,
+                                                 {"body": {"model": "example-deployment"}}, name="s_rs.yaml"),
+                "a2a": self.profile("a2a", a2a.base_url, {"version": "1.0"}, name="s_a2a.yaml"),
+                "json-http": self.profile("json-http", app.base_url + "/api/chat", opts, name="s_json.yaml"),
+                "generic-http": self.profile("generic-http", host.base_url, {"model": "example-model"},
+                                             name="s_gh.yaml")}
+
+    def test_a_reply_with_a_lone_surrogate_through_each_adapter_ends_with_a_signed_log_and_the_replacement_character(
+            self):
+        """Each stand-in writes JSON with escapes, so the reply reaches the adapter as the JSON escape \\ud83d alone.
+        Each channel adapter reads the body through ChannelTarget._json, which replaces each lone surrogate with
+        U+FFFD. So with the direct engine and store_replies full the run ends, its log verifies and rescores, and each
+        record holds U+FFFD. Before, the run stopped after the lock with UnicodeEncodeError and an unsigned log."""
+        settings, _ = ext_settings(**FULL)
+        with contextlib.ExitStack() as stack:
+            for adapter, prof in self.surrogate_profiles(stack).items():
+                with self.subTest(adapter=adapter):
+                    res = self.run_ext(prof, settings, name=f"surrogate_{adapter}", engine="direct",
+                                       sleep=lambda x: None)
+                    recs = runlog.read_log(res.log_path)
+                    self.assertEqual(res.status, "complete", recs[-1])
+                    runs = [r for r in recs if r["type"] == "run"]
+                    self.assertEqual((len(runs), {r["reply"] for r in runs}), (60, {CLEANED_REPLY}))
+                    ok, msg = runlog.verify_log(res.log_path, res.sig_path, self.pub, repo=REPO)
+                    self.assertTrue(ok, msg)
+                    self.assertEqual(runlog.rescore_log(res.log_path, repo=REPO)[1], [])
+
+    def test_a_probe_reply_with_a_lone_surrogate_gives_no_traceback_with_hash_only_and_with_full(self):
+        """--start through json-http, where the probe and every message get SURROGATE_REPLY. With hash_only (the
+        default) the probe block holds the SHA-256 of the cleaned reply start; with full it holds the cleaned text.
+        Before, hash_only stopped --start at the probe hash, before the typed yes, and full stopped the run at the
+        header after it."""
+        opts = {"request": {"message": "{message}"}, "reply_path": "data.reply.text", "auth_header": "X-Api-Key"}
+        for store, changes in (("hash_only", {}), ("full", FULL)):
+            with self.subTest(store=store):
+                run_dir = self.dir / f"probe_surrogate_{store}"
+                with StandInJsonApp(lambda t, n: SURROGATE_REPLY, key_header="X-Api-Key", key=FAKE_KEY_VALUE) as app:
+                    prof = self.profile("json-http", app.base_url + "/api/chat", opts, name=f"ps_{store}.yaml")
+                    rc, out = self.pf(["--profile", str(prof), "--settings", str(self.write_settings(**changes)),
+                                       "--start", "--sign-key", str(self.priv), "--run-dir", str(run_dir)],
+                                      executor=lambda **kw: external.execute(engine="direct", **kw))
+                self.assertEqual(rc, 0, out[-600:])
+                self.assertNotIn("\ud83d", out)
+                log = run_dir / "run_log.jsonl"
+                probe = runlog.read_log(log)[0]["probes"]["channel"]
+                start = CLEANED_REPLY[:200]
+                if store == "full":
+                    self.assertEqual(probe["reply_start"], start)
+                    self.assertIn(f"  reply start: {start!r}", out)
+                else:
+                    self.assertEqual(probe["reply_start_sha256"], runlog.sha256_hex(start))
+                    self.assertIn(f"  reply start: SHA-256 {runlog.sha256_hex(start)} (store_replies: hash_only", out)
+                self.assertTrue(runlog.verify_log(log, log.with_name("run_log.jsonl.sig"), self.pub, repo=REPO)[0])
 
     def test_another_error_type_of_the_engine_is_not_caught(self):
         with StandInDirectLine(respond, secret=FAKE_KEY_VALUE) as dl:
@@ -862,6 +918,21 @@ class ExternalSec002Tests(unittest.TestCase):
         self.assertEqual([c["reply_start"] for c in kept["session_check"]["calls"]],
                          [c["reply_start"] for c in run.probes["channel"]["session_check"]["calls"]])
         self.assertNotIn("reply_start_sha256", runlog.canonical(run.recs[0]))
+
+    def test_a_session_probe_reply_with_a_lone_surrogate_is_kept_with_the_replacement_character(self):
+        """The recall test of TP-SEC-002 (4 calls through generic-http), where every reply is SURROGATE_REPLY. Each call
+        keeps the reply start with U+FFFD, and the probe block of hash_only holds its SHA-256. Before, the hash of the
+        reply start stopped the preflight with UnicodeEncodeError."""
+        self.behaviour[0] = lambda t, n, m: SURROGATE_REPLY
+        try:
+            probe, calls = self.probe(self.settings(), self.profile_path)
+        finally:
+            self.behaviour[0] = keeps_state
+        start = CLEANED_REPLY[:200]
+        self.assertEqual([c["reply_start"] for c in probe["session_check"]["calls"]], [start] * 4)
+        kept = external.probes_for_store({"channel": probe}, "hash_only")["channel"]
+        self.assertEqual({c["reply_start_sha256"] for c in kept["session_check"]["calls"]}, {runlog.sha256_hex(start)})
+        self.assertEqual(calls, 4)
 
     def test_a_baseline_that_cannot_be_rescored_needs_this_scorer(self):
         base = {"mode": "evidence", "signature": {"verified": True, "public_key_sha256": "a" * 64},

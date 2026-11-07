@@ -284,6 +284,34 @@ class ServedHostTests(unittest.TestCase):
         self.assertGreater(gw.cap.spent_usd, 0)
 
 
+class LoneSurrogateTests(unittest.TestCase):
+    """A model host body with a lone surrogate (the JSON escape \\ud83d alone), since 0.9.4. The body is written with
+    json.dumps, as a host may send it, so the escape reaches the gateway as it is."""
+
+    @staticmethod
+    def raw(status, body):
+        return httpx.Response(status, content=json.dumps(body).encode("ascii"),
+                              headers={"Content-Type": "application/json"})
+
+    def test_the_gateway_replaces_each_lone_surrogate_of_a_reply_with_the_replacement_character(self):
+        call = {"id": "c1", "type": "function", "function": {"name": "f", "arguments": '{"note": "a \ud83d b"}'}}
+        body = {"id": "g1", "model": "example-vendor/example-model\ud83d", "provider": "ExampleHost\ud83d",
+                "usage": {"prompt_tokens": 30, "completion_tokens": 20},
+                "choices": [{"message": {"role": "assistant", "content": "Thank you \ud83d.", "tool_calls": [call]},
+                             "finish_reason": "stop"}]}
+        gw, _ = make_gateway(Recorder(self.raw(200, body)))
+        with no_outside_network():
+            r = gw.complete(MSGS)
+        self.assertEqual((r.reply, r.model_served, r.served_host),
+                         ("Thank you \ufffd.", "example-vendor/example-model\ufffd", "ExampleHost\ufffd"))
+        self.assertEqual(r.message["tool_calls"][0]["function"]["arguments"], '{"note": "a \ufffd b"}')
+        block = {"error": {"message": "x", "metadata": {"error_type": "refusal", "provider_name": "ExampleHost\ud83d"}}}
+        gw, _ = make_gateway(Recorder(self.raw(403, block)))
+        with no_outside_network():
+            r = gw.complete(MSGS)
+        self.assertEqual((r.blocked, r.served_host), ("refusal", "ExampleHost\ufffd"))
+
+
 class EgressTests(unittest.TestCase):
     def test_a_host_off_the_allow_list_is_refused_and_logged_and_nothing_is_sent(self):
         rec = Recorder()

@@ -194,6 +194,22 @@ class ToolLoopTests(_World):
         self.assertEqual([c["decision"] for c in self.trace("tool_call")], ["bad_arguments", "unknown_tool"])
         self.assertEqual(self.ledger(), [])
 
+    def test_a_lone_surrogate_in_a_reply_and_in_the_tool_arguments_reaches_the_trace_as_the_replacement_character(
+            self):
+        """Since 0.9.4. The stand-in writes JSON with escapes. The reply after the tool result holds a lone surrogate,
+        which the gateway replaces with U+FFFD. The tool arguments are JSON text inside the reply: there the escape
+        \\ud83d is text, and it reads as a lone surrogate only when the orchestrator reads the arguments, which
+        replaces it too. Before, the trace line of the tool call could not be written, and SRD-1 answered HTTP 502."""
+        call = {"id": "c1", "name": "fee_refund",
+                "arguments": json.dumps({"account_ref": "SYN-A-0001", "fee_id": "SYN-F-0001", "amount_gbp": 12.0,
+                                         "reason": "a test \ud83d note"})}
+        target = self.world(lambda m: "Done \ud83d." if m[-1]["role"] == "tool" else [call])
+        self.assertEqual(target.send(target.open_session(), "Please refund the fee."), "Done \ufffd.")
+        calls = self.trace("tool_call")
+        self.assertEqual([(c["decision"], c["arguments"]["reason"]) for c in calls], [("sent", "a test \ufffd note")])
+        self.assertEqual(len(self.ledger()), 1)
+        self.assertEqual(tr.verify_chain(self.dir / "trace.jsonl"), (True, []))
+
     def test_tools_off_sends_no_tool_definition(self):
         host = StandInModelHost(tool_reply=once(refund()))
         with host:

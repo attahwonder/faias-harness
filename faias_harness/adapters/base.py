@@ -31,6 +31,7 @@ import httpx
 
 from ..errors import CapReached
 from ..target import Target
+from ..text import clean
 
 HEADER_NAME = re.compile(r"[A-Za-z0-9!#$%&'*+.^_`|~-]{1,64}")   # an HTTP header name (RFC 9110 token)
 RETRY_STATUSES = (429, 503)      # the request was not processed: safe to send again
@@ -166,12 +167,13 @@ class ChannelTarget(Target):
 
     @staticmethod
     def _json(response):
-        """The JSON body if it is an object, else {} (a list, a number or text is not a channel response)."""
+        """The JSON body if it is an object, else {} (a list, a number or text is not a channel response). Each lone
+        surrogate in it is replaced with U+FFFD (text.clean), so no record, hash or printed line sees one."""
         try:
             data = response.json()
         except ValueError:
             return {}
-        return data if isinstance(data, dict) else {}
+        return clean(data) if isinstance(data, dict) else {}
 
     def _auth_headers(self, header="Authorization", scheme="Bearer"):
         """The auth header from the profile's key variable, or {} if the profile names no key variable."""
