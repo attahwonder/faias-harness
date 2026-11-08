@@ -804,6 +804,35 @@ class OverlapToolTests(unittest.TestCase):
             self.assertEqual(out.read_bytes(), b"another file\n")
             self.assertEqual(sorted(p.name for p in d.iterdir()), sorted(before + [out.name]))
 
+    def test_a_temporary_file_that_cannot_be_removed_after_a_good_move_is_a_note_not_a_refusal(self):
+        """On POSIX the move is a hard link (HARD_LINK), and the result is then at --out. Then the system does not let
+        the tool remove the temporary file (a PermissionError here). The result stays at --out. The tool prints the
+        line of a written result. It then prints one note line with the path of the temporary file and the reason. The
+        exit code is that of the result (0 here). The test takes the POSIX move on Windows too. Before, the tool
+        refused with `refused: <out> cannot be written (...)` and exit 2. The whole result was at --out then."""
+        real_unlink, failed = OVERLAP_TOOL.os.unlink, []
+
+        def unlink(path, *a, **k):
+            if str(path).endswith(".tmp") and not failed:
+                failed.append(str(path))
+                raise PermissionError(13, "Permission denied")
+            return real_unlink(path, *a, **k)
+        with tempfile.TemporaryDirectory() as d:
+            d = Path(d)
+            gsm = self.gsm8k_files(d)
+            comp, out = d / "comparators.json", d / "overlap.json"
+            comp.write_text(json.dumps({"comparators": self.COMPARATORS[1:]}), encoding="utf-8")     # under the limit
+            with mock.patch.object(OVERLAP_TOOL, "HARD_LINK", True), \
+                    mock.patch.object(OVERLAP_TOOL.os, "unlink", unlink):
+                rc, text = self.run_tool(comp, gsm, out)
+            self.assertEqual(len(failed), 1)
+            self.assertEqual((rc, text), (0, f"wrote {out}: 1 comparators; 0 at or above the limit of 8 words: none\n"
+                                             f"note: the temporary file {failed[0]} cannot be removed (Permission "
+                                             "denied)\n"))
+            self.assertEqual(json.loads(out.read_text(encoding="utf-8"))["results"][0]["id"], "C-02")
+            self.assertEqual(Path(failed[0]).read_bytes(), out.read_bytes())       # a second name of the result
+            real_unlink(failed[0])
+
     def test_a_run_never_spans_two_questions(self):
         files = [("a.jsonl", b'{"question": "one two three four"}\n{"question": "five six seven eight"}\n')]
         rows = OVERLAP_TOOL.overlap([{"id": "X", "question": "three four five six"}], files)
