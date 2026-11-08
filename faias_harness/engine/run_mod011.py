@@ -118,7 +118,7 @@ def variant_problems(variant):
 
 
 def _read_json(path):
-    return json.loads(Path(path).read_bytes().decode("utf-8"))
+    return json.loads(Path(path).read_bytes().decode("utf-8"), object_pairs_hook=jsonkeys.unique_keys)
 
 
 def _inside(path, repo):
@@ -208,9 +208,10 @@ def plan(settings, items):
 def estimate(settings, repo=REPO):
     """The worst-case cost of a run in USD, or None if the prices are not set. Each call counts at the full output
     limit. Its input is the model-probe prompt and the probe message. The comparator probes are read from the
-    comparator file when it has the SHA-256 of the settings and no JSON object of it holds a key more than once
-    (jsonkeys.unique_keys); otherwise each counts at the longest message that SRD-1 takes (MAX_MESSAGE_CHARS). Raises
-    ValueError when an item file or the instrument file is refused."""
+    comparator file when it has the SHA-256 of the settings, no JSON object of it holds a key more than once
+    (jsonkeys.unique_keys), and each comparator is an object with a benchmark of the allow-list and a text prefix;
+    otherwise each counts at the longest message that SRD-1 takes (MAX_MESSAGE_CHARS). Raises ValueError when an item
+    file or the instrument file is refused."""
     if settings.price_in_per_m is None or settings.price_out_per_m is None:
         return None
     _, gw, orch, _ = spike._srd1()
@@ -226,8 +227,14 @@ def estimate(settings, repo=REPO):
         if runlog.sha256_hex(raw) == settings.comparator_sha256:
             try:
                 data = json.loads(raw.decode("utf-8"), object_pairs_hook=jsonkeys.unique_keys)
-                comps = [c for c in data["comparators"]]
-            except (ValueError, KeyError, TypeError):
+            except ValueError:
+                data = None
+            comps = data.get("comparators") if isinstance(data, dict) else None
+            # A probe needs an object with a benchmark of the allow-list and a text prefix. For any other value, which
+            # check_comparators names, each comparator probe counts at the bound.
+            if not (isinstance(comps, list) and all(
+                    isinstance(c, dict) and isinstance(c.get("benchmark"), str) and c["benchmark"] in mod011.ALLOW_LIST
+                    and isinstance(c.get("prefix"), str) for c in comps)):
                 comps = None
     comp_tokens = (sum(tokens(mod011.probe_text(c["benchmark"], c["prefix"])) for c in comps) if comps
                    else len(items) * tokens("w" * orch.MAX_MESSAGE_CHARS))

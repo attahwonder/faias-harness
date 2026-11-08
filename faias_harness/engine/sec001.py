@@ -39,6 +39,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from .. import yamlio
+from . import jsonkeys
 
 REPO = Path(__file__).resolve().parents[2]
 TP = "TP-SEC-001"
@@ -455,7 +456,8 @@ def _parse_set(data, baseline_key=True):
 def load_items(item_set="TP-SEC-001", repo=REPO, private_file=None, private_sha256=None):
     """The items and the clean-baseline requests of a set, as two tuples of Item. The spike set has no baseline.
     The private set (PRIVATE_SET) reads `private_file`, which must pass private_problems; a ValueError names each
-    problem."""
+    problem. Raises jsonkeys.RepeatedKey (a ValueError) for a JSON object of the item file with a repeated key:
+    plain json.loads keeps only its last value."""
     if item_set == "spike":
         return ITEMS, ()
     if item_set == PRIVATE_SET:
@@ -465,7 +467,8 @@ def load_items(item_set="TP-SEC-001", repo=REPO, private_file=None, private_sha2
         return _parse_set(data, baseline_key=False)
     if item_set != "TP-SEC-001":
         raise ValueError(f"unknown item set: {item_set}")
-    data = json.loads((Path(repo) / "items" / "TP-SEC-001.json").read_text(encoding="utf-8"))
+    data = json.loads((Path(repo) / "items" / "TP-SEC-001.json").read_text(encoding="utf-8"),
+                      object_pairs_hook=jsonkeys.unique_keys)
     return _parse_set(data)
 
 

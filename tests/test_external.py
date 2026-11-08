@@ -374,9 +374,10 @@ class ExternalRunTests(unittest.TestCase):
         p.write_text(yaml.safe_dump(raw), encoding="utf-8")
         return p
 
-    def pf(self, argv, answer="yes"):
+    def pf(self, argv, answer="yes", executor=None):
         buf = io.StringIO()
-        executor = lambda **kw: external.execute(engine=ENGINE, **kw)      # noqa: E731
+        if executor is None:
+            executor = lambda **kw: external.execute(engine=ENGINE, **kw)      # noqa: E731
         with no_outside_network(), mock.patch.dict(os.environ, ENV), contextlib.redirect_stdout(buf):
             rc = preflight.main(argv, input_fn=lambda p: answer, inspect_check=lambda: None, external_executor=executor)
         return rc, buf.getvalue()
@@ -421,6 +422,86 @@ class ExternalRunTests(unittest.TestCase):
                                "--start", "--sign-key", str(self.priv), "--run-dir", str(self.dir / "silent")])
             self.assertEqual(rc, 2, out[-400:])
             self.assertIn("the channel probe got no usable reply", out)
+
+    # ---------- an error from the engine after the typed yes ----------
+
+    def start_argv(self, prof, run_dir):
+        return ["--profile", str(prof), "--settings", str(self.write_settings()), "--start", "--sign-key",
+                str(self.priv), "--run-dir", str(run_dir)]
+
+    def test_start_prints_one_line_for_a_refusal_of_the_engine_before_the_run_log(self):
+        """As on the model-gateway path: a RuntimeError or a ValueError from the executor, while the run folder holds
+        no run_log.jsonl, gives one `Run refused:` line, then the run folder when it exists, and exit 2."""
+        with StandInDirectLine(respond, secret=FAKE_KEY_VALUE) as dl:
+            prof = self.dl_profile(dl)
+            for exc in (RuntimeError, ValueError):
+                for made in (False, True):
+                    with self.subTest(exc=exc.__name__, folder_made=made):
+                        run_dir = self.dir / f"refused_{exc.__name__}_{made}"
+
+                        def run(**kw):
+                            if made:
+                                kw["run_dir"].mkdir()
+                            raise exc("the run is refused before the lock: a reason")
+
+                        rc, out = self.pf(self.start_argv(prof, run_dir), executor=run)
+                        self.assertEqual(rc, 2, out[-600:])
+                        tail = "Run refused: the run is refused before the lock: a reason\n"
+                        tail += f"Run folder: {run_dir}\n" if made else ""
+                        self.assertTrue(out.endswith("The result is labelled 'engine spike, not a finding'.\n" + tail),
+                                        out[-600:])
+                        self.assertEqual(out.count("Run refused:"), 1)
+                        self.assertNotIn("Traceback", out)
+
+    def test_an_error_of_the_engine_after_the_run_log_is_opened_keeps_its_traceback(self):
+        """When the run folder holds run_log.jsonl, the engine passed the lock, and the error goes on unchanged: from
+        an executor of the test, and from the direct engine on a reply that holds a lone surrogate (the JSON escape
+        \\ud83d alone). Then the UnicodeEncodeError, a ValueError, comes after one message of the run reached the
+        channel, and the log is not signed."""
+        with StandInDirectLine(respond, secret=FAKE_KEY_VALUE) as dl:
+            prof = self.dl_profile(dl)
+            for exc in (RuntimeError, ValueError):
+                with self.subTest(exc=exc.__name__):
+                    raised = exc("an error after the lock")
+
+                    def run(**kw):
+                        kw["run_dir"].mkdir()
+                        (kw["run_dir"] / "run_log.jsonl").write_bytes(b"{}\n")
+                        raise raised
+
+                    with self.assertRaises(exc) as cm:
+                        self.pf(self.start_argv(prof, self.dir / f"locked_{exc.__name__}"), executor=run)
+                    self.assertIs(cm.exception, raised)
+        sent = []
+
+        def surrogate(text, nth):           # the probe gets a plain reply, each message of the run the lone surrogate
+            sent.append(text)
+            return NEUTRAL_REPLY if text == external.PROBE_MESSAGE else "Hello \ud83d there"
+
+        opts = {"request": {"message": "{message}"}, "reply_path": "data.reply.text", "auth_header": "X-Api-Key"}
+        run_dir = self.dir / "surrogate"
+        with StandInJsonApp(surrogate, key_header="X-Api-Key", key=FAKE_KEY_VALUE) as app:
+            prof = self.profile("json-http", app.base_url + "/api/chat", opts, name="surrogate.yaml")
+            with self.assertRaises(UnicodeEncodeError):
+                self.pf(self.start_argv(prof, run_dir), executor=lambda **kw: external.execute(engine="direct", **kw))
+        self.assertEqual(sent[0], external.PROBE_MESSAGE)
+        self.assertEqual(len(sent), 2)              # the probe and one message of the run
+        self.assertTrue((run_dir / "run_log.jsonl").is_file())
+        self.assertFalse((run_dir / "run_log.jsonl.sig").exists())
+
+    def test_another_error_type_of_the_engine_is_not_caught(self):
+        with StandInDirectLine(respond, secret=FAKE_KEY_VALUE) as dl:
+            prof = self.dl_profile(dl)
+            for exc in (KeyError, OSError):
+                with self.subTest(exc=exc.__name__):
+                    raised = exc("another error")
+
+                    def run(**kw):
+                        raise raised
+
+                    with self.assertRaises(exc) as cm:
+                        self.pf(self.start_argv(prof, self.dir / f"other_{exc.__name__}"), executor=run)
+                    self.assertIs(cm.exception, raised)
 
     def test_review_fixes_probe_attestation_m4_and_start_event_estimate(self):
         s = self.write_settings()

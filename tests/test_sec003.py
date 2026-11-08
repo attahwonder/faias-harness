@@ -196,6 +196,44 @@ def fixture_set():
             "authors": "a test fixture", "items": copy.deepcopy(FIXTURE_ITEMS)}
 
 
+def _set(key, value):
+    return lambda d: d.__setitem__(key, value)
+
+
+# A key or a value of a payload document that does not come back unchanged from the seeded store: (the change to the
+# document, the key that the problem names). YAML reads these keys as a number, a boolean, null or a comment, or does
+# not parse them. It reads these values as a text, or reads U+0085 as a line break.
+ROUND_TRIP_TRIGGERS = {
+    "the value 1e-07": (_set("extra", 1e-07), "extra"),
+    "the value Infinity": (_set("extra", float("inf")), "extra"),
+    "the value NaN": (_set("extra", float("nan")), "extra"),
+    "a title with U+0085": (lambda d: d.__setitem__("title", d["title"] + "\u0085x"), "title"),
+    **{f"the key {k!r}": (_set(k, "x"), k) for k in ("123", "yes", "no", "null", "#c", "a: b", " lead")},
+}
+# Keys and values of the same kind that come back unchanged.
+ROUND_TRIP_CONTROLS = {
+    "the value 1.5": _set("extra", 1.5),
+    "the values true, null, a list and an object": lambda d: d.update(a=True, b=None, c=[1, "x"], e={"k": 2}),
+    "a title with U+2028": lambda d: d.__setitem__("title", d["title"] + " x"),
+    "a text with a tab and a newline": lambda d: d.__setitem__("text", d["text"] + "\t\nmore"),
+    "the key documents": _set("documents", "x"),
+}
+# A lone surrogate (the JSON escape \ud83d alone) in a document key or text: valid JSON. libyaml raises
+# UnicodeEncodeError when it reads the text that _entry writes, and the pure-Python loader raises ReaderError.
+SURROGATE_TRIGGERS = {
+    "a key with a lone surrogate": (_set("a\ud83db", "x"), "a\ud83db"),
+    "a title with a lone surrogate": (lambda d: d.__setitem__("title", d["title"] + "\ud83d"), "title"),
+}
+# The YAML loaders that yamlio.load can use: the pure-Python one, and libyaml's where PyYAML has it.
+YAML_LOADERS = [yaml.SafeLoader] + ([yaml.CSafeLoader] if hasattr(yaml, "CSafeLoader") else [])
+
+
+def round_trip_problem(iid, key):
+    """The problem of the item check for a document whose `key`, or its value, does not come back unchanged."""
+    return (f"{iid}: the document does not come back unchanged from the seeded store: the key or the value of "
+            f"{json.dumps(key)} changes")
+
+
 def trace(item_turns):
     """Trace lines of one session in the form of SRD-1's trace store, for (turn, passed_to_model, reply) rows."""
     out, seq = [], 0
@@ -285,6 +323,127 @@ class ItemSetTests(unittest.TestCase):
                     sec003.load_set(path)
                 self.assertEqual(str(cm.exception), "the file does not hold one JSON object")
                 self.assertEqual(str(cm.exception), sec002.NOT_ONE_OBJECT)
+
+    def test_a_file_that_is_not_utf8_json_is_refused_in_the_words_of_tp_sec_002(self):
+        """sec003.load_set refuses a file that is not JSON, and one that is not UTF-8, with a ValueError in the words
+        of the TP-SEC-002 preflight: "the file is not UTF-8 JSON (<the words of the decoder>)"."""
+        path = self.dir / "items.json"
+        for name, raw in {"not JSON": b"{not json", "not UTF-8": b"\xff\xfe{}"}.items():
+            with self.subTest(name):
+                path.write_bytes(raw)
+                with self.assertRaises(ValueError) as cm:
+                    sec003.load_set(path)
+                self.assertRegex(str(cm.exception), r"^the file is not UTF-8 JSON \(.+\)$")
+
+    def test_a_field_items_that_is_not_a_list_of_objects_is_read_as_absent_and_the_check_names_it(self):
+        """By the rule of the TP-SEC-002 item check, a field of the wrong type is read as absent. A field items that is
+        not a list gives no item, so the check names an empty set. A value of the list that is not an object is an
+        item with no key, so the check names its missing keys, with the ID None. The valid items of the list still
+        load. No value stops load_set or the check."""
+        empty = "the item set has 0 items; it must have 1 or more"
+        for value in (5, "ab", {"a": 1}, None, True):
+            with self.subTest(items=value):
+                data = fixture_set()
+                data["items"] = value
+                items = self.load(data)
+                self.assertEqual(items, ())
+                self.assertEqual(sec003.check_item_set(items, CLEAN), [empty])
+        for value in ([1], ["P1-01"], [[]], [None]):
+            with self.subTest(items=value):
+                data = fixture_set()
+                data["items"] = value
+                items = self.load(data)
+                self.assertEqual([(i.id, i.cls, i.turns, i.document, i.marker) for i in items],
+                                 [(None, None, (), {}, ())])
+                problems = sec003.check_item_set(items, CLEAN)
+                self.assertEqual(problems[0], "None: the class is not one of P1 to P5")
+                self.assertTrue(all(p.startswith("None: ") for p in problems), problems)
+        data = fixture_set()
+        data["items"].append(5)
+        items = self.load(data)
+        self.assertEqual([i.id for i in items], ["P1-01", "P2-01", "P5-01", "P1-02", None])
+        problems = sec003.check_item_set(items, CLEAN)
+        self.assertTrue(problems and all(p.startswith("None: ") for p in problems), problems)
+
+    def test_a_customer_ref_that_is_not_a_text_is_read_as_absent_and_named(self):
+        """By the rule of the TP-SEC-002 item check, a customer_ref of an item that is not a text is read as absent. The
+        check names it as it names an absent customer. A list or an object cannot be a member of a set, so before, it
+        stopped the check with a TypeError."""
+        for value in ([1], {"a": 1}, 5, True, None):
+            with self.subTest(customer_ref=value):
+                data = fixture_set()
+                data["items"][0]["customer_ref"] = value
+                self.assertEqual(sec003.check_item_set(self.load(data), CLEAN),
+                                 ["P1-01: the customer is not a customer of the store"])
+
+    def test_a_document_whose_doc_id_is_not_a_text_is_named_and_left_out_of_the_ranking(self):
+        """The check names a doc_id that is not a text as it names an absent doc_id. It leaves that document out of the
+        ranking store. Before, a list or an object stopped the check with a TypeError, because it cannot be a key of
+        the index. A number, a boolean or null stopped it when the document tied with another payload document in a
+        ranking, because the sort compared the two doc_ids. The tie case gives the document the title and the text of
+        the document of P2-01, in the same domain."""
+        other = fixture_set()["items"][1]["document"]
+        for value in ([1], {"a": 1}, 5, True, None):
+            for tie in (False, True):
+                with self.subTest(doc_id=value, tie=tie):
+                    data = fixture_set()
+                    doc = data["items"][0]["document"]
+                    doc["doc_id"] = value
+                    if tie:
+                        doc.update(title=other["title"], text=other["text"])
+                    self.assertEqual(sec003.check_item_set(self.load(data), CLEAN),
+                                     ["P1-01: the document has no doc_id"])
+
+    def test_a_document_that_does_not_come_back_unchanged_from_the_seeded_store_is_named_by_its_key(self):
+        """The item check writes each payload document as the seed route writes it (sec003._entry) and reads it again
+        (yamlio.load). A key or a value that changes (ROUND_TRIP_TRIGGERS) gives one problem that names the item and
+        the key, and the seed step refuses the same document. Before, the check passed each, and only the seed step
+        refused it, after it made the run folder. The controls pass the check and the seed step."""
+        for name, (change, key) in ROUND_TRIP_TRIGGERS.items():
+            with self.subTest(name):
+                data = fixture_set()
+                change(data["items"][0]["document"])
+                items = self.load(data)
+                self.assertEqual(sec003.check_item_set(items, CLEAN), [round_trip_problem("P1-01", key)])
+                with self.assertRaisesRegex(RuntimeError, "refused before the lock"):
+                    sec003.seed(sec003.pool(items), self.dir / "trigger")
+        for n, (name, change) in enumerate(ROUND_TRIP_CONTROLS.items()):
+            with self.subTest(name):
+                data = fixture_set()
+                change(data["items"][0]["document"])
+                items = self.load(data)
+                self.assertEqual(sec003.check_item_set(items, CLEAN), [])
+                self.assertEqual(sec003.seed(sec003.pool(items), self.dir / f"control_{n}")["payload_doc_ids"][0],
+                                 "SYN-S-0001")
+
+    def test_a_document_with_a_lone_surrogate_is_named_by_its_key_with_each_yaml_loader(self):
+        """A lone surrogate in a document key or text (SURROGATE_TRIGGERS). With each YAML loader (YAML_LOADERS), the
+        item check gives one problem that names the item and the key. It raises nothing. Before, the check raised
+        UnicodeEncodeError with libyaml. The item file holds the JSON escape, so the file is valid UTF-8."""
+        for loader in YAML_LOADERS:
+            for name, (change, key) in SURROGATE_TRIGGERS.items():
+                with self.subTest(loader=loader.__name__, case=name), \
+                        mock.patch.object(yamlio, "loader", lambda: loader):
+                    data = fixture_set()
+                    change(data["items"][0]["document"])
+                    path = self.dir / "items_surrogate.json"
+                    path.write_text(json.dumps(data), encoding="utf-8")
+                    self.assertEqual(sec003.check_item_set(sec003.load_set(path), CLEAN),
+                                     [round_trip_problem("P1-01", key)])
+
+    def test_a_set_with_no_item_is_refused_by_the_item_check(self):
+        """No field items, and an empty list: the item check gives one problem, in the form of the TP-SEC-002 problem
+        of a pool with too few objectives. Before, such a set passed the check, and the engine ran 0 items."""
+        empty = "the item set has 0 items; it must have 1 or more"
+        self.assertEqual(sec003.check_item_set((), CLEAN), [empty])
+        self.assertEqual(sec003.check_item_set((), CLEAN, ["branch_finder"]), [empty])
+        no_items = {k: v for k, v in fixture_set().items() if k != "items"}
+        for name, data in {"no field items": no_items, "an empty list": {**no_items, "items": []},
+                           "an empty object": {}}.items():
+            with self.subTest(name):
+                items = self.load(data)
+                self.assertEqual(items, ())
+                self.assertEqual(sec003.check_item_set(items, CLEAN), [empty])
 
     def test_a_marker_outside_the_item_text_a_stray_turn_and_a_cut_trace(self):
         """The joined marker in a clean document, or across the title and the text, gives one problem; so does a

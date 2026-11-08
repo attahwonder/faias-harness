@@ -9,8 +9,9 @@ digest file is in sha256sum form. It holds the SHA-256 of the source files as fe
 licence file and item file. The entry pins the digest file in turn: digest_prefix is the first DIGEST_PREFIX_HEX
 characters of its SHA-256, so a change to the digest file is a change to this module. benchmark_problems refuses, each
 with its reason: an ID that is not in the map; an absent or changed licence file; an absent digest file, or one whose
-SHA-256 does not start with digest_prefix; an absent item file, or one whose SHA-256 differs from the digest file; and
-an item file that names another split.
+SHA-256 does not start with digest_prefix; an absent item file, or one whose SHA-256 differs from the digest file; an
+item file in which a JSON object holds a key more than once (jsonkeys.unique_keys); and an item file that names another
+split.
 
 The item file (items/TP-MOD-011.json). tools/mod011_items.py makes it from a copy of the source and a seed. Each item
 is a question of the test split, cut at a sentence end into a prefix and a remainder. A sentence ends at ".", "?" or
@@ -55,7 +56,8 @@ more). The run probes each one with PROBE_TEMPLATE before the arms, with the dat
 title of the work as the split, and scores the reply with score_completion. A probe and a scorer that work give a high
 exact rate on such well-known text; a low rate points to a refusal or a broken probe. The result is a reading in the
 header, not part of M1. instrument_problems refuses an absent file, a digest file whose SHA-256 does not start with
-INSTRUMENT_DIGEST_PREFIX, a SHA-256 that differs from INSTRUMENT_DIGEST_FILE, and a passage of the wrong form.
+INSTRUMENT_DIGEST_PREFIX, a SHA-256 that differs from INSTRUMENT_DIGEST_FILE, a JSON object with a repeated key, and a
+passage of the wrong form.
 """
 import hashlib
 import json
@@ -67,7 +69,7 @@ from dataclasses import dataclass
 from datetime import date
 from pathlib import Path
 
-from . import sec001, sec006
+from . import jsonkeys, sec001, sec006
 
 REPO = Path(__file__).resolve().parents[2]
 TP = "TP-MOD-011"
@@ -215,7 +217,11 @@ def benchmark_problems(benchmark, repo=REPO):
     if _sha256(raw) != digests.get(path.name):
         return problems + [f"{benchmark}: the item file {e['item_file']} does not have the SHA-256 of the digest "
                            f"file {e['digest_file']}"]
-    return problems + check_item_set(json.loads(raw.decode("utf-8")), benchmark)
+    try:
+        data = json.loads(raw.decode("utf-8"), object_pairs_hook=jsonkeys.unique_keys)
+    except jsonkeys.RepeatedKey as err:     # in the form of the TP-SEC-002 refusal (preflight._sec002_item_file)
+        return problems + [f"{benchmark}: the item file {e['item_file']} is refused: {err}"]
+    return problems + check_item_set(data, benchmark)
 
 
 def check_item_set(data, benchmark):
@@ -279,7 +285,8 @@ def load_items(benchmark="gsm8k", repo=REPO):
     if problems:
         raise ValueError("; ".join(problems))
     e = ALLOW_LIST[benchmark]
-    return items_from_set(json.loads((Path(repo) / e["item_file"]).read_text(encoding="utf-8")))
+    return items_from_set(json.loads((Path(repo) / e["item_file"]).read_text(encoding="utf-8"),
+                                     object_pairs_hook=jsonkeys.unique_keys))
 
 
 def probe_text(benchmark, prefix):
@@ -472,18 +479,27 @@ def check_comparators(data, items, *, file_sha256, overlap, training_cutoff=None
 
 
 def _overlap_problems(valid, overlap, file_sha256, benchmarks, repo):
+    """The problems of the overlap result. A field of the wrong type is read as absent, by the rule of the TP-SEC-002
+    item check (sec002.check_item_set), so the problem of an absent field names it: a comparator_file that is not an
+    object, gsm8k_files or results that are not a list, and an entry of them that is not an object or whose sha256 or
+    id is not a text."""
     if not isinstance(overlap, dict):
         return ["no overlap result (tools/mod011_overlap.py) for the comparator file"]
     out = []
-    if (overlap.get("comparator_file") or {}).get("sha256") != file_sha256:
+    cfile = overlap.get("comparator_file")
+    if (cfile.get("sha256") if isinstance(cfile, dict) else None) != file_sha256:
         out.append("the overlap result is for another comparator file (its SHA-256 differs)")
-    read = {f.get("sha256") for f in overlap.get("gsm8k_files") or [] if isinstance(f, dict)}
+    files = overlap.get("gsm8k_files")
+    read = {f["sha256"] for f in (files if isinstance(files, list) else [])
+            if isinstance(f, dict) and isinstance(f.get("sha256"), str)}
     for b in benchmarks:
         want = entry(b, repo)["overlap_sha256"]
         if any(v is None or v not in read for v in want.values()):
             out.append(f"the overlap result does not read the files {', '.join(want)} of {b} that the digest file "
                        "names")
-    rows = {r.get("id"): r for r in overlap.get("results") or [] if isinstance(r, dict)}
+    results = overlap.get("results")
+    rows = {r["id"]: r for r in (results if isinstance(results, list) else [])
+            if isinstance(r, dict) and isinstance(r.get("id"), str)}
     for c in valid:
         row = rows.get(c["id"])
         if row is None or not _whole(row.get("longest_run")):
@@ -584,7 +600,11 @@ def instrument_problems(repo=REPO):
     raw = path.read_bytes()
     if _sha256(raw) != digests.get(path.name):
         return [f"the instrument file {INSTRUMENT_FILE} does not have the SHA-256 of {INSTRUMENT_DIGEST_FILE}"]
-    return check_instrument(json.loads(raw.decode("utf-8")))
+    try:
+        data = json.loads(raw.decode("utf-8"), object_pairs_hook=jsonkeys.unique_keys)
+    except jsonkeys.RepeatedKey as err:     # in the form of the TP-SEC-002 refusal (preflight._sec002_item_file)
+        return [f"the instrument file {INSTRUMENT_FILE} is refused: {err}"]
+    return check_instrument(data)
 
 
 def load_instrument(repo=REPO):
@@ -592,7 +612,8 @@ def load_instrument(repo=REPO):
     problems = instrument_problems(repo)
     if problems:
         raise ValueError("; ".join(problems))
-    data = json.loads((Path(repo) / INSTRUMENT_FILE).read_text(encoding="utf-8"))
+    data = json.loads((Path(repo) / INSTRUMENT_FILE).read_text(encoding="utf-8"),
+                      object_pairs_hook=jsonkeys.unique_keys)
     return tuple(Passage(p["id"], p["title"], p["author"], p["year"], p["passage"], p["cut"], p["prefix"],
                          p["remainder"]) for p in data["passages"])
 

@@ -705,6 +705,44 @@ class RefusalTests(unittest.TestCase):
                 self.assertEqual(str(cm.exception), f"TP-MOD-011: the run is refused: {want}")
                 self.assertEqual((run_dir.exists(), len(h.requests)), (False, 0))
 
+    def test_an_overlap_field_of_the_wrong_type_is_refused_before_srd1_is_built(self):
+        """An overlap result whose results, comparator_file or gsm8k_files has the wrong type: start_problems names it
+        as an absent field (mod011.check_comparators), and a direct call of the engine refuses it in the same words
+        before SRD-1 is built: no run folder and no model call. Before, each stopped start_problems and the engine with
+        a TypeError or an AttributeError."""
+        fx = fixture()
+        cases = {"results": (5, "C-00: the overlap result has no row for it"),
+                 "comparator_file": (5, "the overlap result is for another comparator file (its SHA-256 differs)"),
+                 "gsm8k_files": (5, "the overlap result does not read the files train.jsonl, test.jsonl of gsm8k")}
+        for n, (key, (value, want)) in enumerate(cases.items()):
+            with self.subTest(key):
+                files = comparator_files(f"overlap_type_{n}")
+                over = {**overlap_result(fx["comps"], files["comparator_sha256"]), key: value}
+                Path(files["overlap_result"]).write_text(json.dumps(over), encoding="utf-8")
+                s = mod_settings(**files)
+                problems = run_mod011.start_problems(s)
+                self.assertTrue(problems[0].startswith(want), problems)
+                h, run_dir = host(), fixture()["dir"] / f"overlap_type_{n}"
+                with self.assertRaises(ValueError) as cm:
+                    run(f"overlap_type_{n}", stand_in=h, settings=s)
+                self.assertEqual(str(cm.exception), "TP-MOD-011: the run is refused: " + "; ".join(problems))
+                self.assertEqual((run_dir.exists(), len(h.requests)), (False, 0))
+
+    def test_an_extra_overlap_row_whose_longest_run_is_not_a_whole_number_is_read_as_absent_in_the_header(self):
+        """An overlap result that passes the check and holds one more row, whose longest run is a text: the header
+        reads that row as absent, as the check does, so the longest run is that of the rows of the comparators. Before,
+        the header stopped the engine with a TypeError after the instrument check had sent its calls."""
+        fx = fixture()
+        over = overlap_result(fx["comps"], fx["files"]["comparator_sha256"])
+        extra = {**over, "results": over["results"] + [{"id": "Z", "longest_run": "x"}]}
+        self.assertEqual(mod011.check_comparators({"comparators": fx["comps"]}, fx["items"],
+                                                  file_sha256=fx["files"]["comparator_sha256"], overlap=extra,
+                                                  training_cutoff=CUTOFF, target_family="family-t"), [])
+        features = mod011.match_features(fx["items"], fx["comps"])
+        block = mod011_log.comparators_block(mod_settings(), fx["comps"], fx["files"]["comparator_sha256"], extra,
+                                             sha(b"overlap"), features)
+        self.assertEqual(block["overlap_result"]["longest_run"], 3)
+
     def test_without_a_passing_self_test_of_this_code_the_run_is_gated(self):
         fx = fixture()
         empty = Path(tempfile.mkdtemp(dir=fx["dir"]))
@@ -766,6 +804,24 @@ class PlanTests(unittest.TestCase):
         bound = run_mod011.estimate(dataclasses.replace(mod_settings(), comparator_file=None))
         for name, files, _ in repeated_key_files()[:2]:
             with self.subTest(name):
+                self.assertEqual(run_mod011.estimate(mod_settings(**files)), bound)
+
+    def test_a_comparator_that_gives_no_probe_text_counts_at_the_bound(self):
+        """The estimate does not read the comparators of a file when one of them is not an object with a benchmark of
+        the allow-list and a text prefix, or when the field comparators is not a list: each comparator probe counts at
+        SRD-1's longest message, as with no comparator file. Before, such a file stopped the estimate with a
+        TypeError or a KeyError."""
+        bound = run_mod011.estimate(dataclasses.replace(mod_settings(), comparator_file=None))
+        one = fixture()["comps"][0]
+        cases = {"a number": {"comparators": [5]}, "a text": {"comparators": "ab"},
+                 "an object": {"comparators": {"a": 1}},
+                 "a benchmark not on the allow-list": {"comparators": [dict(one, benchmark="bench-x")]},
+                 "a benchmark that is a list": {"comparators": [dict(one, benchmark=[1])]},
+                 "no prefix": {"comparators": [{k: v for k, v in one.items() if k != "prefix"}]},
+                 "a prefix that is a number": {"comparators": [dict(one, prefix=5)]}}
+        for n, (name, data) in enumerate(cases.items()):
+            with self.subTest(name):
+                files = comparator_files(f"no_probe_{n}", raw=json.dumps(data).encode("utf-8"))
                 self.assertEqual(run_mod011.estimate(mod_settings(**files)), bound)
 
     def test_each_probe_fits_in_one_message_of_srd1(self):
@@ -897,6 +953,42 @@ class PreflightTests(unittest.TestCase):
                 self.assertEqual(out.split("Fix these points first:\n")[1].splitlines(), [f"  - {want}"])
                 self.assertNotIn("Traceback", out)
                 self.assertEqual([c["prefix"] for c in fx["comps"] if c["prefix"] in out], [])
+
+    def test_a_comparator_that_is_not_an_object_gives_the_problems_of_the_check_and_no_traceback(self):
+        """A comparator file whose list comparators holds a number: the report gives the estimate at the bound and no
+        traceback, and --start refuses with the problems of mod011.check_comparators, before the probes and the
+        executor. Before, the estimate stopped the report and --start with a TypeError."""
+        files = comparator_files("comparator_number", raw=b'{"comparators": [5]}')
+        path = self.dir / "comparator_number.yaml"
+        path.write_text(yaml.safe_dump({**self.raw, **files}), encoding="utf-8")
+        rc, out = self.main(*self.selftest, settings=path)
+        self.assertEqual(rc, 0, out)
+        self.assertIn("Worst-case estimate for the whole run: USD", out)
+        self.assertNotIn("Traceback", out)
+        problems = preflight.mod011_start_problems(sm.load_settings(path))
+        self.assertTrue(problems[0].startswith("None: the key(s) id, benchmark, pair"), problems)
+        calls = []
+        rc, out = self.main("--start", "--sign-key", str(self.key), *self.selftest, calls=calls, settings=path)
+        self.assertEqual((rc, calls), (2, []), out)
+        self.assertEqual(out.split("Fix these points first:\n")[1].splitlines(), [f"  - {p}" for p in problems])
+        self.assertNotIn("Traceback", out)
+
+    def test_start_refuses_an_overlap_field_of_the_wrong_type_with_no_traceback(self):
+        """An overlap result whose comparator_file is a number: --start refuses in one problem line, the problem of an
+        absent field, before the probes and the executor. Before, start_problems stopped --start with an
+        AttributeError."""
+        fx = fixture()
+        files = comparator_files("overlap_file_number")
+        over = {**overlap_result(fx["comps"], files["comparator_sha256"]), "comparator_file": 5}
+        Path(files["overlap_result"]).write_text(json.dumps(over), encoding="utf-8")
+        path = self.dir / "overlap_file_number.yaml"
+        path.write_text(yaml.safe_dump({**self.raw, **files}), encoding="utf-8")
+        calls = []
+        rc, out = self.main("--start", "--sign-key", str(self.key), *self.selftest, calls=calls, settings=path)
+        self.assertEqual((rc, calls), (2, []), out)
+        self.assertEqual(out.split("Fix these points first:\n")[1].splitlines(),
+                         ["  - the overlap result is for another comparator file (its SHA-256 differs)"])
+        self.assertNotIn("Traceback", out)
 
     def test_the_variant_model_probe_applies_to_tp_mod_011_only(self):
         other = self.dir / "sec001.yaml"

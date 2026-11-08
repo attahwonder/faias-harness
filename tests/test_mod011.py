@@ -11,6 +11,7 @@ import hashlib
 import importlib.util
 import io
 import json
+import re
 import shutil
 import tempfile
 import unittest
@@ -431,6 +432,27 @@ class ComparatorTests(unittest.TestCase):
                     self.assertEqual(len(problems), 1, problems)
                 self.assertIn(want, problems[0])
 
+    def test_an_overlap_field_of_the_wrong_type_is_read_as_absent_and_named(self):
+        """By the rule of the TP-SEC-002 item check, a field of the overlap result that has the wrong type is read as
+        absent, so the problem of an absent field names it. Before, such a field stopped the check with a TypeError or
+        an AttributeError."""
+        good = overlap_result(self.data["comparators"], self.file_sha)
+        other_file = ["the overlap result is for another comparator file (its SHA-256 differs)"]
+        no_files = ["the overlap result does not read the files train.jsonl, test.jsonl of gsm8k that the digest file "
+                    "names"]
+        no_rows = [f"{c['id']}: the overlap result has no row for it" for c in self.data["comparators"]]
+        cases = {"comparator_file a number": ({"comparator_file": 5}, other_file),
+                 "comparator_file a list": ({"comparator_file": [1]}, other_file),
+                 "comparator_file a text": ({"comparator_file": "ab"}, other_file),
+                 "gsm8k_files a number": ({"gsm8k_files": 5}, no_files),
+                 "gsm8k_files with a sha256 that is a list": ({"gsm8k_files": [{"name": "x", "sha256": [1]}]},
+                                                              no_files),
+                 "results a number": ({"results": 5}, no_rows),
+                 "results with an id that is a list": ({"results": [{"id": [1], "longest_run": 3}]}, no_rows)}
+        for name, (change, want) in cases.items():
+            with self.subTest(name):
+                self.assertEqual(self.check(overlap={**good, **change}), want)
+
     def test_an_empty_comparator_list_falls_under_the_minimum(self):
         problems = self.check({"comparators": []}, overlap=overlap_result([], self.file_sha))
         self.assertEqual(len(problems), 1, problems)
@@ -523,6 +545,175 @@ class OverlapToolTests(unittest.TestCase):
                                                      f"key {key} more than once\n")
                     for c in self.COMPARATORS:
                         self.assertNotIn(c["question"], buf.getvalue())
+
+    def test_a_comparator_file_that_cannot_be_read_is_refused_in_the_words_of_tp_sec_002_and_no_result_is_written(self):
+        """A comparator file that is not UTF-8 JSON, one that does not hold one JSON object, and one whose field
+        comparators is not a list of objects: the tool refuses each, with the TP-SEC-002 words, and writes no result
+        (exit 2). Before, each stopped the tool with a traceback, or (no list) gave a result of no row."""
+        not_json, not_object = r"the file is not UTF-8 JSON \(.+\)", "the file does not hold one JSON object"
+        not_list = "the field comparators is not a list of objects"
+        cases = {"not JSON": (b"not JSON", not_json), "not UTF-8": (b"\xff\xfe{}", not_json),
+                 "a list": (b"[1]", not_object), "null": (b"null", not_object),
+                 "no field comparators": (b"{}", not_list), "comparators null": (b'{"comparators": null}', not_list),
+                 "comparators a number": (b'{"comparators": 5}', not_list),
+                 "comparators a text": (b'{"comparators": "ab"}', not_list),
+                 "a comparator that is a number": (json.dumps({"comparators": self.COMPARATORS + [5]}).encode(),
+                                                   not_list)}
+        with tempfile.TemporaryDirectory() as d:
+            d = Path(d)
+            for name, rows in (("train.jsonl", self.TRAIN), ("test.jsonl", self.TEST)):
+                (d / name).write_text("".join(json.dumps(r) + "\n" for r in rows), encoding="utf-8")
+            for n, (name, (raw, reason)) in enumerate(cases.items()):
+                with self.subTest(name):
+                    comp, out = d / f"comparators_{n}.json", d / f"overlap_{n}.json"
+                    comp.write_bytes(raw)
+                    buf = io.StringIO()
+                    with redirect_stdout(buf):
+                        rc = OVERLAP_TOOL.main(["--comparators", str(comp), "--gsm8k", str(d / "train.jsonl"),
+                                                str(d / "test.jsonl"), "--out", str(out)])
+                    self.assertEqual((rc, out.exists()), (2, False), buf.getvalue())
+                    self.assertRegex(buf.getvalue(), rf"^refused: the comparator file {re.escape(str(comp))}: "
+                                                     rf"{reason}\n$")
+                    for c in self.COMPARATORS:
+                        self.assertNotIn(c["question"], buf.getvalue())
+
+    def gsm8k_files(self, d):
+        """The neutral train and test files of this class in folder `d`. Returns their paths."""
+        out = []
+        for name, rows in (("train.jsonl", self.TRAIN), ("test.jsonl", self.TEST)):
+            (d / name).write_text("".join(json.dumps(r) + "\n" for r in rows), encoding="utf-8")
+            out.append(d / name)
+        return out
+
+    def run_tool(self, comp, gsm8k, out):
+        """(the exit code, the output) of the tool on the comparator file `comp` and the GSM8K files `gsm8k`."""
+        buf = io.StringIO()
+        with redirect_stdout(buf):
+            rc = OVERLAP_TOOL.main(["--comparators", str(comp), "--gsm8k", *map(str, gsm8k), "--out", str(out)])
+        return rc, buf.getvalue()
+
+    def test_a_comparator_whose_question_is_not_a_text_is_read_as_absent_with_a_run_of_0(self):
+        """By the rule of the TP-SEC-002 item check, a question of a comparator that is not a text is read as absent. It
+        gives no words, so the longest run is 0 and the row names no place. mod011.check_comparators still refuses such
+        a comparator. Before, a number, a list, an object or a boolean stopped the tool with a TypeError."""
+        for value in (5, [1], {"a": 1}, True, None):
+            with self.subTest(question=value), tempfile.TemporaryDirectory() as d:
+                d = Path(d)
+                comp, out = d / "comparators.json", d / "overlap.json"
+                comp.write_text(json.dumps({"comparators": [{"id": "C", "question": value}]}), encoding="utf-8")
+                rc, text = self.run_tool(comp, self.gsm8k_files(d), out)
+                self.assertEqual(rc, 0, text)
+                self.assertTrue(text.startswith(f"wrote {out}: 1 comparators; 0 at or above the limit"), text)
+                self.assertEqual(json.loads(out.read_text(encoding="utf-8"))["results"],
+                                 [{"id": "C", "longest_run": 0, "at": None}])
+        self.assertIn("question", mod011._comparator_form({"id": "C", "question": 5}))
+
+    def test_a_comparator_or_gsm8k_file_that_is_absent_or_cannot_be_read_is_refused_and_no_result_is_written(self):
+        """An absent comparator file, a comparator path that is a folder, and an absent GSM8K file: the tool refuses
+        each with a line that names the file, and writes no result (exit 2). An absent file has the words of the
+        preflight for an absent item file. Before, each stopped the tool with a traceback."""
+        with tempfile.TemporaryDirectory() as d:
+            d = Path(d)
+            gsm = self.gsm8k_files(d)
+            comp = d / "comparators.json"
+            comp.write_text(json.dumps({"comparators": self.COMPARATORS}), encoding="utf-8")
+            (d / "folder").mkdir()
+            absent, folder, absent_gsm = d / "absent.json", d / "folder", d / "absent.jsonl"
+            cases = {"an absent comparator file": (
+                         absent, gsm, re.escape(f"the comparator file {absent} is not found")),
+                     "a comparator path that is a folder": (
+                         folder, gsm, re.escape(f"the comparator file {folder} cannot be read (") + r".+\)"),
+                     "an absent GSM8K file": (comp, [gsm[0], absent_gsm],
+                                              re.escape(f"the GSM8K file {absent_gsm} is not found"))}
+            for n, (name, (c, files, reason)) in enumerate(cases.items()):
+                with self.subTest(name):
+                    out = d / f"overlap_{n}.json"
+                    rc, text = self.run_tool(c, files, out)
+                    self.assertEqual((rc, out.exists()), (2, False), text)
+                    self.assertRegex(text, rf"^refused: {reason}\n$")
+
+    def test_a_gsm8k_line_that_cannot_be_read_is_refused_with_its_file_and_line_index(self):
+        """A GSM8K file that is not UTF-8, and a line that is not JSON, that does not hold one JSON object, or whose
+        field question is not a text (absent included): the tool refuses each, in the words of the TP-SEC-002
+        refusals, with the file and the line index (from 0; a blank line counts). It writes no result (exit 2). It does
+        not read such a question as absent, because an absent question would hide an overlap. Before, each stopped the
+        tool with a traceback, and an absent or null question gave no words."""
+        good = json.dumps(self.TEST[0]) + "\n"
+        line = "the GSM8K file test.jsonl, line index 1: "
+        cases = {"a file that is not UTF-8": (b"\xff\xfe" + good.encode(),
+                                              r"the GSM8K file test\.jsonl: the file is not UTF-8 JSON \(.+\)"),
+                 "a line that is not JSON": (good + "{not JSON\n",
+                                             re.escape(line) + r"the line is not UTF-8 JSON \(.+\)"),
+                 "a blank line, then a line that is not JSON": (
+                     good + "\n{not JSON\n", re.escape("the GSM8K file test.jsonl, line index 2: ")
+                     + r"the line is not UTF-8 JSON \(.+\)"),
+                 "a list": (good + "[1]\n", re.escape(line + "the line does not hold one JSON object")),
+                 "null": (good + "null\n", re.escape(line + "the line does not hold one JSON object")),
+                 "a question that is a number": (good + '{"question": 5}\n',
+                                                 re.escape(line + "the field question is not a text")),
+                 "a question that is a list": (good + '{"question": ["a"]}\n',
+                                               re.escape(line + "the field question is not a text")),
+                 "a question that is null": (good + '{"question": null}\n',
+                                             re.escape(line + "the field question is not a text")),
+                 "no question": (good + '{"answer": "#### 5"}\n', re.escape(line + "the field question is not a text"))}
+        with tempfile.TemporaryDirectory() as d:
+            d = Path(d)
+            train = self.gsm8k_files(d)[0]
+            comp = d / "comparators.json"
+            comp.write_text(json.dumps({"comparators": self.COMPARATORS}), encoding="utf-8")
+            for n, (name, (raw, reason)) in enumerate(cases.items()):
+                with self.subTest(name):
+                    test, out = d / f"case_{n}" / "test.jsonl", d / f"overlap_{n}.json"
+                    test.parent.mkdir()
+                    test.write_bytes(raw if isinstance(raw, bytes) else raw.encode("utf-8"))
+                    rc, text = self.run_tool(comp, [train, test], out)
+                    self.assertEqual((rc, out.exists()), (2, False), text)
+                    self.assertRegex(text, rf"^refused: {reason}\n$")
+                    for c in self.COMPARATORS + self.TRAIN + self.TEST:
+                        self.assertNotIn(c["question"], text)
+
+    def refused_before_any_input(self, make, want):
+        """Run the tool with the --out path that make(folder) gives, with read_file stubbed to fail. Check the one line
+        that want(out) gives, exit 2, no input read and no result written."""
+        with tempfile.TemporaryDirectory() as d:
+            d = Path(d)
+            gsm = self.gsm8k_files(d)
+            comp = d / "comparators.json"
+            comp.write_text(json.dumps({"comparators": self.COMPARATORS}), encoding="utf-8")
+            out = make(d)
+            with mock.patch.object(OVERLAP_TOOL, "read_file", side_effect=AssertionError("an input was read")) as read:
+                rc, text = self.run_tool(comp, gsm, out)
+            self.assertEqual((rc, text), (2, want(out)))
+            read.assert_not_called()
+            self.assertFalse(out.exists())
+
+    def test_an_out_path_whose_folder_is_not_found_is_refused_before_any_input_is_read(self):
+        """An --out path in a folder that does not exist: the tool refuses it in one line, in the form of its refusal
+        of an --out path that exists, before it reads the comparator file or a GSM8K file. It writes no result (exit
+        2). Before, it read the inputs and then stopped with a FileNotFoundError traceback."""
+        self.refused_before_any_input(lambda d: d / "absent" / "overlap.json",
+                                      lambda out: f"refused: the folder {out.parent} of {out} is not found\n")
+
+    def test_an_out_path_whose_folder_is_a_file_is_refused_before_any_input_is_read(self):
+        """An --out path under a file: the tool says that the file is not a folder, in one line, before it reads any
+        input. It writes no result (exit 2). Before, it read the inputs and then stopped with a traceback."""
+        def make(d):
+            (d / "a_file").write_text("x", encoding="utf-8")
+            return d / "a_file" / "overlap.json"
+        self.refused_before_any_input(make, lambda out: f"refused: {out.parent} is not a folder\n")
+
+    def test_a_result_that_cannot_be_written_is_refused_in_one_line(self):
+        """The system refuses the write of the result (a PermissionError here): the tool refuses in one line, in the
+        words of its refusal of a file that it cannot read, and exits 2. Before, it stopped with a traceback."""
+        with tempfile.TemporaryDirectory() as d:
+            d = Path(d)
+            gsm = self.gsm8k_files(d)
+            comp, out = d / "comparators.json", d / "overlap.json"
+            comp.write_text(json.dumps({"comparators": self.COMPARATORS}), encoding="utf-8")
+            with mock.patch.object(Path, "write_bytes", side_effect=PermissionError(13, "Permission denied")):
+                rc, text = self.run_tool(comp, gsm, out)
+            self.assertEqual((rc, text), (2, f"refused: {out} cannot be written (Permission denied)\n"))
+            self.assertFalse(out.exists())
 
     def test_a_run_never_spans_two_questions(self):
         files = [("a.jsonl", b'{"question": "one two three four"}\n{"question": "five six seven eight"}\n')]

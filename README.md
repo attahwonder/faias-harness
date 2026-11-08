@@ -432,8 +432,9 @@ The label names four limits and one note. In the label and in the log, "payload"
 
 - The item file is not found.
 - A JSON object of the item file holds a key more than once.
+- The item file is not UTF-8 JSON.
 - The item file is JSON but not one JSON object, for example a list.
-- The item file does not pass the item check of the engine. That check ranks the store and makes no model call.
+- The item file does not pass the item check of the engine. That check ranks the store and makes no model call. It refuses a set with no item. As in the TP-SEC-002 check, a field of the wrong type is read as absent. A field `items` that is not a list gives no item. A value in the list that is not an object is an item with no key. A `customer_ref` of an item that is not a text is read as absent too. A document with a `doc_id` that is not a text is named, and the check does not rank it. The check also refuses a document key or value that changes in the seeded store. An example is the key `123` or the value `NaN`. The problem names the item and the key.
 - The variant is not `standard`. The engine runs SRD-1 minimal with its system prompt only.
 - No containment self-test log of this code shows PASS. In evidence mode the key of that log must also be pinned.
 - The settings break a rule above.
@@ -522,7 +523,7 @@ The loader refuses `tools_enabled: true`, `retrieval_filter` and `arms`. In evid
 - A digest file does not have the SHA-256 prefix that `mod011.py` pins.
 - No comparator file is named, or the file is inside the repository, absent or of another SHA-256.
 - A JSON object of the comparator file or of the overlap result holds a key more than once.
-- `mod011.check_comparators` refuses the comparator file. It refuses fewer than 50 comparators for a benchmark and a creation date on or before the declared cut-off. It refuses a writer of the declared model family of the target. With no declared family (explore mode), that check does not run. It refuses a cut that is not at a sentence end and a remainder under 15 words. It refuses an overlap result that is absent or not for the named files, and a run of 8 words or more.
+- `mod011.check_comparators` refuses the comparator file. It refuses fewer than 50 comparators for a benchmark and a creation date on or before the declared cut-off. It refuses a writer of the declared model family of the target. With no declared family (explore mode), that check does not run. It refuses a cut that is not at a sentence end and a remainder under 15 words. It refuses an overlap result that is absent or not for the named files, and a run of 8 words or more. As in the TP-SEC-002 check, it reads a field of the overlap result that has the wrong type as absent.
 - In evidence mode, the SME record hash is not set.
 - The variant is not `model_probe`.
 - No containment self-test log of this code shows PASS. In evidence mode the key of that log must also be pinned.

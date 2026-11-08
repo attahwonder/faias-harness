@@ -80,6 +80,11 @@ goes into the probe block of the header.
 Exit codes: 0 table printed, or a run finished; 2 start refused or profile or settings invalid; 3 start
 conditions met, but a profile alone starts no run; 4 the operator did not type `yes`; 5 the run stopped at the cap
 or on an error.
+After the typed `yes`, the engine can still refuse the run before it opens the run log. Then --start prints one
+`Run refused:` line and the run folder (when it exists), and exits 2. An error after the run log is opened keeps its
+traceback. Calls that are not for an item can come before a `Run refused:` line. The probe calls are printed, and are
+not in egress.jsonl. The TP-MOD-011 instrument check and the TP-AGT-012 switch check make model calls before the
+lock. Their requests are in egress.jsonl of the run folder.
 """
 import argparse
 import os
@@ -445,6 +450,23 @@ def _default_external_executor(**kw):
     return external.execute(**kw)
 
 
+def _execute(executor, **kw):
+    """Call the executor of --start. A RuntimeError or a ValueError from it is a refusal only when the run folder holds
+    no run_log.jsonl after the exception: each engine opens that log at the lock, before its first item. Then one
+    `Run refused:` line and the run folder (when it exists) are printed, and None is returned. When the log exists,
+    the exception goes on unchanged, with its traceback. Other exception types are not caught."""
+    try:
+        return executor(**kw)
+    except (RuntimeError, ValueError) as e:
+        run_dir = Path(kw["run_dir"])
+        if (run_dir / "run_log.jsonl").exists():
+            raise
+        print(f"Run refused: {e}")
+        if run_dir.exists():
+            print(f"Run folder: {run_dir}")
+        return None
+
+
 def run_external(a, profile, settings, *, input_fn, executor, inspect_check):
     """The preflight of an external run: report, probe, ask for `yes`, run. Returns the exit code."""
     from .adapters import registry
@@ -543,8 +565,10 @@ def run_external(a, profile, settings, *, input_fn, executor, inspect_check):
         return 4
     confirmation = {"typed": "yes", "time": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())}
     run_dir = Path(a.run_dir) if a.run_dir else REPO / "runs" / time.strftime("%Y%m%dT%H%M%SZ", time.gmtime())
-    result = executor(settings=settings, profile=profile, run_dir=run_dir, sign_key=a.sign_key,
+    result = _execute(executor, settings=settings, profile=profile, run_dir=run_dir, sign_key=a.sign_key,
                       confirmation=confirmation, probes={"channel": probe}, prior_calls=budget.calls)
+    if result is None:
+        return 2
     s = result.summary
     print(f"Run {result.status}. Calls {s.get('calls')} of a budget of {s.get('call_budget')}; estimated cost USD "
           f"{s.get('cost_usd_estimate')}. Label: {s.get('label')}.")
@@ -916,7 +940,8 @@ def _sec003_refusal():
     """Why the item file of TP-SEC-003 (sec003.ITEM_FILE) is refused, or None when it is not found or is read, in the
     form of TP-SEC-002 (sec002_channel_inputs). sec003.load_set raises a ValueError for a JSON object with a repeated
     key (the refusal names the key), for a file that does not hold one JSON object (sec003.NOT_ONE_OBJECT) and for a
-    file that is not UTF-8 JSON. --start names the same refusal (sec003_start_problems). It holds no text of a turn."""
+    file that is not UTF-8 JSON (in the words of _sec002_item_file). --start names the same refusal
+    (sec003_start_problems). It holds no text of a turn."""
     from .engine import sec003
     if not _sec003_item_file():
         return None
@@ -1229,7 +1254,9 @@ def main(argv=None, *, input_fn=input, gateway_factory=_default_gateway, executo
         exec_kwargs.update(selftest_log=a.selftest_log, selftest_pubkey=a.selftest_pubkey)
     if mod:
         exec_kwargs.update(selftest_log=a.selftest_log, selftest_pubkey=a.selftest_pubkey)
-    result = executor(**exec_kwargs)
+    result = _execute(executor, **exec_kwargs)
+    if result is None:
+        return 2
     s = result.summary
     print(f"Run {result.status}. Calls {s.get('model_calls')}, cost USD {s.get('cost_usd')}. Label: {s.get('label')}.")
     print(f"Log: {result.log_path}\nSignature: {result.sig_path}")

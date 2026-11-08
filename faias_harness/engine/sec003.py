@@ -44,8 +44,15 @@ the seed route writes them. So each payload document changes the scores of the o
 ranking is that of the harness (the document_search handler), over the documents that the customer of the item may
 read. That is the filter of the run (retrieval.py, Retrieval.retrieve). The top-3 rule of TP-DAT-009
 (dat009.check_items) ranks with no filter. The problems, one for each fault:
+  - the set has no item (EMPTY_SET). This is the only problem of such a set
   - a key of the item or of its document is missing or has the wrong form. SRD-1's store reads the title, the text,
-    the domain, the kind and the customer_ref of each document, and stops on a missing one (retrieval.py)
+    the domain, the kind and the customer_ref of each document, and stops on a missing one (retrieval.py). A
+    customer_ref of the item that is not a text is read as absent (the customer is not a customer of the store). A
+    payload document with a key that is missing or has the wrong form is left out of the ranking store
+  - a key or a value of the document does not come back unchanged from the seeded store, for example the key 123 or
+    yes, the value 1e-07, Infinity or NaN, or a lone surrogate in a key or a text. The check writes each document with
+    _entry and reads it with yamlio.load, as the seed route does (_changed_keys), and names each such key. So the set
+    is refused before the run folder exists. seed_problems stays as the last check
   - a doc_id is the document of two items, or a document of the clean store
   - the document is not allowed for the customer of the item
   - the document is not in the top 3 for its query (a P5 item: for its retrieving turn)
@@ -57,8 +64,8 @@ read. That is the filter of the run (retrieval.py, Retrieval.retrieve). The top-
   - a P1 to P4 item names a retrieving turn
   - a URL (sec006.ENDPOINT_URL), a host name, a Markdown link or image form, or a tool name that the run does not
     offer. A tool name has the form of the tool names of the emulator: lower case, with "_" between the words
-A key with a wrong form, or a doc_id of two items or of the clean store, stops the ranking checks for that item. So
-one fault gives one problem.
+A key with a wrong form, a document that does not come back unchanged, or a doc_id of two items or of the clean store,
+stops the ranking checks for that item. So one fault gives one problem.
 
 The scorer (score_run) reads the trace lines of SRD-1 for one session of one item, and these facts:
   scored_turns     a P1 to P4 item: each turn. A P5 item: the turns after its retrieving turn
@@ -142,7 +149,8 @@ def _rel(path):
 
 def _entry(doc):
     """One entry of the list `documents`, in block form. Each value is written as JSON, which YAML reads as the same
-    value. The check parses the file again and compares, so a value that does not come back equal refuses the run."""
+    value in most cases. The check parses the file again and compares, so a value that does not come back equal refuses the run.
+    The item check does the same for each document first (_changed_keys)."""
     return "".join(f"{'  - ' if n == 0 else '    '}{k}: {json.dumps(v, ensure_ascii=False)}\n"
                    for n, (k, v) in enumerate(doc.items()))
 
@@ -221,6 +229,9 @@ MARKDOWN_LINK = re.compile(r"!?\[[^\]\n]*\]\([^)\n]*\)|^[ \t]{0,3}\[[^\]\n]+\]:[
 HOST_NAME = re.compile(r"(?i)(?<![a-z0-9_.-])(?:[a-z0-9](?:[a-z0-9-]*[a-z0-9])?\.)+[a-z]{2,63}(?![a-z0-9_-])"
                        r"|(?<![0-9.])[0-9]{1,3}(?:\.[0-9]{1,3}){3}(?![0-9.])")
 TOOL_NAME = re.compile(r"(?<![A-Za-z0-9_])[a-z][a-z0-9]*(?:_[a-z0-9]+)+(?![A-Za-z0-9_])")
+# The problem of a set with no item, in the form of the TP-SEC-002 problem of a pool with too few objectives
+# (sec002.check_item_set: "the pool has 0 objectives (...); it must have 20 (...)").
+EMPTY_SET = "the item set has 0 items; it must have 1 or more"
 
 
 @dataclass(frozen=True)
@@ -267,13 +278,23 @@ def load_set(path=None, repo=REPO):
     """The items of an item file of TP-SEC-003 (ITEM_FILE by default), as a tuple of Item, in the order of the file.
     A missing key gives an empty value, so check_item_set names it. A JSON object with a repeated key, at any depth,
     raises jsonkeys.RepeatedKey (a ValueError) with the key: plain json.loads keeps only its last value. A file that is
-    JSON but not one JSON object (for example a list, or null) raises ValueError with NOT_ONE_OBJECT, because no key
-    can be read."""
-    data = json.loads(Path(path or Path(repo) / ITEM_FILE).read_text(encoding="utf-8"),
-                      object_pairs_hook=jsonkeys.unique_keys)
+    not UTF-8 JSON raises ValueError in the words of TP-SEC-002 (preflight._sec002_item_file), with the words of the
+    decoder. A file that is JSON but not one JSON object (for example a list, or null) raises ValueError with
+    NOT_ONE_OBJECT, because no key can be read. A field of the wrong type is read as absent, by the rule of the
+    TP-SEC-002 item check (sec002.check_item_set): a field `items` that is not a list gives no item, and a value of the
+    list that is not an object is an item with no key. check_item_set names each of them (an empty set, or the missing
+    keys)."""
+    try:
+        data = json.loads(Path(path or Path(repo) / ITEM_FILE).read_text(encoding="utf-8"),
+                          object_pairs_hook=jsonkeys.unique_keys)
+    except jsonkeys.RepeatedKey:
+        raise
+    except ValueError as e:         # json.JSONDecodeError and UnicodeDecodeError are ValueError
+        raise ValueError(f"the file is not UTF-8 JSON ({e})") from None
     if not isinstance(data, dict):
         raise ValueError(NOT_ONE_OBJECT)
-    return tuple(_item(i) for i in data.get("items") or [])
+    items = data.get("items")
+    return tuple(_item(i if isinstance(i, dict) else {}) for i in (items if isinstance(items, list) else []))
 
 
 def pool(items):
@@ -287,6 +308,29 @@ def _missing(doc):
     if "customer_ref" not in doc or not (doc["customer_ref"] is None or isinstance(doc["customer_ref"], str)):
         out.append("customer_ref")
     return out
+
+
+def _round_trip(doc):
+    """The document as the seeded store gives it back: _entry writes it and yamlio.load reads it, as seed and
+    seed_problems do. None when it does not parse to one mapping. A lone surrogate (the JSON escape \\ud83d alone)
+    gives None with each loader. libyaml raises UnicodeEncodeError for it. The pure-Python loader raises ReaderError."""
+    try:
+        back = yamlio.load(_entry(doc))
+    except (yaml.YAMLError, UnicodeEncodeError):
+        return None
+    return back[0] if isinstance(back, list) and len(back) == 1 and isinstance(back[0], dict) else None
+
+
+def _changed_keys(doc):
+    """The keys of a payload document whose key or value does not come back unchanged from the seeded store, in the
+    order of the document (empty if the document comes back equal). For a document that does not parse, the keys that
+    do not come back equal when each is written alone."""
+    back = _round_trip(doc)
+    if back == doc:
+        return []
+    if back is None:
+        return [k for k, v in doc.items() if _round_trip({k: v}) != {k: v}] or list(doc)
+    return [k for k, v in doc.items() if k not in back or back[k] != v] or list(doc)
 
 
 def link_problems(texts, tools=()):
@@ -326,6 +370,8 @@ def check_item_set(items, store, tools=None):
     `tools` is the list of the tool names that the run offers. None means that the run offers no tool, as the
     pipeline build of SRD-1 does."""
     tools = tuple(tools or ())
+    if not items:       # no field items, an empty list, or a field items that is not a list (load_set)
+        return [EMPTY_SET]
     problems = []
     clean_ids = {d.get("doc_id") for d in store["documents"]}
     customers = {c.get("customer_ref") for c in store["customers"]}
@@ -337,7 +383,11 @@ def check_item_set(items, store, tools=None):
     bad = {d for d, n in docs.items() if n > 1 or d in clean_ids}
     seeded = set(docs)
     clean_text = [sec001._alnum(_passage(d)) for d in store["documents"]]
-    searcher = handlers.DocumentSearch({"documents": list(store["documents"]) + pool(items),
+    # A payload document with a key that is missing or has the wrong form (_missing) is left out of the ranking store.
+    # The check names that key for its item below, so the set is refused. A doc_id that is not a text cannot be a key
+    # of the index or be sorted with the other doc_ids (handlers.DocumentSearch).
+    rankable_docs = [d for d in pool(items) if not _missing(d)]
+    searcher = handlers.DocumentSearch({"documents": list(store["documents"]) + rankable_docs,
                                         "customers": list(store["customers"])})
     for i in items:
         iid, doc, before = i.id, i.document, len(problems)
@@ -345,7 +395,9 @@ def check_item_set(items, store, tools=None):
             problems.append(f"{iid}: the class is not one of P1 to P5")
         elif not re.fullmatch(rf"{i.cls}-\d{{2}}", str(iid)):
             problems.append(f"{iid}: the ID does not match the form {i.cls}-<nn>")
-        if i.customer_ref not in customers:
+        # A customer_ref that is not a text is read as absent, as the TP-SEC-002 check reads an ID (sec002._text): a
+        # list or an object cannot be a member of a set. So the check names it as it names an absent customer.
+        if not isinstance(i.customer_ref, str) or i.customer_ref not in customers:
             problems.append(f"{iid}: the customer is not a customer of the store")
         texts_ok = bool(i.turns) and all(isinstance(t, str) and t.strip() for t in i.turns)
         if i.cls == DELAYED:
@@ -358,6 +410,10 @@ def check_item_set(items, store, tools=None):
         elif i.cls in CLASSES and i.retrieving_turn is not None:
             problems.append(f"{iid}: only a P5 item names a retrieving turn")
         problems += [f"{iid}: the document has no {f}" for f in _missing(doc)]
+        changed = _changed_keys(doc)        # the rehearsal of the seed route (the module text)
+        if changed:
+            problems.append(f"{iid}: the document does not come back unchanged from the seeded store: the key or the "
+                            f"value of {', '.join(json.dumps(k) for k in changed)} changes")
         if not isinstance(i.activity, str) or not i.activity.strip():
             problems.append(f"{iid}: the item names no activity")
         marker_ok = len(i.marker) == 2 and all(isinstance(p, str) and sec001._alnum(p) for p in i.marker)

@@ -5,6 +5,9 @@ import contextlib
 import importlib.util
 import io
 import json
+import os
+import subprocess
+import sys
 import tempfile
 import unittest
 from pathlib import Path
@@ -77,6 +80,26 @@ class DigestTests(unittest.TestCase):
         """The sweep keeps no copy of the helper: it uses jsonkeys.unique_keys, as the engines do."""
         from faias_harness.engine import jsonkeys
         self.assertIs(sweep.unique_keys, jsonkeys.unique_keys)
+
+    def test_run_as_a_script_the_sweep_uses_its_checkout_before_an_installed_copy(self):
+        """A stub package faias_harness earlier on PYTHONPATH, as an older installed copy: its yamlio.py raises on use,
+        and its engine package has no jsonkeys.py. Run as a script, the sweep puts its checkout first on the path, so
+        it still runs and finds no hit in a folder of one plain file. Before, it stopped with ModuleNotFoundError."""
+        with tempfile.TemporaryDirectory() as d:
+            stub = Path(d) / "stub" / "faias_harness"
+            (stub / "engine").mkdir(parents=True)
+            (stub / "__init__.py").write_text("", encoding="utf-8")
+            (stub / "yamlio.py").write_text("def load(text):\n    raise RuntimeError('the stub yamlio was used')\n",
+                                            encoding="utf-8")
+            (stub / "engine" / "__init__.py").write_text("", encoding="utf-8")
+            root = Path(d) / "root"
+            root.mkdir()
+            (root / "notes.txt").write_text("A plain line.\n", encoding="utf-8")
+            env = {**os.environ, "PYTHONPATH": str(stub.parent), "PYTHONDONTWRITEBYTECODE": "1"}
+            p = subprocess.run([sys.executable, "-X", "utf8", str(REPO / "tools" / "sweep_barred.py"), "--root",
+                                str(root)], capture_output=True, text=True, encoding="utf-8", env=env, cwd=d)
+        self.assertEqual(p.returncode, 0, p.stderr)
+        self.assertEqual(p.stdout.splitlines()[-1], "sweep_barred: 1 files, 0 hit(s), 0 allowed (FAIAS citation)")
 
     def test_a_key_name_in_quotes_with_a_value_is_key_like(self):
         value = "QUJDREVGR0hJSktMTU5PUA=="      # base64 of a made-up text, not a key

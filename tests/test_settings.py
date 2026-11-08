@@ -397,7 +397,7 @@ class PreflightSettingsTests(unittest.TestCase):
             self.assertEqual(rc, 2)
             self.assertIn("inside the repository", out)
 
-    def _start(self, answer, fake_gateway=True, extra=()):
+    def _start(self, answer, fake_gateway=True, extra=(), run=None):
         from faias_harness.engine import spike
         calls = {"gateway": 0, "run": 0, "prompt": None}
 
@@ -412,6 +412,8 @@ class PreflightSettingsTests(unittest.TestCase):
         def executor(**kw):
             calls["run"] += 1
             calls["variant"] = kw.get("variant")
+            if run:             # the executor of the test
+                return run(**kw)
             from types import SimpleNamespace
             return SimpleNamespace(status="complete", log_path="log", sig_path="sig", summary={"label": "x", "model_calls": 0, "cost_usd": 0})
 
@@ -454,6 +456,57 @@ class PreflightSettingsTests(unittest.TestCase):
             rc, out, calls = self._start(answer)
             self.assertEqual((rc, calls["run"]), (4, 0), answer)
             self.assertIn("Run not started", out)
+
+    # ---------- an error from the engine after the typed yes ----------
+
+    def test_a_refusal_of_the_engine_before_the_run_log_is_one_line_and_exit_2(self):
+        """A RuntimeError or a ValueError from the executor, while the run folder holds no run_log.jsonl: one `Run
+        refused:` line, then the run folder when it exists, and exit 2. The exception does not go on (no traceback)."""
+        for exc in (RuntimeError, ValueError):
+            for made in (False, True):
+                with self.subTest(exc=exc.__name__, folder_made=made):
+                    run_dir = self.dir / f"refused_{exc.__name__}_{made}"
+
+                    def run(**kw):
+                        if made:
+                            kw["run_dir"].mkdir()
+                        raise exc("the run is refused before the lock: a reason")
+
+                    rc, out, calls = self._start("yes", extra=("--run-dir", str(run_dir)), run=run)
+                    self.assertEqual((rc, calls["run"]), (2, 1), out[-400:])
+                    tail = "Run refused: the run is refused before the lock: a reason\n"
+                    tail += f"Run folder: {run_dir}\n" if made else ""
+                    self.assertTrue(out.endswith("is labelled 'engine spike, not a finding'.\n" + tail), out[-400:])
+                    self.assertEqual(out.count("Run refused:"), 1)
+                    self.assertNotIn("Traceback", out)
+
+    def test_an_error_of_the_engine_after_the_run_log_is_opened_goes_on_unchanged(self):
+        """A run_log.jsonl in the run folder shows that the engine passed the lock. A RuntimeError or a ValueError
+        then goes on unchanged, with its traceback."""
+        for exc in (RuntimeError, ValueError):
+            with self.subTest(exc=exc.__name__):
+                raised = exc("an error after the lock")
+
+                def run(**kw):
+                    kw["run_dir"].mkdir()
+                    (kw["run_dir"] / "run_log.jsonl").write_bytes(b"{}\n")
+                    raise raised
+
+                with self.assertRaises(exc) as cm:
+                    self._start("yes", extra=("--run-dir", str(self.dir / f"locked_{exc.__name__}")), run=run)
+                self.assertIs(cm.exception, raised)
+
+    def test_another_error_type_of_the_engine_is_not_caught(self):
+        for exc in (KeyError, OSError):
+            with self.subTest(exc=exc.__name__):
+                raised = exc("another error")
+
+                def run(**kw):
+                    raise raised
+
+                with self.assertRaises(exc) as cm:
+                    self._start("yes", extra=("--run-dir", str(self.dir / f"other_{exc.__name__}")), run=run)
+                self.assertIs(cm.exception, raised)
 
     def test_profile_alone_still_starts_nothing(self):
         doc = yaml.safe_load(self.profile.read_text(encoding="utf-8"))
