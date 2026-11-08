@@ -949,6 +949,35 @@ class PreflightTests(unittest.TestCase):
                     self.assertEqual(self.problems(out, f"{head}. No run starts. Fix these points first:"),
                                      [f"  - {problem}"])
 
+    def test_a_baseline_log_with_a_line_that_is_not_a_json_object_is_refused_in_one_line(self):
+        """A signed copy of the baseline log holds a line that is a JSON value but not an object. The cases are a list
+        as the first line and a text after the header. sec002_log.read_baseline reads the log through
+        sec006_log.read_baseline. That reader refuses it in one problem. The preflight prints the problem. --start
+        refuses in that one line, exit 2, before the typed `yes`. Before, each case stopped the preflight with
+        AttributeError. With no key, the text after the header stopped it when the reader scored the log again. With
+        the key, the text stopped it in the check of the signature."""
+        lines = Path(_MOD["baseline"]).read_bytes().decode("utf-8").splitlines()
+        for name, rows, line in (("the first line", ["[1]", *lines], 1),
+                                 ("line 2", [lines[0], '"a text"', *lines[1:]], 2)):
+            copy = self.dir / "baselines" / f"not_object_{line}" / "run_log.jsonl"
+            copy.parent.mkdir(parents=True, exist_ok=True)
+            copy.write_bytes("".join(r + "\n" for r in rows).encode("utf-8"))
+            runlog.sign_log(copy, _MOD["priv"])
+            problem = f"the baseline log line {line} is not a JSON object"
+            for mode, key, extra, rc_want, head in (
+                    ("explore", None, (), 0, None),
+                    ("explore", None, self.start, 2, "START REFUSED"),
+                    ("evidence", str(_MOD["pub"]), (), 2, "BASELINE REFUSED"),
+                    ("evidence", str(_MOD["pub"]), self.start, 2, "START REFUSED")):
+                with self.subTest(line=name, mode=mode, key=bool(key), start=bool(extra)):
+                    rc, out = self.preflight(*extra, baseline=copy, mode=mode, baseline_pubkey=key)
+                    self.assertEqual(rc, rc_want, out[-1500:])
+                    self.assertNotIn("Traceback", out)
+                    self.assertIn(f"Baseline check: {problem}\n", out)
+                    if head:
+                        self.assertEqual(self.problems(out, f"{head}. No run starts. Fix these points first:"),
+                                         [f"  - {problem}"])
+
     def test_start_refuses_families_that_are_not_those_of_the_item_file(self):
         """The preflight refuses before the operator types yes. The engine compares the two lists too (EngineTests).
         On SRD-1 the field product_owner_declared is printed, and false does not stop the run."""

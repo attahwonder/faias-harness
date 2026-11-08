@@ -1152,6 +1152,36 @@ class EndToEndTests(unittest.TestCase):
                                  (problem.replace("'time'", "'only'") if log == routing else problem, 0))
                 self.assertFalse((self.dir / f"lone_engine{n}").exists())
 
+    def test_a_baseline_log_with_a_line_that_is_not_a_json_object_is_refused_in_one_line(self):
+        """A signed copy of the baseline log holds a line that is a JSON value but not an object. The cases are a number
+        after the header and a list as the last line. The reader of the M4 baseline refuses it in one problem, with no
+        key and with the key. The preflight prints the problem. --start refuses in that one line, exit 2, before the
+        typed `yes`. Before, the last line stopped the preflight with AttributeError. With the key, the line after the
+        header stopped it in the check of the signature. With no key, that line passed the preflight, and --start
+        reached the typed `yes`."""
+        lines = Path(self.baseline).read_bytes().decode("utf-8").splitlines()
+        start = ("--start", "--sign-key", str(self.priv))
+        for name, rows, line in (("line 2", [lines[0], "7", *lines[1:]], 2),
+                                 ("the last line", [*lines, "[1]"], len(lines) + 1)):
+            copy = self.dir / "baselines" / f"not_object_{line}" / "run_log.jsonl"
+            copy.parent.mkdir(parents=True, exist_ok=True)
+            copy.write_bytes("".join(r + "\n" for r in rows).encode("utf-8"))
+            runlog.sign_log(copy, self.priv)
+            problem = f"the M4 baseline log line {line} is not a JSON object"
+            for mode, pubkey, extra, rc_want, head in (
+                    ("explore", None, (), 0, None),
+                    ("explore", None, start, 2, "START REFUSED"),
+                    ("evidence", "the test key", (), 2, "M4 BASELINE REFUSED"),
+                    ("evidence", "the test key", start, 2, "START REFUSED")):
+                with self.subTest(line=name, mode=mode, key=bool(pubkey), start=bool(extra)):
+                    rc, out = self.preflight(copy, *extra, mode=mode, pubkey=pubkey)
+                    self.assertEqual(rc, rc_want, out[-800:])
+                    self.assertNotIn("Traceback", out)
+                    self.assertIn(f"M4 baseline check: {problem}\n", out)
+                    if head:
+                        self.assertEqual(out.split(f"{head}. No run starts. Fix these points first:\n")[1].splitlines(),
+                                         [f"  - {problem}"])
+
     def test_a_match_is_recorded_and_the_lock_covers_it(self):
         """baseline_match true is in the header. An edited field fails verify (signature, then lock). The header
         records the signature check, the key's SHA-256 and where the baseline log is, under the lock."""
@@ -1371,6 +1401,31 @@ class BaselineTests(unittest.TestCase):
                 with self.assertRaises(ValueError) as cm:
                     read()
                 self.assertEqual(str(cm.exception), f"{want} holds a lone surrogate in the key or the value of 'reply'")
+
+    def test_a_log_line_that_is_not_a_json_object_is_refused_in_one_problem_by_both_baseline_readers(self):
+        """A log line can be a JSON value but not an object (a list, a text, a number or null). Each case puts it as
+        the first line, a line after the header or the last line. The two baseline readers refuse the log in one
+        problem. The problem names the number of the line in the file (a blank line counts). Before, a first or a last
+        such line stopped each reader with AttributeError. A line between them was not checked. So the reader gave the
+        problem of a later check."""
+        from faias_harness.engine import sec002_log
+        header = json.dumps({"type": "header", "procedure": {"tp": "TP-SEC-001"}})
+        summary = json.dumps({"type": "summary", "status": "complete"})
+        cases = {"the first line a list": ("[1]\n" + summary + "\n", 1),
+                 "the first line a text": ('"a text"\n' + summary + "\n", 1),
+                 "line 2 a number": (header + "\n7\n" + summary + "\n", 2),
+                 "line 3 null, after a blank line": (header + "\n\nnull\n" + summary + "\n", 3),
+                 "the last line a list": (header + "\n" + summary + "\n[1]\n", 3)}
+        with tempfile.TemporaryDirectory() as t:
+            p = Path(t) / "x.jsonl"
+            for name, (text, line) in cases.items():
+                p.write_text(text, encoding="utf-8")
+                for read, want in ((lambda: sec006_log.read_baseline(p), "the M4 baseline log"),
+                                   (lambda: sec002_log.read_baseline(p, []), "the baseline log")):
+                    with self.subTest(case=name, reader=want):
+                        with self.assertRaises(ValueError) as cm:
+                            read()
+                        self.assertEqual(str(cm.exception), f"{want} line {line} is not a JSON object")
 
 
 if __name__ == "__main__":
