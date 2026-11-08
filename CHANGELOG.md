@@ -1,6 +1,6 @@
 # Changelog
 
-## 0.9.4 (8 November 2026 — date of the push)
+## 0.9.4 (8 November 2026)
 
 This release closes four gaps in the last entry of the 0.9.3 section. A lone surrogate in a reply no longer stops a run. A lone surrogate in printed text no longer stops a command. A changed copy of four item files gets a refusal line. A channel error message keeps a code from the target only in a fixed form. Two tests read `egress.jsonl` of the run folder. A file of the operator that holds a lone surrogate now gets a refusal of one line. Two more tests pin two of these claims. A request to the tool emulator that holds a lone surrogate now gets its response. An item file that is not found no longer stops the preflight. The other YAML files of the operator now refuse a lone surrogate too. So does the risk-appetite file of SRD-1. An absent firm-values file now gets a refusal line. Some gaps remain. The last entry lists them.
 
