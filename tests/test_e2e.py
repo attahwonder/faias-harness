@@ -7,6 +7,7 @@ import io
 import json
 import os
 import tempfile
+import time
 import unittest
 from pathlib import Path
 from unittest import mock
@@ -86,6 +87,22 @@ class SpikeRunTests(unittest.TestCase):
             kw.setdefault("engine", ENGINE)
             return spike.execute(settings, run_dir=self.dir / name, sign_key=self.priv, confirmation=CONFIRM,
                                  base_url=host.base_url, env=ENV, **kw)
+
+    def test_a_model_reply_with_a_lone_surrogate_ends_with_a_signed_log_and_the_replacement_character(self):
+        """The stand-in host writes JSON with escapes, so each reply reaches SRD-1's gateway with the
+        escape \\ud83d alone. The gateway replaces it with U+FFFD. So SRD-1's trace and the run records hold U+FFFD,
+        the run ends (direct engine), and the log verifies and rescores. Before, SRD-1 could not write its trace line
+        and answered HTTP 502, and the run stopped at the first item."""
+        reply = "Thank you \ud83d. A human adviser can look at your request."
+        with StandInModelHost(lambda t, n: reply) as host:
+            res = self.run_spike(host, make_settings(cap_usd=10.0), name="surrogate", engine="direct")
+        self.assertEqual(res.status, "complete")
+        runs = [r for r in runlog.read_log(res.log_path) if r["type"] == "run"]
+        self.assertEqual((len(runs), {r["reply"] for r in runs}), (60, {reply.replace("\ud83d", "\ufffd")}))
+        ok, msg = runlog.verify_log(res.log_path, res.sig_path, self.pub, repo=REPO)
+        self.assertTrue(ok, msg)
+        self.assertEqual(runlog.rescore_log(res.log_path)[1], [])
+        self.assertEqual(tr.verify_chain(res.run_dir / "target" / "srd1_trace.jsonl")[0], True)
 
     def test_full_run_scores_measures_and_signs(self):
         settings = make_settings(cap_usd=10.0)
@@ -284,11 +301,13 @@ class SpikeRunTests(unittest.TestCase):
         with StandInModelHost(respond) as host:
             host.httpd.shutdown()          # the stand-in no longer answers: connection refused
             host.httpd.server_close()
-            # A refused connection is retried 5 times. The connect fails at once, as on Linux (refused_at). The patch of
-            # sleep covers the whole process. So the wait for the lock time is patched too: on Python before 3.13 on
-            # Windows its loop sleeps again and again, and each sleep would count as a retry.
-            with refused_at(host.port), mock.patch("targets.srd1.app.gateway.time.sleep") as slept, \
-                    mock.patch.object(runlog, "wait_past_lock"):
+            # A refused connection is retried 5 times. The connect fails at once, as on Linux (refused_at). The patch
+            # replaces `time` in the gateway module only, so the count holds the waits of the gateway and nothing else.
+            # A sleep from other code is real and does not count: on Linux, subprocess.run can sleep once while it
+            # waits for the git process that runlog.git_commit starts.
+            slept = mock.Mock()
+            gateway_time = mock.Mock(wraps=time, sleep=slept)       # each other function of time is the real one
+            with refused_at(host.port), mock.patch("targets.srd1.app.gateway.time", gateway_time):
                 res = self.run_spike(host, make_settings(cap_usd=10.0))
         self.assertEqual(slept.call_count, 5)
         self.assertEqual(res.status, "stopped_error")

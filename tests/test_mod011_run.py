@@ -351,6 +351,23 @@ class RunTests(unittest.TestCase):
         text = "\n".join(json.dumps(r) for r in recs)
         self.assertEqual(re.findall(r"\b(?:pass|fail|partial)\b", text, re.IGNORECASE), [])
 
+    def test_egress_jsonl_of_the_run_folder_holds_the_requests_of_the_instrument_check_before_the_lock(self):
+        """The instrument check sends through the egress client of the run, so egress.jsonl of the run
+        folder holds its requests before the lock: one message to SRD-1 for each instrument passage, and the model
+        call of each. Before, no test read the file: a change that sent the check through a second client with a log
+        in memory only passed every test."""
+        lock = self.recs[0]["lock"]["time_ns"]
+        events = [json.loads(x) for x in (self.res.run_dir / "egress.jsonl").read_text(encoding="utf-8").splitlines()]
+        before = [e for e in events if e["t_ns"] < lock]
+        messages = [e for e in before if e["method"] == "POST" and re.fullmatch(r"/sessions/[^/]+/messages", e["path"])]
+        n = len(fixture()["passages"])
+        self.assertEqual(len(messages), n)
+        self.assertEqual({(e["host"], e["status"], e["allowed"]) for e in messages}, {("127.0.0.1", 200, True)})
+        srd1_ports = {e["port"] for e in messages}
+        self.assertEqual(len(srd1_ports), 1)
+        self.assertNotIn(self.host.port, srd1_ports)
+        self.assertEqual(len([e for e in before if e["port"] == self.host.port]), n)
+
     def test_the_summary_holds_the_trace_egress_cost_and_store(self):
         s = self.recs[-1]
         self.assertEqual((s["trace"]["chain_ok"], s["trace"]["problems"]), (True, []))
@@ -953,6 +970,40 @@ class PreflightTests(unittest.TestCase):
                 self.assertEqual(out.split("Fix these points first:\n")[1].splitlines(), [f"  - {want}"])
                 self.assertNotIn("Traceback", out)
                 self.assertEqual([c["prefix"] for c in fx["comps"] if c["prefix"] in out], [])
+
+    def test_a_lone_surrogate_in_the_comparator_file_or_the_overlap_result_is_refused_in_one_problem_line(self):
+        """A text of the comparator file (a writer family) or of the overlap result (its field reads) holds a lone
+        surrogate (the JSON escape \\ud83d alone). The engine reads each file with jsonkeys.unique_keys. So
+        start_problems names the file and the key, the report has no traceback, and --start refuses in one problem
+        line, before the probes and the executor. The same texts with an emoji (a surrogate pair of escapes) and U+FFFD
+        give no problem."""
+        fx = fixture()
+        lone, valid = "a placeholder \ud83d", f"a placeholder {chr(0x1F600)} {chr(0xFFFD)}"
+        names = {"comparator": ("the comparator file", "writer_family"), "overlap": ("the overlap result", "reads")}
+        for n, (where, text) in enumerate([(w, t) for t in (lone, valid) for w in names]):
+            with self.subTest(where=where, lone=text == lone):
+                comps = copy.deepcopy(fx["comps"])
+                if where == "comparator":
+                    comps[0]["writer_family"] = text
+                files = comparator_files(f"lone_surrogate_{n}", comps=comps)
+                if where == "overlap":
+                    over = {**overlap_result(comps, files["comparator_sha256"]), "reads": text}
+                    Path(files["overlap_result"]).write_text(json.dumps(over), encoding="utf-8")
+                file, key = names[where]
+                want = [f"{file} is refused: a JSON object holds a lone surrogate in the key or the value of '{key}'"]
+                self.assertEqual(run_mod011.start_problems(mod_settings(**files)), want if text == lone else [])
+                if text == valid:
+                    continue
+                path = self.dir / f"lone_surrogate_{n}.yaml"
+                path.write_text(yaml.safe_dump({**self.raw, **files}), encoding="utf-8")
+                rc, out = self.main(*self.selftest, settings=path)
+                self.assertEqual(rc, 0, out)
+                self.assertNotIn("Traceback", out)
+                calls = []
+                rc, out = self.main("--start", "--sign-key", str(self.key), *self.selftest, calls=calls, settings=path)
+                self.assertEqual((rc, calls), (2, []), out)
+                self.assertEqual(out.split("Fix these points first:\n")[1].splitlines(), [f"  - {want[0]}"])
+                self.assertNotIn("Traceback", out)
 
     def test_a_comparator_that_is_not_an_object_gives_the_problems_of_the_check_and_no_traceback(self):
         """A comparator file whose list comparators holds a number: the report gives the estimate at the bound and no

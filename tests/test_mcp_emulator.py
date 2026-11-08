@@ -5,6 +5,7 @@ A pass shows that the emulator follows the rules tested here. It does not show t
 with it.
 """
 import base64
+import contextlib
 import json
 import tempfile
 import unittest
@@ -13,7 +14,7 @@ from pathlib import Path
 import httpx
 
 from faias_harness.emulators import mcp_tools as mt
-from tests.helpers import FAKE_KEY_VALUE, no_outside_network
+from tests.helpers import FAKE_KEY_VALUE, StrictStdout, no_outside_network
 
 REPO = Path(__file__).resolve().parents[1]
 TOOLS = mt.load_tools(REPO / "targets" / "examples" / "mcp_tools.yaml")
@@ -168,6 +169,58 @@ class EmulatorTests(_Base):
                 self.assertTrue(problems)
         with self.assertRaises(FileExistsError):
             mt.Ledger(path)
+
+    def test_verify_names_a_line_with_a_lone_surrogate_in_one_line_with_no_traceback(self):
+        """A ledger line changed to hold a lone surrogate (the JSON escape \\ud83d alone). Such a text cannot be written
+        as UTF-8, so its hash cannot be computed. verify_ledger names the line in one problem, and the command verify
+        prints it in one FAIL line with exit 1, as for its other problems. A stdout that encodes as strict UTF-8 prints
+        the line. Before, verify stopped with UnicodeEncodeError when it hashed the line."""
+        e = self.emu()
+        sid = self.post(e, {"jsonrpc": "2.0", "id": 1, "method": "initialize",
+                            "params": {"protocolVersion": "2025-11-25"}}).headers["Mcp-Session-Id"]
+        for i in range(3):
+            self.post(e, {"jsonrpc": "2.0", "id": 10 + i, "method": "tools/call", "params": {
+                "name": "get_account_summary", "arguments": {"account_ref": f"TEST-000{i}"}}}, {"Mcp-Session-Id": sid})
+        lines = e.ledger.path.read_text(encoding="utf-8").splitlines()
+        self.assertEqual(lines[1].count("TEST-0001"), 1)
+        p = self.dir / "lone_surrogate.jsonl"
+        p.write_text("\n".join([lines[0], lines[1].replace("TEST-0001", "TEST-0001\\ud83d"), lines[2]]) + "\n",
+                     encoding="utf-8")
+        want = "line 2: the line holds a lone surrogate, so its hash cannot be checked"
+        self.assertEqual(mt.verify_ledger(p, expected_head=e.ledger.head), (False, [want]))
+        out = StrictStdout()
+        with contextlib.redirect_stdout(out.stream):
+            rc = mt.main(["verify", "--ledger", str(p)])
+        self.assertEqual((rc, out.text()), (1, f"FAIL: {want}\n"))
+
+    def test_a_tools_call_with_a_lone_surrogate_gets_its_response_and_a_ledger_line_with_the_replacement(self):
+        """A tools/call whose arguments hold a lone surrogate (the JSON escape \\ud83d alone), in each era. The target
+        sends it from model output, so the emulator replaces it with U+FFFD at entry (text.clean). The call gets its
+        usual response, and the ledger line holds U+FFFD and verifies. Before, the ledger failed to write the line.
+        The call got no response, and the server printed a traceback."""
+        e = self.emu()
+        h = {"Accept": "application/json, text/event-stream", "Content-Type": "application/json"}
+        r = self.http.post(e.url, content=b'{"jsonrpc": "2.0", "id": 1, "method": "initialize", '
+                                          b'"params": {"protocolVersion": "2025-11-25"}}', headers=h)
+        legacy = {**h, "Mcp-Session-Id": r.headers["Mcp-Session-Id"]}
+        modern = {**h, "MCP-Protocol-Version": "2026-07-28", "Mcp-Method": "tools/call",
+                  "Mcp-Name": "get_account_summary"}
+        meta = json.dumps(modern_meta()).encode("ascii")
+        calls = [(legacy, b'{"jsonrpc": "2.0", "id": 2, "method": "tools/call", "params": {"name": '
+                          b'"get_account_summary", "arguments": {"account_ref": "TEST-0001\\ud83d"}}}'),
+                 (modern, b'{"jsonrpc": "2.0", "id": 3, "method": "tools/call", "params": {"name": '
+                          b'"get_account_summary", "arguments": {"account_ref": "TEST-0002\\ud83d"}, "_meta": '
+                          + meta + b'}}')]
+        for headers, body in calls:
+            r = self.http.post(e.url, content=body, headers=headers)
+            self.assertEqual(r.status_code, 200, r.text)
+            self.assertFalse(r.json()["result"]["isError"])
+            self.assertEqual(r.json()["result"]["content"][0]["text"], TOOLS["tools"][0]["result"]["text"])
+        entries = mt.read_ledger(e.ledger.path)
+        self.assertEqual([x["arguments"] for x in entries],
+                         [{"account_ref": "TEST-0001" + chr(0xFFFD)}, {"account_ref": "TEST-0002" + chr(0xFFFD)}])
+        self.assertEqual([x["era"] for x in entries], ["legacy", "modern"])
+        self.assertEqual(mt.verify_ledger(e.ledger.path, expected_head=e.ledger.head), (True, []))
 
     def test_local_only_and_tools_file_rules(self):
         with self.assertRaises(ValueError):

@@ -19,7 +19,7 @@ import yaml
 
 from faias_harness import yamlio
 from faias_harness.emulators import handlers
-from faias_harness.engine import runlog, sec001, sec002, sec003
+from faias_harness.engine import jsonkeys, runlog, sec001, sec002, sec003
 from targets.srd1.app import retrieval as rt
 from targets.srd1.app.entitlements import DATA_FILE, Entitlements
 
@@ -416,10 +416,12 @@ class ItemSetTests(unittest.TestCase):
                 self.assertEqual(sec003.seed(sec003.pool(items), self.dir / f"control_{n}")["payload_doc_ids"][0],
                                  "SYN-S-0001")
 
-    def test_a_document_with_a_lone_surrogate_is_named_by_its_key_with_each_yaml_loader(self):
-        """A lone surrogate in a document key or text (SURROGATE_TRIGGERS). With each YAML loader (YAML_LOADERS), the
-        item check gives one problem that names the item and the key. It raises nothing. Before, the check raised
-        UnicodeEncodeError with libyaml. The item file holds the JSON escape, so the file is valid UTF-8."""
+    def test_a_document_with_a_lone_surrogate_is_refused_by_the_loader_and_named_by_the_item_check(self):
+        """A lone surrogate in a document key or text (SURROGATE_TRIGGERS). The item file holds the JSON escape, so the
+        file is valid UTF-8. sec003.load_set refuses it and names the key (jsonkeys.LoneSurrogate, a RepeatedKey), as
+        it refuses a repeated key. For the same items made in memory, the item check still gives one problem that
+        names the item and the key, with each YAML loader (YAML_LOADERS), and raises nothing. Before, the loader read
+        the file, and the item check named the key. Before that, the check raised UnicodeEncodeError with libyaml."""
         for loader in YAML_LOADERS:
             for name, (change, key) in SURROGATE_TRIGGERS.items():
                 with self.subTest(loader=loader.__name__, case=name), \
@@ -428,8 +430,12 @@ class ItemSetTests(unittest.TestCase):
                     change(data["items"][0]["document"])
                     path = self.dir / "items_surrogate.json"
                     path.write_text(json.dumps(data), encoding="utf-8")
-                    self.assertEqual(sec003.check_item_set(sec003.load_set(path), CLEAN),
-                                     [round_trip_problem("P1-01", key)])
+                    with self.assertRaises(jsonkeys.LoneSurrogate) as cm:
+                        sec003.load_set(path)
+                    self.assertEqual(str(cm.exception), "a JSON object holds a lone surrogate in the key or the value "
+                                                        f"of {key!r}")
+                    items = tuple(sec003._item(i) for i in data["items"])
+                    self.assertEqual(sec003.check_item_set(items, CLEAN), [round_trip_problem("P1-01", key)])
 
     def test_a_set_with_no_item_is_refused_by_the_item_check(self):
         """No field items, and an empty list: the item check gives one problem, in the form of the TP-SEC-002 problem

@@ -93,8 +93,9 @@ import time
 from pathlib import Path
 
 from . import yamlio
-from .profile import REPO, ProfileError, load_profile
+from .profile import REPO, ProfileError, load_profile, read_firm_values
 from .settings import AGT012, DAT009, MOD011, PRIVATE_ITEM_SET, SEC002, SEC003, SEC006, SettingsError, load_settings
+from .text import escape_streams
 
 # The private item set of TP-SEC-001 (settings.PRIVATE_ITEM_SET) runs in bench mode only (faias_harness/bench.py), which
 # keeps every run folder outside the repository. The preflight gives no estimate for it, and --probes and --start
@@ -146,12 +147,14 @@ def firm_value_keys(records_dir=RECORDS_DIR):
 
 
 def declared_firm_values(profile, keys):
-    """Number of keys with a non-null value in the profile's firm-values file, or None if there is no file."""
+    """(the number of keys with a non-null value in the firm-values file of the profile, None). With no file, it is
+    (None, None). A file that read_firm_values refuses gives (None, the problem)."""
     if profile.firm_values is None or not profile.firm_values.is_file():
-        return None
-    data = yamlio.load(profile.firm_values.read_text(encoding="utf-8")) or {}
-    values = data.get("values", {}) or {}
-    return sum(1 for k in keys if values.get(k) is not None)
+        return None, None
+    values, problem = read_firm_values(profile.firm_values)
+    if problem:
+        return None, problem
+    return sum(1 for k in keys if values.get(k) is not None), None
 
 
 def attestation_problems(profile):
@@ -224,13 +227,19 @@ def start_problems(profile, settings=None):
 
 def tools_problems(settings):
     """With tools on (since 0.6): the refund gate needs its declared values. With tools off: none. A TP-DAT-009 run
-    reads no refund gate (its tool arm serves document_search only), so none."""
+    reads no refund gate (its tool arm serves document_search only), so none. A risk-appetite file that its reader
+    refuses (gate.read_risk_appetite) gives that one problem. A TP-AGT-012 run needs tools on, so the problem comes
+    from here for it too."""
     if not getattr(settings, "tools_enabled", False) or settings.procedure == DAT009:
         return []
     from .engine import spike
     spike._srd1()
     from targets.srd1.app import gate
-    return [f"{p} (targets/srd1/risk_appetite.yaml): SRD-1 does not enable its tool" for p in gate.declared_problems()]
+    try:
+        declared = gate.declared_problems()
+    except gate.RiskFileError as e:
+        return [f"the risk-appetite file targets/srd1/risk_appetite.yaml is refused: {e}"]
+    return [f"{p} (targets/srd1/risk_appetite.yaml): SRD-1 does not enable its tool" for p in declared]
 
 
 def report(profile, needs, records_dir=RECORDS_DIR):
@@ -258,12 +267,81 @@ def report(profile, needs, records_dir=RECORDS_DIR):
         print(f"Precondition map: {len(rows)} category rows: {rows.count('met')} met, {rows.count('partly')} partly, "
               f"{rows.count('not met')} not met; {all_met} procedures have all categories met")
     keys = firm_value_keys(records_dir)
-    declared = declared_firm_values(profile, keys)
-    if declared is None:
+    declared, refusal = declared_firm_values(profile, keys)
+    if refusal:
+        print(f"Firm values: the file is refused: {refusal}; {len(keys)} are needed by the thresholds with a "
+              "firm basis")
+    elif declared is None:
         print(f"Firm values: no file found; {len(keys)} are needed by the thresholds with a firm basis")
     else:
         print(f"Firm values: {declared} of {len(keys)} declared")
     return counts
+
+
+def item_file_refusal(settings):
+    """(the item file, why its loader refuses it) for a run of TP-SEC-001 on its full set, TP-SEC-006, TP-AGT-012 or
+    TP-DAT-009, else None. Each loader raises a ValueError for a JSON object with a repeated key (jsonkeys.RepeatedKey;
+    the reason names the key) and for a file that is not UTF-8 JSON. It is None too when the file is not found, and
+    for the spike set, which the code holds. The preflight then acts as for TP-SEC-002 and TP-SEC-003: the settings
+    block prints the refusal and no estimate, and --start gives it as one problem line, before any model call."""
+    from .engine import agt012, dat009, sec001, sec006
+    if settings.procedure == sec001.TP and settings.item_set != sec001.TP:
+        return None
+    files = {sec001.TP: ("items/TP-SEC-001.json", lambda: sec001.load_items(sec001.TP, repo=REPO)),
+             SEC006: (f"items/{sec006.ITEM_SET}.json", lambda: sec006.load_set(repo=REPO)),
+             AGT012: (agt012.ITEM_FILE, lambda: agt012.load_set(repo=REPO)),
+             DAT009: (dat009.ITEM_FILE, lambda: dat009.load_set(repo=REPO))}
+    if settings.procedure not in files:
+        return None
+    path, load = files[settings.procedure]
+    if not (REPO / path).is_file():
+        return None
+    try:
+        load()
+    except ValueError as e:         # json.JSONDecodeError, UnicodeDecodeError and jsonkeys.RepeatedKey are ValueError
+        return path, str(e)
+    return None
+
+
+def tools_file_refusal(settings):
+    """(the file, why it is refused) for a run that serves a tools file through the tool emulator, else None. A run of
+    TP-AGT-012 or TP-DAT-009 serves one, and a run of TP-SEC-001 or TP-SEC-006 with tools on. The emulator reads the
+    tools file and its store (mcp_tools.load_tools, handlers.load_store). Each refuses a lone surrogate, a file that is
+    not UTF-8 YAML and a file not of its form. The preflight then gives no estimate, and the settings block
+    prints the refusal. With --start, the refusal is one problem line, before any model call."""
+    from .emulators import handlers, mcp_tools
+    from .engine import run_dat009, sec001, toolrun
+    if settings.procedure == DAT009:
+        path = run_dat009.TOOLS_FILE
+    elif settings.procedure == AGT012 or (getattr(settings, "tools_enabled", False)
+                                          and settings.procedure in (sec001.TP, SEC006)):
+        path = toolrun.SRD1_TOOLS
+    else:
+        return None
+
+    def where(p):
+        p = Path(p).resolve()
+        return p.relative_to(REPO).as_posix() if p.is_relative_to(REPO) else str(p)
+    try:
+        tools = mcp_tools.load_tools(path)
+    except mcp_tools.ToolsError as e:
+        return where(path), str(e)
+    try:
+        if tools["store"] is not None:
+            handlers.load_store(tools["store"])
+    except handlers.StoreError as e:
+        return where(tools["store"]), str(e)
+    return None
+
+
+def item_file_not_found(settings):
+    """The item file of a run of TP-SEC-001 (full set) or TP-SEC-006 when it is not found, else None. Their estimate
+    is then None, as for TP-AGT-012 and TP-DAT-009. Then --start names the file in one problem line, before any model
+    call. TP-AGT-012 and TP-DAT-009 name it in their own start problems."""
+    from .engine import sec001, sec006
+    path = ("items/TP-SEC-001.json" if settings.procedure == sec001.TP and settings.item_set == sec001.TP else
+            f"items/{sec006.ITEM_SET}.json" if settings.procedure == SEC006 else None)
+    return path if path is not None and not (REPO / path).is_file() else None
 
 
 def settings_report(settings, estimate_usd):
@@ -319,15 +397,22 @@ def settings_report(settings, estimate_usd):
         mod011_report(settings)
     else:
         print(f"M4 bar: {m4}; reason: {settings.m4_reason or 'not set'}")
+    item_refusal = item_file_refusal(settings)
+    if item_refusal:
+        print(f"Item file: {item_refusal[0]} is refused: {item_refusal[1]}")
+    tool_refusal = tools_file_refusal(settings)
+    if tool_refusal:
+        print(f"Tool emulator file: {tool_refusal[0]} is refused: {tool_refusal[1]}")
     pin, pout = settings.price_in_per_m, settings.price_out_per_m
     print(f"Prices (USD per million tokens): in {pin if pin is not None else 'not set'}, "
           f"out {pout if pout is not None else 'not set'}")
     cap = f"USD {settings.cap_usd}" if settings.cap_usd is not None else "not set"
-    if estimate_usd is None:      # prices set: TP-SEC-002 or TP-SEC-003 without a usable item file, or TP-MOD-011
+    if estimate_usd is None:      # prices set: an item file that is refused or not found, or TP-MOD-011
         why = ("prices not set" if pin is None or pout is None else
                "an item file or the instrument file is refused" if settings.procedure == MOD011 else
                _sec002_no_estimate() if settings.procedure == SEC002 else
-               "the item file is refused" if _sec003_item_file() else "the item file is not found")
+               "the item file is refused" if item_refusal or (settings.procedure == SEC003 and _sec003_item_file())
+               else "a tool emulator file is refused" if tool_refusal else "the item file is not found")
         print(f"Worst-case estimate: not available ({why}); cap: {cap}")
     else:
         note = "  WARNING: the estimate is above the cap; the run may stop at the cap" \
@@ -638,6 +723,8 @@ def sec006_baseline(settings, variant="standard"):
     from .engine import run_sec006, sec006_log
     if not settings.m4_baseline_log:
         return sec006_log.run_label(None), [], []
+    if tools_file_refusal(settings):        # the tool definitions hash needs the tools file, and main names the refusal
+        return sec006_log.run_label(None), ["M4 baseline check: not made (a tool emulator file is refused)"], []
     try:
         base = sec006_log.read_baseline(settings.m4_baseline_log, pubkey=settings.m4_baseline_pubkey)
     except ValueError as e:
@@ -681,19 +768,25 @@ def sec006_start_problems(settings, variant="standard"):
 def agt012_start_problems(settings):
     """What a TP-AGT-012 run needs besides the SRD-1 conditions and the self-test gate. The item file must be
     found, and agt012.check_item_set must find no problem in it with the declared values. The run drives the tool,
-    so tools must be on."""
+    so tools must be on. An item file that its loader refuses is named once, by main (item_file_refusal). So is a
+    tools file or a store that the emulator refuses (tools_file_refusal). So is a risk-appetite file that its reader
+    refuses (gate.read_risk_appetite), by tools_problems. The checks that need its values are then not made. The two
+    homes of the time-to-halt must agree, and the firm-values file must be read (run_agt012.halt_home_problems). The
+    engine checks the same before the lock."""
     from .engine import agt012, run_agt012
-    from targets.srd1.app.gate import load_risk_appetite
+    from targets.srd1.app.gate import read_risk_appetite
     problems = []
+    values, _, risk_refused = read_risk_appetite()
     if not (REPO / agt012.ITEM_FILE).is_file():
         problems.append(f"the item file {agt012.ITEM_FILE} is not found")
-    else:
-        values, _ = load_risk_appetite()
+    elif risk_refused is None and item_file_refusal(settings) is None and tools_file_refusal(settings) is None:
         problems += [f"the item file: {p}" for p in
                      run_agt012.item_set_problems(REPO, values.get("cap_gbp"), values.get("session_limit_gbp"))]
     if not getattr(settings, "tools_enabled", False):
         problems.append("TP-AGT-012 needs tools_enabled: true")
-    return problems
+    if risk_refused:
+        return problems
+    return problems + run_agt012.halt_home_problems(values.get("time_to_halt_s"), REPO / run_agt012.FIRM_VALUES_FILE)
 
 
 def agt012_sends(settings):
@@ -1053,6 +1146,7 @@ def _inspect_missing():
 
 def main(argv=None, *, input_fn=input, gateway_factory=_default_gateway, executor=_default_executor,
          inspect_check=_inspect_missing, external_executor=_default_external_executor):
+    escape_streams()
     ap = argparse.ArgumentParser(prog="faias_harness.preflight", description=__doc__.split("\n\n")[0])
     ap.add_argument("--profile", required=True, help="path to a target profile YAML")
     ap.add_argument("--settings", help="path to the settings YAML of an engine run")
@@ -1115,7 +1209,9 @@ def main(argv=None, *, input_fn=input, gateway_factory=_default_gateway, executo
         print()
         from . import selftest
         from .engine import run_agt012, run_dat009, run_sec002, run_sec006, spike
-        if settings.procedure == SEC006:
+        if item_file_refusal(settings) or tools_file_refusal(settings):     # no estimate: --start names the refusal
+            est = None
+        elif settings.procedure == SEC006:
             est = run_sec006.estimate(settings)
         elif settings.procedure == AGT012:
             est = run_agt012.estimate(settings)
@@ -1169,6 +1265,16 @@ def main(argv=None, *, input_fn=input, gateway_factory=_default_gateway, executo
         missing = inspect_check()
         if missing:
             problems.append(missing)
+        item_refusal = item_file_refusal(settings)
+        if item_refusal:
+            problems.append(f"{settings.procedure}: the item file {item_refusal[0]} is refused: {item_refusal[1]}")
+        absent = item_file_not_found(settings)
+        if absent:
+            problems.append(f"the item file {absent} is not found")
+        tool_refusal = tools_file_refusal(settings)
+        if tool_refusal:
+            problems.append(f"{settings.procedure}: the tool emulator file {tool_refusal[0]} is refused: "
+                            f"{tool_refusal[1]}")
         if settings.procedure == SEC006:
             problems += sec006_start_problems(settings, variant)
         if settings.procedure == AGT012:

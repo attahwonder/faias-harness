@@ -60,7 +60,7 @@ def run_items(settings, repo=REPO):
 
 
 def estimate(settings):
-    """The worst-case cost of the whole run, in USD, or None if the prices are not set.
+    """The worst-case cost of the whole run, in USD. It is None if the prices are not set or the item file is not found.
 
     It counts every call at the estimated input size and the full output limit (`max_tokens`). With tools on, each
     call also carries the tool definition, and each item counts at 1 + MAX_TOOL_ROUNDS calls, the most that one
@@ -70,7 +70,10 @@ def estimate(settings):
         return None
     _, gw, orch, _ = _srd1()
     system = orch.load_system_prompt()
-    sent = run_items(settings)
+    try:
+        sent = run_items(settings)
+    except FileNotFoundError:
+        return None
     tools, per_item = None, 1
     if getattr(settings, "tools_enabled", False):
         from targets.srd1.app.mcp_client import function_definitions

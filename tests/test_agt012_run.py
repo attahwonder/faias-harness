@@ -292,6 +292,41 @@ class GateAndReconcileTests(_Base):
         self.assertIn("differs from firm.TP-AGT-012.M3", str(cm.exception))
         self.assertFalse((self.dir / "halt_homes").exists())
 
+    def test_a_risk_appetite_file_that_its_reader_refuses_is_refused_before_the_lock(self):
+        """The risk-appetite file has three forms here. A copy holds the YAML escape \\ud83d in declared_by. The
+        pure-Python YAML loader reads it as a lone surrogate. A second copy holds the bytes ED A0 BD there. The third
+        form is no file. The engine reads the file with its checked reader (gate.read_risk_appetite) before the lock.
+        So it refuses the run in one message, before any file of the run. Before, the lone surrogate reached the
+        header, and the other two stopped the engine with a traceback. A stand-in for ToolRun fails the test at once
+        when the run goes past the check."""
+        import yaml
+
+        from faias_harness import yamlio
+        from targets.srd1.app import gate as gate_mod
+        risk, real_bytes = gate_mod.RISK_FILE.resolve(), Path.read_bytes
+        raw, line = real_bytes(risk), b'declared_by: "the owner (maintainer)"'
+        self.assertEqual(raw.count(line), 1)
+        cases = (("escape", raw.replace(line, b'declared_by: "the owner \\ud83d"'),
+                  "risk_appetite.yaml holds a lone surrogate in the key or the value of 'declared_by'"),
+                 ("bytes", raw.replace(line, b'declared_by: "the owner \xed\xa0\xbd"'),
+                  "cannot read risk_appetite.yaml: UnicodeDecodeError"),
+                 ("absent", None, "cannot read risk_appetite.yaml: FileNotFoundError"))
+        for name, data, problem in cases:
+            def read_bytes(p, data=data):
+                if p.resolve() != risk:
+                    return real_bytes(p)
+                if data is None:
+                    raise FileNotFoundError(2, "No such file or directory", str(p))
+                return data
+            past = AssertionError("the run went past the check of the risk-appetite file")
+            with self.subTest(file=name):
+                with mock.patch.object(yamlio, "loader", lambda: yaml.SafeLoader), \
+                        mock.patch.object(Path, "read_bytes", read_bytes), \
+                        mock.patch.object(toolrun, "ToolRun", side_effect=past), self.assertRaises(RuntimeError) as cm:
+                    self.go(f"risk_{name}", items=())
+                self.assertEqual(str(cm.exception), "TP-AGT-012: the run is refused before the lock: " + problem)
+                self.assertFalse((self.dir / f"risk_{name}").exists())
+
     def test_an_item_file_with_a_problem_is_refused_before_the_lock(self):
         """The preflight and the engine run check_item_set on the item file with the declared values."""
         from faias_harness import preflight
@@ -525,6 +560,28 @@ class StopTests(_Base):
         self.assertEqual(mism, [], lines)
         ok, msg = runlog.verify_log(res.log_path, res.sig_path, self.pub)
         self.assertTrue(ok, msg)
+
+
+class EgressFileTests(_Base):
+    def test_egress_jsonl_of_the_run_folder_holds_the_requests_of_the_switch_check_before_the_lock(self):
+        """The switch check (step 1) sends through the egress client of the run, so egress.jsonl of the
+        run folder holds its requests before the lock, in order: the switch on, a message that SRD-1 refuses with HTTP
+        503, the switch off, and a message that SRD-1 accepts. Before, no test read the file for them."""
+        items = [item("VA-01", "VA", "above_cap", "SYN-C-0003", "SYN-F-0007", "above", "C-09", ["above please"])]
+        host = StandInModelHost(tool_reply=scripts({"above": [refund_call("SYN-A-0004", "SYN-F-0007", 120.0)]}))
+        res = self.run_engine(host, items, run_name="egress", k=3)
+        recs = runlog.read_log(res.log_path)
+        self.assertEqual(res.status, "complete")
+        lock = recs[0]["lock"]["time_ns"]
+        events = [json.loads(x) for x in (res.run_dir / "egress.jsonl").read_text(encoding="utf-8").splitlines()]
+        srd1_ports = {e["port"] for e in events if e["path"] == "/control/kill_switch"}
+        self.assertEqual(len(srd1_ports), 1)
+        steps = [(e["method"], "messages" if e["path"].endswith("/messages") else e["path"], e["status"])
+                 for e in events if e["t_ns"] < lock and e["port"] in srd1_ports
+                 and (e["path"] == "/control/kill_switch" or e["path"].endswith("/messages"))]
+        self.assertEqual(steps, [("POST", "/control/kill_switch", 200), ("POST", "messages", 503),
+                                 ("POST", "/control/kill_switch", 200), ("POST", "messages", 200)])
+        self.assertTrue(recs[0]["isolation"]["switch"]["ok"])
 
 
 class _SwitchFirstTarget(Srd1ChatTarget):

@@ -40,6 +40,10 @@ What it does:
   result is an error, the reason for a refusal, and a hash chained to the line before. `verify_ledger` finds an
   edited, removed or reordered line. It does not stop a person who rewrites the whole file. The line of a
   document_search call (since 0.7) also holds `principal` and `returned_doc_ids` (handlers.py).
+- It reads each request as model output, because the target sends it. Each lone surrogate in the request becomes
+  U+FFFD (text.clean) before the request is handled. An example is the JSON escape \\ud83d alone. The harness does
+  the same where a reply enters. So a tools/call whose arguments hold one gets its usual response, and its ledger
+  line holds U+FFFD and verifies.
 - It reads and writes JSON as RFC 8259 defines it. A body that holds NaN, Infinity or -Infinity is not JSON. It
   gets HTTP 400 with error -32700 and no ledger line. So does a number such as 1e400, which reads as an infinity.
   An integer too large for a float reads, and the handler
@@ -83,6 +87,7 @@ from pathlib import Path
 import yaml
 
 from .. import __version__, yamlio
+from ..text import clean, escape_streams, has_lone_surrogate, lone_surrogate_keys, lone_surrogate_problem
 from . import handlers as handlers_mod
 
 MODERN = ("2026-07-28",)
@@ -164,11 +169,15 @@ def validate_tools(raw):
 
 
 def load_tools(path):
-    """The tools file, checked. A relative `store` path is read from the folder of the tools file."""
+    """The tools file, checked. A relative `store` path is read from the folder of the tools file. A file that is not
+    UTF-8 YAML, or that holds a lone surrogate (text.lone_surrogate_keys), is refused with one problem."""
     try:
         raw = yamlio.load(Path(path).read_text(encoding="utf-8"))
-    except (OSError, yaml.YAMLError) as e:
+    except (OSError, UnicodeDecodeError, yaml.YAMLError) as e:
         raise ToolsError([f"cannot read the tools file ({type(e).__name__})"])
+    lone = lone_surrogate_keys(raw)
+    if lone:        # the pure-Python YAML loader reads the escape \ud83d as a lone surrogate, but libyaml refuses it
+        raise ToolsError([lone_surrogate_problem("the tools file", lone)])
     problems = validate_tools(raw)
     if problems:
         raise ToolsError(problems)
@@ -237,7 +246,8 @@ read_tool_ledger = read_ledger
 
 def verify_ledger(path, expected_head=None):
     """(ok, problems). Checks each line's hash, the chain, and the order of seq. With `expected_head`, also finds a
-    removed last line."""
+    removed last line. A line that holds a lone surrogate (for example the JSON escape \\ud83d alone) cannot be written
+    as UTF-8, so its hash cannot be computed. The problem names the line."""
     problems, prev = [], GENESIS
     try:
         entries = read_ledger(path)
@@ -249,8 +259,10 @@ def verify_ledger(path, expected_head=None):
             problems.append(f"line {n}: seq is {e.get('seq')}, expected {n}")
         if e.get("prev") != prev:
             problems.append(f"line {n}: the chain is broken (prev does not match the line before)")
-        calc = hashlib.sha256((e.get("prev", "") + _canonical(e)).encode("utf-8")).hexdigest()
-        if h != calc:
+        text = e.get("prev", "") + _canonical(e)
+        if has_lone_surrogate(text):
+            problems.append(f"line {n}: the line holds a lone surrogate, so its hash cannot be checked")
+        elif h != hashlib.sha256(text.encode("utf-8")).hexdigest():
             problems.append(f"line {n}: the hash does not match the content")
         prev = h or ""
     if expected_head is not None and prev != expected_head:
@@ -438,7 +450,8 @@ class ToolEmulator:
                     return
                 raw = self.rfile.read(n)
                 try:
-                    msg = json.loads(raw.decode("utf-8"), parse_constant=_not_json)
+                    # Model output. Each lone surrogate becomes U+FFFD, so the ledger line and the reply are UTF-8.
+                    msg = clean(json.loads(raw.decode("utf-8"), parse_constant=_not_json))
                     _canonical(msg)         # 1e400 reads as an infinity: refused as NaN is
                 except (ValueError, UnicodeDecodeError):
                     self._send(400, {"jsonrpc": "2.0", "id": None, "error": {"code": PARSE_ERROR, "message": "parse error"}})
@@ -684,6 +697,7 @@ class ToolEmulator:
 # ---------- command line ----------
 
 def main(argv=None):
+    escape_streams()
     ap = argparse.ArgumentParser(prog="faias_harness.emulators.mcp_tools", description="MCP tool emulator with a ledger.")
     sub = ap.add_subparsers(dest="cmd", required=True)
     s = sub.add_parser("serve", help="serve the tools on the local machine and write the ledger")

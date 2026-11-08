@@ -23,6 +23,7 @@ REPO = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO))
 from faias_harness import yamlio  # noqa: E402
 from faias_harness.capabilities import CAPABILITIES  # noqa: E402
+from faias_harness.text import escape_streams  # noqa: E402
 
 TOP = ["tp", "title", "irq", "star", "method_class", "source", "class", "human_step", "lever",
        "design", "measures", "thresholds", "interpretation", "evidence_outputs"]
@@ -225,6 +226,7 @@ def check(records_dir, faias):
 
 
 def main(argv=None):
+    escape_streams()
     ap = argparse.ArgumentParser()
     ap.add_argument("--faias", required=True, help="path to the FAIAS tree (the folder with V3_Testing_Playbook)")
     ap.add_argument("--records", default=str(REPO / "records"))

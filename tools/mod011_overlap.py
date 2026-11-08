@@ -34,6 +34,7 @@ if str(REPO) not in sys.path:
     sys.path.insert(0, str(REPO))
 
 from faias_harness.engine import jsonkeys, mod011, sec002, sec006  # noqa: E402
+from faias_harness.text import escape_streams  # noqa: E402
 
 VERSION = "1"
 _GAP = "\0"         # between two questions; no word of a comparator is this token, so no run spans it
@@ -140,6 +141,7 @@ def result(comparator_raw, comparator_name, files):
 
 
 def main(argv=None):
+    escape_streams()
     ap = argparse.ArgumentParser(description="Check the comparators of TP-MOD-011 against GSM8K question text.")
     ap.add_argument("--comparators", required=True, help="the private comparator file (JSON)")
     ap.add_argument("--gsm8k", nargs="+", required=True, help="the GSM8K files to read: train.jsonl and test.jsonl")

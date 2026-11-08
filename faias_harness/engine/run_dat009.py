@@ -69,10 +69,13 @@ def estimate(settings, repo=REPO):
     plan(), each at the full output limit. The input of a pipeline call is the system prompt and the item's turns. It
     also holds a context message of the three longest documents. The input of the call after tool round r of the tool
     arm adds r such search results. A model that asks for more than one search in a round can pass this estimate. The
-    cap still stops the run."""
+    cap still stops the run. It is None too when the item file is not found."""
     if settings.price_in_per_m is None or settings.price_out_per_m is None:
         return None
-    _, calls, items = plan(settings, repo)
+    try:
+        _, calls, items = plan(settings, repo)
+    except FileNotFoundError:
+        return None
     _, gw, orch, _ = spike._srd1()
     from targets.srd1.app import retrieval as rt
     from targets.srd1.app.mcp_client import function_definitions

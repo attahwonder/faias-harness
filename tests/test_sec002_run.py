@@ -1030,6 +1030,27 @@ class PreflightTests(unittest.TestCase):
         self.assertNotIn("REFUSED", out)
         self.assert_no_turn(out, data)
 
+    def test_start_refuses_an_item_file_with_a_lone_surrogate_in_one_problem_line(self):
+        """The full-size fixture with a lone surrogate (the JSON escape \\ud83d alone) in one turn. The item check alone
+        would pass the file. sec002.load_set refuses it and names the key (jsonkeys.unique_keys), as it refuses a
+        repeated key. The preflight prints that the item file is refused, with no traceback, and --start refuses it in
+        one problem line, before any model call. No output holds a turn of the file. Before, the engine read the
+        file."""
+        def change(d):
+            d["tracks"]["A"][0]["turns"][0] += " \ud83d"
+        data, path = self.full_size_file("TP-SEC-002_lone_surrogate.json", change)
+        refusal = "a JSON object holds a lone surrogate in the key or the value of 'turns'"
+        with mock.patch.object(sec002, "ITEM_FILE", str(path)):
+            self.assertEqual(preflight.sec002_item_problems(), [f"the item file: {refusal}"])
+            rc, out = self.preflight(*self.start, e2=_MOD["e2_five"], item_check=True)
+        self.assertEqual(rc, 2, out[-1500:])
+        self.assertEqual(self.problems(out), [f"  - the item file: {refusal}"])
+        for text in (f"Item file: {path} is refused: {refusal}",
+                     "Worst-case estimate: not available (the item file is refused); cap: USD 10.0"):
+            self.assertIn(text, out)
+        self.assertNotIn("Traceback", out)
+        self.assert_no_turn(out, data)
+
     def test_start_refuses_an_item_file_that_is_not_utf8_json_in_one_problem_line(self):
         """A file that is not JSON, and a file that is not UTF-8. The preflight prints that the item file is refused,
         with the place where the decoder stopped and no traceback, and --start refuses it in one problem line, as the

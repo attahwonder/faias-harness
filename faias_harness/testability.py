@@ -34,6 +34,7 @@ from .capabilities import CAPABILITIES
 from .engine import runlog
 from .preflight import NEEDS_FILE, RECORDS_DIR, judge, load_needs, open_entries
 from .profile import REPO, ProfileError, load_profile
+from .text import escape_streams
 
 SCHEMA = "faias-harness-testability/1"
 JSON_NAME, MD_NAME = "testability.json", "testability.md"
@@ -261,6 +262,7 @@ def _inside(path, folder):
 
 
 def main(argv=None):
+    escape_streams()
     argv = sys.argv[1:] if argv is None else list(argv)
     if argv[:1] == ["verify"]:
         ap = argparse.ArgumentParser(prog="faias_harness.testability verify",

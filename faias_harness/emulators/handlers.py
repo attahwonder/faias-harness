@@ -40,6 +40,7 @@ from pathlib import Path
 import yaml
 
 from .. import yamlio
+from ..text import lone_surrogate_keys, lone_surrogate_problem
 
 
 class StoreError(ValueError):
@@ -47,7 +48,8 @@ class StoreError(ValueError):
 
 
 def load_store(path):
-    """(data, sha256 of the file). The file is read once."""
+    """(data, sha256 of the file). The file is read once. A file that is not UTF-8 YAML, or that holds a lone surrogate
+    (text.lone_surrogate_keys), is refused with one problem (StoreError)."""
     try:
         raw = Path(path).read_bytes()
     except OSError as e:
@@ -56,6 +58,9 @@ def load_store(path):
         data = yamlio.load(raw.decode("utf-8"))
     except (UnicodeDecodeError, yaml.YAMLError) as e:
         raise StoreError(f"cannot read the store ({type(e).__name__})") from None
+    lone = lone_surrogate_keys(data)
+    if lone:        # the pure-Python YAML loader reads the escape \ud83d as a lone surrogate, but libyaml refuses it
+        raise StoreError(lone_surrogate_problem("the store", lone))
     if not isinstance(data, dict) or not (isinstance(data.get("accounts"), list)
                                           or isinstance(data.get("documents"), list)):
         raise StoreError("the store must be a mapping with a list 'accounts' or a list 'documents'")

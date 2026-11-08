@@ -138,6 +138,27 @@ class DirectLineTests(unittest.TestCase):
             with self.assertRaises(EgressRefused):
                 t.open_session()
 
+    def test_an_error_that_is_not_an_object_gives_an_auth_error_with_no_code(self):
+        """A Direct Line 403 body whose error is a text, a list or a number. The adapter raises ChannelError of the
+        kind auth, and the message holds no code and none of that text. Before, such a body stopped the adapter with
+        AttributeError."""
+        class ErrorNotObject(StandInDirectLine):
+            def __init__(self, error, **kw):
+                super().__init__(**kw)
+                self.error = error
+
+            def route(self, method, path, query, headers, body):
+                if path == "/v3/directline/tokens/generate":
+                    return 403, {"error": self.error}, None
+                return super().route(method, path, query, headers, body)
+        for error in ("placeholder text in the error field", ["placeholder text"], 7):
+            with self.subTest(error=error):
+                with no_outside_network(), ErrorNotObject(error, secret=FAKE_KEY_VALUE) as dl:
+                    with self.assertRaises(ChannelError) as cm:
+                        self.target(dl).open_session()
+                self.assertEqual((cm.exception.kind, cm.exception.status, str(cm.exception)),
+                                 ("auth", 403, "Direct Line token generation returned HTTP 403"))
+
 
 class ResponsesTests(unittest.TestCase):
     def target(self, s, **opts):

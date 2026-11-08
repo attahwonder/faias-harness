@@ -28,6 +28,7 @@ if str(REPO) not in sys.path:
     sys.path.insert(0, str(REPO))
 
 from faias_harness.engine import mod011  # noqa: E402
+from faias_harness.text import escape_streams  # noqa: E402
 
 VERSION = "1"
 SEED = 20261103
@@ -76,6 +77,7 @@ def dump(data):
 
 
 def main(argv=None):
+    escape_streams()
     ap = argparse.ArgumentParser(description="Make the item file of TP-MOD-011 from a copy of the GSM8K test split.")
     ap.add_argument("--source", required=True, help="the file test.jsonl of the GSM8K repository")
     ap.add_argument("--out", required=True, help="a new file")

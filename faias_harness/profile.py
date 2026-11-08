@@ -14,6 +14,7 @@ import yaml
 
 from . import yamlio
 from .capabilities import CAPABILITIES
+from .text import lone_surrogate_keys, lone_surrogate_problem
 
 REPO = Path(__file__).resolve().parents[1]
 
@@ -156,12 +157,32 @@ def validate(raw):
     return problems
 
 
+def read_firm_values(path):
+    """(the mapping `values` of a firm-values file, None), or (None, the one problem). The problem is a file that
+    cannot be read, for example an absent file. It can also be a file that is not UTF-8 YAML, or a lone surrogate
+    (lone_surrogate_keys). The pure-Python YAML loader reads the escape \\ud83d as a lone surrogate. The preflight
+    counts the declared values with it, and the TP-AGT-012 check of the time-to-halt reads it (engine/run_agt012.py,
+    halt_home_problems)."""
+    path = Path(path)
+    try:
+        data = yamlio.load(path.read_text(encoding="utf-8")) or {}
+    except (OSError, UnicodeDecodeError, yaml.YAMLError) as e:
+        return None, f"cannot read {path.name}: {type(e).__name__}"
+    lone = lone_surrogate_keys(data)
+    if lone:
+        return None, lone_surrogate_problem(path.name, lone)
+    return data.get("values") or {}, None
+
+
 def load_profile(path):
     path = Path(path)
     try:
         raw = yamlio.load(path.read_text(encoding="utf-8"))
-    except (OSError, yaml.YAMLError) as e:
+    except (OSError, UnicodeDecodeError, yaml.YAMLError) as e:
         raise ProfileError([f"cannot read {path}: {e}"])
+    lone = lone_surrogate_keys(raw)
+    if lone:        # the pure-Python YAML loader reads the escape \ud83d as a lone surrogate; libyaml refuses it
+        raise ProfileError([lone_surrogate_problem("a YAML mapping", lone)])
     problems = validate(raw)
     if problems:
         raise ProfileError(problems)

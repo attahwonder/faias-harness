@@ -9,9 +9,10 @@ from unittest import mock
 
 import yaml
 
-from faias_harness import preflight, settings as sm
+from faias_harness import preflight, settings as sm, yamlio
 from faias_harness.engine import runlog
 from faias_harness.egress import EgressClient
+from faias_harness.profile import ProfileError, load_profile, read_firm_values
 from tests.helpers import (EVIDENCE_RAW, FAKE_KEY_VALUE, KEY_ENV, make_settings, no_outside_network, raw_settings)
 
 REPO = Path(__file__).resolve().parents[1]
@@ -571,6 +572,545 @@ class PreflightSettingsTests(unittest.TestCase):
         self.assertEqual(rc, 2, out[-800:])
         self.assertEqual(out.split("START REFUSED. No run starts. Fix these points first:\n")[1].splitlines(),
                          [f"  - the item file {absent} is not found"])
+
+
+@contextlib.contextmanager
+def absent_file(rel):
+    """Each read of the file `rel` acts as for an absent file. Path.is_file gives False, and read_text, read_bytes and
+    open raise FileNotFoundError. The file does not change, and every other file reads as it is."""
+    target = (REPO / rel).resolve()
+    real_is_file, real_read_text, real_read_bytes, real_open = Path.is_file, Path.read_text, Path.read_bytes, open
+
+    def gone(p):
+        return Path(p).resolve() == target
+
+    def is_file(self):
+        return False if gone(self) else real_is_file(self)
+
+    def read_text(self, *a, **k):
+        if gone(self):
+            raise FileNotFoundError(2, "No such file or directory", str(self))
+        return real_read_text(self, *a, **k)
+
+    def read_bytes(self):
+        if gone(self):
+            raise FileNotFoundError(2, "No such file or directory", str(self))
+        return real_read_bytes(self)
+
+    def opener(file, *a, **k):
+        if isinstance(file, (str, os.PathLike)) and gone(file):
+            raise FileNotFoundError(2, "No such file or directory", str(file))
+        return real_open(file, *a, **k)
+    with mock.patch.object(Path, "is_file", is_file), mock.patch.object(Path, "read_text", read_text), \
+            mock.patch.object(Path, "read_bytes", read_bytes), mock.patch("builtins.open", opener):
+        yield
+
+
+def changed_copy(rel, text):
+    """Each read of the item file `rel` gives `text`, as a changed copy of the file on disk would. The file does not
+    change, and every other file reads as it is."""
+    target, real = (REPO / rel).resolve(), Path.read_text
+
+    def read_text(self, *a, **k):
+        return text if self.resolve() == target else real(self, *a, **k)
+    return mock.patch.object(Path, "read_text", read_text)
+
+
+@contextlib.contextmanager
+def changed_bytes(rel, data):
+    """Each read of the file `rel` gives the bytes `data`. `read_bytes` gives them as they are. `read_text` decodes
+    them strictly, as a read of a changed copy does, so bytes that are not UTF-8 raise UnicodeDecodeError. The file
+    does not change, and every other file reads as it is."""
+    target, real_text, real_bytes = (REPO / rel).resolve(), Path.read_text, Path.read_bytes
+
+    def read_bytes(self):
+        return data if self.resolve() == target else real_bytes(self)
+
+    def read_text(self, encoding=None, errors=None, *a, **k):
+        if self.resolve() == target:
+            return data.decode(encoding or "utf-8", errors or "strict")
+        return real_text(self, encoding, errors, *a, **k)
+    with mock.patch.object(Path, "read_text", read_text), mock.patch.object(Path, "read_bytes", read_bytes):
+        yield
+
+
+class ItemFileRefusalTests(unittest.TestCase):
+    """A changed copy of the item file of TP-SEC-001 (its full set), TP-SEC-006, TP-AGT-012 or TP-DAT-009
+    that its loader refuses: a JSON object that holds the key `items` twice. With the prices set, the preflight prints
+    the refusal and no estimate, and --start refuses in one problem line, before any model call. Before, the estimate
+    raised the loader's RepeatedKey, and the preflight stopped with a traceback."""
+    TOOLS = {"tools_enabled": True, "tool_key_env": "FAIAS_TEST_TOOL_KEY"}
+    CASES = {"TP-SEC-001": ("items/TP-SEC-001.json", {"item_set": "TP-SEC-001"}),
+             "TP-SEC-006": ("items/TP-SEC-006.json", {"procedure": "TP-SEC-006", "item_set": "TP-SEC-006",
+                                                      "reviewer_values": {
+                                                          "M3": {"value": 0.5, "reason": "test value for the unit tests"},
+                                                          "M4": {"value": 0.5, "reason": "test value for the unit tests"}}}),
+             "TP-AGT-012": ("items/TP-AGT-012.json", {"procedure": "TP-AGT-012", "item_set": "TP-AGT-012",
+                                                      "reviewer_values": {}, **TOOLS}),
+             "TP-DAT-009": ("items/TP-DAT-009.json", {"procedure": "TP-DAT-009", "item_set": "TP-DAT-009",
+                                                      "reviewer_values": {}, **TOOLS})}
+    REASON = "a JSON object holds the key 'items' more than once"
+
+    @classmethod
+    def setUpClass(cls):
+        from tests.helpers import shared_selftest
+        log, _, pub = shared_selftest(REPO)
+        cls.selftest = ["--selftest-log", str(log), "--selftest-pubkey", str(pub)]
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.dir = Path(self.tmp.name)
+        att = self.dir / "attestation.txt"
+        att.write_text("Test system, synthetic data only.\n", encoding="utf-8")
+        doc = yaml.safe_load((REPO / "targets" / "srd1" / "profile.yaml").read_text(encoding="utf-8"))
+        doc["attestation_file"] = str(att)
+        self.profile = self.dir / "profile.yaml"
+        self.profile.write_text(yaml.safe_dump(doc), encoding="utf-8")
+        self.key = runlog.make_key(self.dir / "keys", repo=REPO)[0]
+
+    def tearDown(self):
+        self.tmp.cleanup()
+
+    def test_a_repeated_key_in_each_item_file_gives_the_refusal_no_estimate_and_one_problem_line(self):
+        for tp, (rel, changes) in self.CASES.items():
+            with self.subTest(procedure=tp):
+                settings = self.dir / f"settings_{tp}.yaml"
+                settings.write_text(yaml.safe_dump(raw_settings(mode="explore", **changes)), encoding="utf-8")
+                text = (REPO / rel).read_text(encoding="utf-8").lstrip()
+                self.assertTrue(text.startswith("{"))
+                called = []
+                argv = ["--profile", str(self.profile), "--settings", str(settings), *self.selftest]
+                with no_outside_network(), mock.patch.dict(os.environ, {KEY_ENV: FAKE_KEY_VALUE}), \
+                        changed_copy(rel, '{"items": [], ' + text[1:]):
+                    rc, out = run_main(argv)
+                    self.assertEqual(rc, 0, out[-800:])
+                    self.assertIn(f"Item file: {rel} is refused: {self.REASON}\n", out)
+                    self.assertIn("Worst-case estimate: not available (the item file is refused); cap: USD 1.0\n", out)
+                    rc, out = run_main(argv + ["--start", "--sign-key", str(self.key)], inspect_check=lambda: None,
+                                       gateway_factory=lambda s: called.append("model call"),
+                                       executor=lambda **k: called.append("run"))
+                self.assertEqual((rc, called), (2, []), out[-800:])
+                self.assertNotIn("Traceback", out)
+                self.assertEqual(out.split("START REFUSED. No run starts. Fix these points first:\n")[1].splitlines(),
+                                 [f"  - {tp}: the item file {rel} is refused: {self.REASON}"])
+
+    def test_with_no_item_file_the_estimate_line_says_not_found_when_a_tp_sec_003_item_file_is_present(self):
+        """TP-AGT-012 with its item file absent, and a TP-SEC-003 item file present (sec003.ITEM_FILE names a file that
+        exists), with the prices set. The estimate line says "the item file is not found". The TP-SEC-003 file is not
+        the item file of TP-AGT-012, so it does not count."""
+        from faias_harness.engine import agt012, sec003
+        present = self.dir / "TP-SEC-003_present.json"
+        present.write_text("{}\n", encoding="utf-8")
+        settings = self.dir / "settings_absent_TP-AGT-012.yaml"
+        settings.write_text(yaml.safe_dump(raw_settings(mode="explore", **self.CASES["TP-AGT-012"][1])),
+                            encoding="utf-8")
+        with no_outside_network(), mock.patch.dict(os.environ, {KEY_ENV: FAKE_KEY_VALUE}), \
+                mock.patch.object(agt012, "ITEM_FILE", str(self.dir / "absent_TP-AGT-012.json")), \
+                mock.patch.object(sec003, "ITEM_FILE", str(present)):
+            rc, out = run_main(["--profile", str(self.profile), "--settings", str(settings), *self.selftest])
+        self.assertEqual(rc, 0, out[-800:])
+        self.assertIn("Worst-case estimate: not available (the item file is not found); cap: USD 1.0\n", out)
+        self.assertNotIn("Traceback", out)
+
+    def test_with_no_item_file_each_procedure_gives_no_estimate_and_start_refuses_in_one_problem_line(self):
+        """The item file of each procedure is not found, and the prices are set. The estimate line says "the item file
+        is not found", and --start refuses in one problem line that names the file, before any model call. Before, the
+        preflight of TP-SEC-001 (full set), TP-SEC-006 and TP-DAT-009 stopped with FileNotFoundError at the
+        estimate."""
+        for tp, (rel, changes) in self.CASES.items():
+            with self.subTest(procedure=tp):
+                settings = self.dir / f"settings_absent_{tp}.yaml"
+                settings.write_text(yaml.safe_dump(raw_settings(mode="explore", **changes)), encoding="utf-8")
+                called = []
+                argv = ["--profile", str(self.profile), "--settings", str(settings), *self.selftest]
+                with no_outside_network(), mock.patch.dict(os.environ, {KEY_ENV: FAKE_KEY_VALUE}), absent_file(rel):
+                    rc, out = run_main(argv)
+                    self.assertEqual(rc, 0, out[-800:])
+                    self.assertIn("Worst-case estimate: not available (the item file is not found); cap: USD 1.0\n",
+                                  out)
+                    rc, out = run_main(argv + ["--start", "--sign-key", str(self.key)], inspect_check=lambda: None,
+                                       gateway_factory=lambda s: called.append("model call"),
+                                       executor=lambda **k: called.append("run"))
+                self.assertEqual((rc, called), (2, []), out[-800:])
+                self.assertNotIn("Traceback", out)
+                self.assertEqual(out.split("START REFUSED. No run starts. Fix these points first:\n")[1].splitlines(),
+                                 [f"  - the item file {rel} is not found"])
+
+    def test_a_lone_surrogate_in_each_item_file_gives_the_refusal_no_estimate_and_one_problem_line(self):
+        """A changed copy of each item file with a key whose value holds a lone surrogate (the JSON escape \\ud83d
+        alone). The loader refuses it and names the key (jsonkeys.unique_keys). So the preflight prints the refusal and
+        no estimate, and --start refuses in one problem line, before any model call. Before, the loader read the
+        copy."""
+        reason = "a JSON object holds a lone surrogate in the key or the value of 'note'"
+        for tp, (rel, changes) in self.CASES.items():
+            with self.subTest(procedure=tp):
+                settings = self.dir / f"settings_lone_{tp}.yaml"
+                settings.write_text(yaml.safe_dump(raw_settings(mode="explore", **changes)), encoding="utf-8")
+                text = (REPO / rel).read_text(encoding="utf-8").lstrip()
+                self.assertTrue(text.startswith("{"))
+                called = []
+                argv = ["--profile", str(self.profile), "--settings", str(settings), *self.selftest]
+                with no_outside_network(), mock.patch.dict(os.environ, {KEY_ENV: FAKE_KEY_VALUE}), \
+                        changed_copy(rel, '{"note": "a placeholder \\ud83d", ' + text[1:]):
+                    rc, out = run_main(argv)
+                    self.assertEqual(rc, 0, out[-800:])
+                    self.assertIn(f"Item file: {rel} is refused: {reason}\n", out)
+                    self.assertIn("Worst-case estimate: not available (the item file is refused); cap: USD 1.0\n", out)
+                    rc, out = run_main(argv + ["--start", "--sign-key", str(self.key)], inspect_check=lambda: None,
+                                       gateway_factory=lambda s: called.append("model call"),
+                                       executor=lambda **k: called.append("run"))
+                self.assertEqual((rc, called), (2, []), out[-800:])
+                self.assertNotIn("Traceback", out)
+                self.assertEqual(out.split("START REFUSED. No run starts. Fix these points first:\n")[1].splitlines(),
+                                 [f"  - {tp}: the item file {rel} is refused: {reason}"])
+
+
+class LoneSurrogateYamlTests(unittest.TestCase):
+    """A settings file and a profile that hold the YAML escape \\ud83d in a value, or the bytes ED A0 BD (a surrogate
+    written as if it were UTF-8). The pure-Python YAML loader reads the escape as a lone surrogate, and the loader of
+    the harness refuses it with one problem that names the key. libyaml refuses the escape (a ScannerError). Both
+    loaders refuse the bytes, which are not UTF-8. The escape pair of an emoji is refused too: libyaml refuses it, and
+    the pure-Python loader reads two lone surrogates. An emoji and U+FFFD pass. Before, the pure-Python loader passed
+    the escape, and the bytes stopped the preflight with UnicodeDecodeError."""
+    LOADERS = [yaml.SafeLoader] + ([yaml.CSafeLoader] if hasattr(yaml, "CSafeLoader") else [])
+
+    def setUp(self):
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        self.dir = Path(tmp.name)
+
+    def files(self, value):
+        """A settings file with `value` as its model_id, and a profile with `value` as its name. `value` is YAML text."""
+        settings = self.dir / "settings.yaml"
+        settings.write_bytes(yaml.safe_dump(raw_settings(mode="explore", model_id="VALUE")).encode("ascii")
+                             .replace(b"VALUE", value))
+        doc = yaml.safe_load((REPO / "targets" / "srd1" / "profile.yaml").read_text(encoding="utf-8"))
+        profile = self.dir / "profile.yaml"
+        profile.write_bytes(yaml.safe_dump({**doc, "name": "VALUE"}).encode("ascii").replace(b"VALUE", value))
+        return (("model_id", settings, sm.load_settings, sm.SettingsError),
+                ("name", profile, load_profile, ProfileError))
+
+    def problems(self, load, error, path, loader):
+        with mock.patch.object(yamlio, "loader", lambda: loader), self.assertRaises(error) as cm:
+            load(path)
+        return cm.exception.problems
+
+    def test_the_settings_and_the_profile_loaders_refuse_a_lone_surrogate_with_each_yaml_loader(self):
+        for value in (b'"example \\ud83d"', b'"example \\ud83d\\ude00"'):
+            for key, path, load, error in self.files(value):
+                for loader in self.LOADERS:
+                    with self.subTest(value=value, file=path.name, loader=loader.__name__):
+                        problems = self.problems(load, error, path, loader)
+                        if loader is yaml.SafeLoader:
+                            self.assertEqual(problems, [f"a YAML mapping holds a lone surrogate in the key or the "
+                                                        f"value of '{key}'"])
+                        elif error is sm.SettingsError:
+                            self.assertEqual(problems, ["cannot read settings.yaml: ScannerError"])
+                        else:
+                            self.assertEqual(len(problems), 1, problems)
+                            self.assertIn("found invalid Unicode character escape code", problems[0])
+
+    def test_the_bytes_of_a_surrogate_are_refused_as_not_utf8_and_an_emoji_and_the_replacement_character_pass(self):
+        for key, path, load, error in self.files(b"'example \xed\xa0\xbd'"):
+            for loader in self.LOADERS:
+                with self.subTest(file=path.name, loader=loader.__name__):
+                    problems = self.problems(load, error, path, loader)
+                    want = ("cannot read settings.yaml: UnicodeDecodeError" if error is sm.SettingsError else
+                            f"cannot read {path}: 'utf-8' codec can't decode byte 0xed")
+                    self.assertEqual(len(problems), 1, problems)
+                    self.assertTrue(problems[0].startswith(want), problems)
+        valid = f"example {chr(0x1F600)} {chr(0xFFFD)}"
+        for key, path, load, error in self.files(f'"{valid}"'.encode("utf-8")):
+            for loader in self.LOADERS:
+                with self.subTest(file=path.name, loader=loader.__name__), \
+                        mock.patch.object(yamlio, "loader", lambda: loader):
+                    loaded = load(path)
+                    self.assertEqual(loaded.model_id if key == "model_id" else loaded.name, valid)
+
+
+class OperatorYamlFileTests(unittest.TestCase):
+    """Four more YAML files of the operator. Three are the firm-values file, the tools file and the store of the tool
+    emulator. The fourth is the TP-SEC-002 declaration of the channel inputs. A copy of each file starts with the line
+    `probe: <value>`. The value is the YAML escape \\ud83d, or the bytes ED A0 BD. The bytes are a surrogate written as
+    if it were UTF-8. The pure-Python YAML loader reads the escape as a lone surrogate. The loader of the file refuses
+    it with one problem that names the key. The libyaml loader refuses the escape (a ScannerError). Both loaders
+    refuse the bytes, which are not UTF-8. Each refusal has the form of the other refusals of that file. The
+    preflight prints it, and --start refuses in one problem line, before any model call. An emoji and U+FFFD pass.
+    Before, the pure-Python loader passed the escape. The bytes or the ScannerError stopped the preflight with a
+    traceback, and the bytes stopped the tool emulator with UnicodeDecodeError."""
+    LOADERS = [yaml.SafeLoader] + ([yaml.CSafeLoader] if hasattr(yaml, "CSafeLoader") else [])
+    FILES = {"firm": "targets/srd1/firm_values.yaml", "tools": "targets/srd1/tools.yaml",
+             "store": "targets/srd1/data/synthetic_bank.yaml", "e2": "targets/srd1/channel_inputs.yaml"}
+    ESCAPE, BYTES = b'probe: "example \\ud83d"\n', b"probe: 'example \xed\xa0\xbd'\n"
+    LONE = {"firm": "firm_values.yaml holds", "tools": "the tools file holds", "store": "the store holds",
+            "e2": "the declaration of the channel inputs (channel_inputs.yaml) holds"}
+    READ = {"firm": "cannot read firm_values.yaml: {}", "tools": "cannot read the tools file ({})",
+            "store": "cannot read the store ({})",
+            "e2": "the declaration of the channel inputs cannot be read ({}): channel_inputs.yaml"}
+    TOOLS = {"tools_enabled": True, "tool_key_env": "FAIAS_TEST_TOOL_KEY"}
+
+    @classmethod
+    def setUpClass(cls):
+        from tests.helpers import shared_selftest
+        log, _, pub = shared_selftest(REPO)
+        cls.selftest = ["--selftest-log", str(log), "--selftest-pubkey", str(pub)]
+
+    def setUp(self):
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        self.dir = Path(tmp.name)
+        att = self.dir / "attestation.txt"
+        att.write_text("Test system, synthetic data only.\n", encoding="utf-8")
+        doc = yaml.safe_load((REPO / "targets" / "srd1" / "profile.yaml").read_text(encoding="utf-8"))
+        doc["attestation_file"] = str(att)
+        self.profile = self.dir / "profile.yaml"
+        self.profile.write_text(yaml.safe_dump(doc), encoding="utf-8")
+        self.key = runlog.make_key(self.dir / "keys", repo=REPO)[0]
+
+    def want(self, kind, prefix, loader):
+        """The one problem of the file `kind` with the line `prefix` first, read with `loader`."""
+        if prefix == self.ESCAPE and loader is yaml.SafeLoader:
+            return f"{self.LONE[kind]} a lone surrogate in the key or the value of 'probe'"
+        return self.READ[kind].format("ScannerError" if prefix == self.ESCAPE else "UnicodeDecodeError")
+
+    def problem(self, kind, path):
+        """The one problem of the loader of `kind` for the file at `path`, or None when it reads the file."""
+        from faias_harness.emulators import handlers, mcp_tools
+        from faias_harness.engine import run_agt012, run_sec002
+        if kind == "firm":
+            problems = run_agt012.halt_home_problems(5, path)
+            self.assertLessEqual(len(problems), 1)
+            self.assertEqual(read_firm_values(path)[1], problems[0] if problems else None)
+            return problems[0] if problems else None
+        try:
+            {"tools": mcp_tools.load_tools, "store": handlers.load_store, "e2": run_sec002.read_e2}[kind](path)
+        except mcp_tools.ToolsError as e:
+            self.assertEqual(len(e.problems), 1, e.problems)
+            return e.problems[0]
+        except ValueError as e:         # handlers.StoreError is a ValueError
+            return str(e)
+        return None
+
+    def test_each_loader_refuses_a_lone_surrogate_and_bytes_that_are_not_utf8_and_reads_a_valid_text(self):
+        from faias_harness.emulators import mcp_tools
+        valid = f'probe: "example {chr(0x1F600)} {chr(0xFFFD)}"\n'.encode("utf-8")
+        for kind, rel in self.FILES.items():
+            raw, path = (REPO / rel).read_bytes(), self.dir / Path(rel).name
+            for loader in self.LOADERS:
+                with mock.patch.object(yamlio, "loader", lambda: loader):
+                    for prefix in (self.ESCAPE, self.BYTES):
+                        path.write_bytes(prefix + raw)
+                        with self.subTest(file=kind, loader=loader.__name__, value=prefix):
+                            self.assertEqual(self.problem(kind, path), self.want(kind, prefix, loader))
+                    path.write_bytes(valid + raw)
+                    with self.subTest(file=kind, loader=loader.__name__, value="valid"):
+                        self.assertIsNone(self.problem(kind, path))
+        tools = self.dir / "tools_bytes.yaml"
+        tools.write_bytes(self.BYTES + (REPO / self.FILES["tools"]).read_bytes())
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out):
+            rc = mcp_tools.main(["serve", "--tools", str(tools), "--ledger", str(self.dir / "ledger.jsonl")])
+        self.assertEqual((rc, out.getvalue()), (2, "refused: cannot read the tools file (UnicodeDecodeError)\n"))
+        self.assertFalse((self.dir / "ledger.jsonl").exists())
+
+    def test_the_preflight_names_each_refusal_and_start_refuses_in_one_problem_line_before_any_model_call(self):
+        agt = self.dir / "settings_agt012.yaml"
+        agt.write_text(yaml.safe_dump(raw_settings(mode="explore", procedure="TP-AGT-012", item_set="TP-AGT-012",
+                                                   reviewer_values={}, **self.TOOLS)), encoding="utf-8")
+        sec002 = self.dir / "settings_sec002.yaml"
+        sec002.write_text(yaml.safe_dump(sec002_raw(mode="explore")), encoding="utf-8")
+        variants = [(self.ESCAPE, loader) for loader in self.LOADERS] + [(self.BYTES, self.LOADERS[-1])]
+        for kind, rel in self.FILES.items():
+            raw = (REPO / rel).read_bytes()
+            for prefix, loader in variants:
+                problem = self.want(kind, prefix, loader)
+                line = {"firm": f"Firm values: the file is refused: {problem}; ",
+                        "tools": f"Tool emulator file: {rel} is refused: {problem}\n",
+                        "store": f"Tool emulator file: {rel} is refused: {problem}\n",
+                        "e2": f"Channel inputs (E2): {problem}\n"}[kind]
+                start = (f"TP-AGT-012: the tool emulator file {rel} is refused: {problem}"
+                         if kind in ("tools", "store") else problem)
+                called = []
+                argv = ["--profile", str(self.profile), "--settings", str(sec002 if kind == "e2" else agt),
+                        *self.selftest]
+                with self.subTest(file=kind, loader=loader.__name__, value=prefix), no_outside_network(), \
+                        mock.patch.dict(os.environ, {KEY_ENV: FAKE_KEY_VALUE}), \
+                        mock.patch.object(yamlio, "loader", lambda: loader), changed_bytes(rel, prefix + raw):
+                    rc, out = run_main(argv)
+                    self.assertEqual(rc, 0, out[-800:])
+                    self.assertNotIn("Traceback", out)
+                    self.assertIn(line, out)
+                    if kind in ("tools", "store"):
+                        self.assertIn("Worst-case estimate: not available (a tool emulator file is refused); cap: "
+                                      "USD 1.0\n", out)
+                    rc, out = run_main(argv + ["--start", "--sign-key", str(self.key)], inspect_check=lambda: None,
+                                       gateway_factory=lambda s: called.append("model call"),
+                                       executor=lambda **k: called.append("run"))
+                    self.assertEqual((rc, called), (2, []), out[-800:])
+                    self.assertNotIn("Traceback", out)
+                    self.assertEqual(out.split("START REFUSED. No run starts. Fix these points first:\n")[1]
+                                     .splitlines(), [f"  - {start}"])
+
+    def test_with_no_firm_values_file_start_of_tp_agt_012_refuses_in_one_problem_line(self):
+        """The firm-values file is absent. The table says that no file is found. Its reader gives one problem
+        (read_firm_values). Then --start of TP-AGT-012 refuses in that one problem line, exit 2, before any model call.
+        Before, the reader caught no OSError, and --start stopped with FileNotFoundError."""
+        problem = "cannot read firm_values.yaml: FileNotFoundError"
+        settings = self.dir / "settings_agt012.yaml"
+        settings.write_text(yaml.safe_dump(raw_settings(mode="explore", procedure="TP-AGT-012", item_set="TP-AGT-012",
+                                                        reviewer_values={}, **self.TOOLS)), encoding="utf-8")
+        argv, called = ["--profile", str(self.profile), "--settings", str(settings), *self.selftest], []
+        with no_outside_network(), mock.patch.dict(os.environ, {KEY_ENV: FAKE_KEY_VALUE}), \
+                absent_file(self.FILES["firm"]):
+            rc, out = run_main(argv)
+            self.assertEqual(rc, 0, out[-800:])
+            self.assertIn("Firm values: no file found; ", out)
+            rc, out = run_main(argv + ["--start", "--sign-key", str(self.key)], inspect_check=lambda: None,
+                               gateway_factory=lambda s: called.append("model call"),
+                               executor=lambda **k: called.append("run"))
+        self.assertEqual((rc, called), (2, []), out[-800:])
+        self.assertNotIn("Traceback", out)
+        self.assertEqual(out.split("START REFUSED. No run starts. Fix these points first:\n")[1].splitlines(),
+                         [f"  - {problem}"])
+        self.assertEqual(read_firm_values(self.dir / "firm_values.yaml"), (None, problem))
+
+    def test_with_tools_on_tp_sec_001_and_tp_sec_006_name_a_refused_tools_file_and_start_refuses_in_one_line(self):
+        """A run of TP-SEC-001 (its full set) or TP-SEC-006 with tools on serves the tools file. So the preflight
+        checks it (tools_file_refusal). A copy of the tools file with the YAML escape \\ud83d is refused with each YAML
+        loader. The settings block prints the refusal and no estimate. Then --start refuses in one problem line, exit 2,
+        before any model call."""
+        rel = self.FILES["tools"]
+        raw = (REPO / rel).read_bytes()
+        m = {"value": 0.5, "reason": "test value for the unit tests"}
+        cases = {"TP-SEC-001": {"item_set": "TP-SEC-001"},
+                 "TP-SEC-006": {"procedure": "TP-SEC-006", "item_set": "TP-SEC-006",
+                                "reviewer_values": {"M3": m, "M4": m}}}
+        for tp, changes in cases.items():
+            settings = self.dir / f"settings_tools_{tp}.yaml"
+            settings.write_text(yaml.safe_dump(raw_settings(mode="explore", **changes, **self.TOOLS)), encoding="utf-8")
+            argv = ["--profile", str(self.profile), "--settings", str(settings), *self.selftest]
+            for loader in self.LOADERS:
+                problem, called = self.want("tools", self.ESCAPE, loader), []
+                with self.subTest(procedure=tp, loader=loader.__name__), no_outside_network(), \
+                        mock.patch.dict(os.environ, {KEY_ENV: FAKE_KEY_VALUE}), \
+                        mock.patch.object(yamlio, "loader", lambda: loader), changed_bytes(rel, self.ESCAPE + raw):
+                    rc, out = run_main(argv)
+                    self.assertEqual(rc, 0, out[-800:])
+                    self.assertNotIn("Traceback", out)
+                    self.assertIn(f"Tool emulator file: {rel} is refused: {problem}\n", out)
+                    self.assertIn("Worst-case estimate: not available (a tool emulator file is refused); cap: "
+                                  "USD 1.0\n", out)
+                    rc, out = run_main(argv + ["--start", "--sign-key", str(self.key)], inspect_check=lambda: None,
+                                       gateway_factory=lambda s: called.append("model call"),
+                                       executor=lambda **k: called.append("run"))
+                    self.assertEqual((rc, called), (2, []), out[-800:])
+                    self.assertNotIn("Traceback", out)
+                    self.assertEqual(out.split("START REFUSED. No run starts. Fix these points first:\n")[1]
+                                     .splitlines(), [f"  - {tp}: the tool emulator file {rel} is refused: {problem}"])
+
+
+class RiskAppetiteFileTests(unittest.TestCase):
+    """The risk-appetite file of SRD-1 (targets/srd1/risk_appetite.yaml). A copy holds the YAML escape \\ud83d in
+    declared_by. A second copy holds the bytes ED A0 BD there. In the third case the file is absent. Its reader
+    (gate.read_risk_appetite) refuses each with one problem, and load_risk_appetite raises it as RiskFileError. The
+    preflight of TP-AGT-012 prints the refusal, and --start refuses in one problem line, exit 2, before any model call.
+    The shipped file and a valid text pass. Before, the pure-Python loader passed the escape, and the header copied it
+    after the typed `yes`. The escape with libyaml, the bytes and an absent file stopped the preflight with a
+    traceback."""
+    LOADERS = [yaml.SafeLoader] + ([yaml.CSafeLoader] if hasattr(yaml, "CSafeLoader") else [])
+    REL = "targets/srd1/risk_appetite.yaml"
+    LINE = b'declared_by: "the owner (maintainer)"'
+    TOOLS = {"tools_enabled": True, "tool_key_env": "FAIAS_TEST_TOOL_KEY"}
+
+    @classmethod
+    def setUpClass(cls):
+        from tests.helpers import shared_selftest
+        log, _, pub = shared_selftest(REPO)
+        cls.selftest = ["--selftest-log", str(log), "--selftest-pubkey", str(pub)]
+        cls.raw = (REPO / cls.REL).read_bytes()
+
+    def setUp(self):
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        self.dir = Path(tmp.name)
+        att = self.dir / "attestation.txt"
+        att.write_text("Test system, synthetic data only.\n", encoding="utf-8")
+        doc = yaml.safe_load((REPO / "targets" / "srd1" / "profile.yaml").read_text(encoding="utf-8"))
+        doc["attestation_file"] = str(att)
+        self.profile = self.dir / "profile.yaml"
+        self.profile.write_text(yaml.safe_dump(doc), encoding="utf-8")
+        self.key = runlog.make_key(self.dir / "keys", repo=REPO)[0]
+
+    def cases(self):
+        """(name, the bytes of the file or None for an absent file, the YAML loader, the one problem)."""
+        self.assertEqual(self.raw.count(self.LINE), 1)
+        escape = self.raw.replace(self.LINE, b'declared_by: "the owner \\ud83d"')
+        not_utf8 = self.raw.replace(self.LINE, b'declared_by: "the owner \xed\xa0\xbd"')
+        lone = "risk_appetite.yaml holds a lone surrogate in the key or the value of 'declared_by'"
+        return ([("escape", escape, loader, lone if loader is yaml.SafeLoader else
+                  "cannot read risk_appetite.yaml: ScannerError") for loader in self.LOADERS]
+                + [("bytes", not_utf8, self.LOADERS[-1], "cannot read risk_appetite.yaml: UnicodeDecodeError"),
+                   ("absent", None, self.LOADERS[-1], "cannot read risk_appetite.yaml: FileNotFoundError")])
+
+    def file_as(self, data):
+        """Each read of the risk-appetite file gives the bytes `data`. When `data` is None, it acts as for an absent
+        file."""
+        return absent_file(self.REL) if data is None else changed_bytes(self.REL, data)
+
+    def test_the_reader_refuses_each_case_with_one_problem_and_the_shipped_file_and_a_valid_text_pass(self):
+        import hashlib
+
+        from targets.srd1.app import gate
+        for name, data, loader, problem in self.cases():
+            with self.subTest(file=name, loader=loader.__name__), mock.patch.object(yamlio, "loader", lambda: loader), \
+                    self.file_as(data):
+                with self.assertRaises(ValueError) as cm:
+                    gate.load_risk_appetite()
+                self.assertEqual(str(cm.exception), problem)
+                with self.assertRaises(ValueError) as cm:
+                    gate.RefundGate.from_file()
+                self.assertEqual(str(cm.exception), problem)
+                self.assertEqual(gate.read_risk_appetite(), (None, None, problem))
+        valid = f"the owner {chr(0x1F600)} {chr(0xFFFD)}"
+        for loader in self.LOADERS:
+            with self.subTest(file="valid", loader=loader.__name__), \
+                    mock.patch.object(yamlio, "loader", lambda: loader), \
+                    changed_bytes(self.REL, self.raw.replace(self.LINE, f'declared_by: "{valid}"'.encode("utf-8"))):
+                self.assertEqual(gate.load_risk_appetite()[0]["declared_by"], valid)
+                values, _, problem = gate.read_risk_appetite()
+                self.assertEqual((values["declared_by"], problem), (valid, None))
+            with self.subTest(file="shipped", loader=loader.__name__), \
+                    mock.patch.object(yamlio, "loader", lambda: loader):
+                values, sha256, problem = gate.read_risk_appetite()
+                self.assertIsNone(problem)
+                self.assertEqual(sha256, hashlib.sha256(self.raw).hexdigest())
+                self.assertEqual(gate.load_risk_appetite(), (values, sha256))
+                keys = ("cap_gbp", "session_limit_gbp", "time_to_halt_s", "declared_by", "declared_on")
+                self.assertEqual({k: values[k] for k in keys},
+                                 {"cap_gbp": 25, "session_limit_gbp": 50, "time_to_halt_s": 5,
+                                  "declared_by": "the owner (maintainer)", "declared_on": "2026-10-29"})
+
+    def test_the_preflight_of_tp_agt_012_names_the_refusal_and_start_refuses_in_one_problem_line(self):
+        settings = self.dir / "settings_agt012.yaml"
+        settings.write_text(yaml.safe_dump(raw_settings(mode="explore", procedure="TP-AGT-012", item_set="TP-AGT-012",
+                                                        reviewer_values={}, **self.TOOLS)), encoding="utf-8")
+        argv = ["--profile", str(self.profile), "--settings", str(settings), *self.selftest]
+        for name, data, loader, problem in self.cases():
+            line, called = f"the risk-appetite file {self.REL} is refused: {problem}", []
+            with self.subTest(file=name, loader=loader.__name__), no_outside_network(), \
+                    mock.patch.dict(os.environ, {KEY_ENV: FAKE_KEY_VALUE}), \
+                    mock.patch.object(yamlio, "loader", lambda: loader), self.file_as(data):
+                rc, out = run_main(argv)
+                self.assertEqual(rc, 0, out[-800:])
+                self.assertNotIn("Traceback", out)
+                self.assertIn(f"  - {line}\n", out)
+                rc, out = run_main(argv + ["--start", "--sign-key", str(self.key)], inspect_check=lambda: None,
+                                   gateway_factory=lambda s: called.append("model call"),
+                                   executor=lambda **k: called.append("run"))
+                self.assertEqual((rc, called), (2, []), out[-800:])
+                self.assertNotIn("Traceback", out)
+                self.assertEqual(out.split("START REFUSED. No run starts. Fix these points first:\n")[1].splitlines(),
+                                 [f"  - {line}"])
 
 
 if __name__ == "__main__":

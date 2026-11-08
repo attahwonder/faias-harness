@@ -9,6 +9,8 @@ It calls the hosted model through OpenRouter, by a pinned model ID. It does this
   response), the token use and the time.
 - It sends the request through the shared egress client, so a request to a host off the allow-list is refused.
 - It counts the cost from the token use and the settings prices, and stops before a call that could pass the cap.
+- It replaces each lone surrogate in the response body with U+FFFD (`_json`; faias_harness.text.clean), so SRD-1's
+  trace, the harness's records and each printed line see none.
 
 In the live runs of 20 and 21 October 2026 the response carried the field `provider` (the host's display name) on
 every call. When it does not, the served host is recorded as null and the call counts as a host mismatch.
@@ -22,6 +24,7 @@ from dataclasses import dataclass, field
 import httpx
 
 from faias_harness.errors import CapReached, EgressRefused, GatewayError
+from faias_harness.text import clean
 
 OPENROUTER_BASE = "https://openrouter.ai/api/v1"
 
@@ -156,10 +159,16 @@ def retry_wait(attempt, retry_after):
 BLOCK_ERROR_TYPES = {"content_policy_violation", "refusal"}
 
 
+def _json(resp):
+    """The JSON body of a model host response, with each lone surrogate replaced with U+FFFD. It raises ValueError
+    for a body that is not JSON, as resp.json() does."""
+    return clean(resp.json())
+
+
 def block_type(resp):
     """The block type of a 403 response, or None if the 403 is not a block."""
     try:
-        err = resp.json().get("error")
+        err = _json(resp).get("error")
     except (ValueError, AttributeError):
         return None
     if not isinstance(err, dict):
@@ -251,7 +260,7 @@ class Gateway:
                     processed = resp.status_code not in NOT_PROCESSED
                 elif resp.status_code == 200:
                     try:
-                        data = resp.json()
+                        data = _json(resp)
                     except ValueError:
                         data = None
                     et = body_error_type(data)
@@ -275,7 +284,7 @@ class Gateway:
             raise GatewayError(f"the model host returned HTTP {resp.status_code}")
         try:
             if data is None:
-                data = resp.json()
+                data = _json(resp)
             message = data["choices"][0]["message"]
             finish = data["choices"][0].get("finish_reason")
         except (ValueError, KeyError, IndexError, TypeError):
@@ -303,7 +312,7 @@ class Gateway:
         cost = self.cap.charge_unknown(est)
         self.cap.calls += 1
         try:
-            meta = resp.json()["error"].get("metadata") or {}
+            meta = _json(resp)["error"].get("metadata") or {}
         except (ValueError, KeyError, AttributeError, TypeError):
             meta = {}
         served = meta.get("provider_name") if isinstance(meta, dict) else None

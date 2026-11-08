@@ -30,6 +30,7 @@ from pathlib import Path
 
 from .. import __version__, yamlio
 from ..engine import runlog
+from ..text import escape_streams
 from . import probes as probes_mod
 from . import scan as scan_mod
 from .guard import Guard
@@ -446,6 +447,7 @@ def gate_problems(procedure, status, mode=None):
 # ---------- command line ----------
 
 def main(argv=None):
+    escape_streams()
     argv = sys.argv[1:] if argv is None else list(argv)
     if argv[:1] == ["rerun"]:
         ap = argparse.ArgumentParser(prog="faias_harness.selftest rerun",

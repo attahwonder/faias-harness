@@ -37,8 +37,8 @@ import yaml
 from faias_harness import preflight, selftest, settings as sm, yamlio
 from faias_harness.adapters.srd1_http import Srd1ChatError, Srd1ChatTarget
 from faias_harness.engine import run_sec003, runlog, sec001, sec003, sec003_log, sec006, spike
-from tests.helpers import (FAKE_KEY_VALUE, KEY_ENV, StandInModelHost, make_settings, no_outside_network, raw_settings,
-                           shared_selftest)
+from tests.helpers import (FAKE_KEY_VALUE, KEY_ENV, StandInModelHost, StrictStdout, make_settings, no_outside_network,
+                           raw_settings, shared_selftest)
 from tests.test_sec003 import (CLEAN_FILE, FIXTURE_ITEMS, ROUND_TRIP_TRIGGERS, SURROGATE_TRIGGERS, YAML_LOADERS,
                                fixture_set, round_trip_problem)
 from tests.test_sec003_log import assert_each_fault_gives_its_problems, seeded_faults
@@ -929,7 +929,9 @@ class PreflightTests(unittest.TestCase):
         self.key = runlog.make_key(self.dir / "keys", repo=REPO)[0]
         self.selftest = ["--selftest-log", str(_FIXTURE["log"]), "--selftest-pubkey", str(_FIXTURE["pub"])]
 
-    def main(self, *argv, calls=None, probed=None):
+    def main(self, *argv, calls=None, probed=None, strict=False):
+        """The preflight in this process. With `strict`, stdout encodes as strict UTF-8, as a real
+        stdout does for a lone surrogate (tests/helpers.StrictStdout)."""
         class G:
             class cap:
                 spent_usd = 0.0
@@ -947,13 +949,14 @@ class PreflightTests(unittest.TestCase):
                 probed.append(g)
             return probes
 
-        out = io.StringIO()
+        out = StrictStdout() if strict else io.StringIO()
         with no_outside_network(), mock.patch.dict("os.environ", {KEY_ENV: FAKE_KEY_VALUE}), \
-                mock.patch.object(spike, "run_probes", run_probes), contextlib.redirect_stdout(out):
+                mock.patch.object(spike, "run_probes", run_probes), \
+                contextlib.redirect_stdout(out.stream if strict else out):
             rc = preflight.main(["--profile", str(self.profile), "--settings", str(self.settings), *argv],
                                 input_fn=lambda p: "yes", gateway_factory=lambda s: G(), executor=executor,
                                 inspect_check=lambda: None)
-        return rc, out.getvalue()
+        return rc, out.text() if strict else out.getvalue()
 
     def test_the_report_prints_the_sec003_lines_and_no_estimate_while_the_item_file_is_absent(self):
         rc, out = self.main(*self.selftest)
@@ -1148,9 +1151,10 @@ class PreflightTests(unittest.TestCase):
 
     def test_start_refuses_a_document_with_a_lone_surrogate_in_one_problem_line_with_each_yaml_loader(self):
         """A lone surrogate in a document key or text (SURROGATE_TRIGGERS). With each YAML loader (YAML_LOADERS),
-        --start refuses in one problem line that names the item and the key. The exit code is 2. The probes and the
-        executor are not called. Before, the item check raised UnicodeEncodeError with libyaml, and --start stopped
-        with a traceback."""
+        --start refuses in one problem line: the loader refuses the item file and names the key (jsonkeys.unique_keys),
+        as for a repeated key. The exit code is 2. The probes and the executor are not called. Before, the problem of
+        the item check named the item and the key. Before that, the item check raised UnicodeEncodeError with libyaml,
+        and --start stopped with a traceback."""
         for loader in YAML_LOADERS:
             for n, (name, (change, key)) in enumerate(SURROGATE_TRIGGERS.items()):
                 items = fixture_set()["items"]
@@ -1165,7 +1169,49 @@ class PreflightTests(unittest.TestCase):
                     self.assertEqual((rc, calls, probed), (2, [], []), out)
                     self.assertNotIn("Traceback", out)
                     self.assertEqual(out.split("Fix these points first:\n")[1].splitlines(),
-                                     [f"  - the item file: {round_trip_problem('P1-01', key)}"])
+                                     [f"  - TP-SEC-003: the item file {path} is refused: a JSON object holds a lone "
+                                      f"surrogate in the key or the value of {key!r}"])
+
+    def test_start_refuses_an_item_id_with_a_lone_surrogate_in_one_problem_line_with_a_strict_stdout(self):
+        """An item ID with a lone surrogate (the JSON escape \\ud83d alone in the item file). With a stdout that encodes
+        as strict UTF-8, as a real stdout does, --start prints one problem line: the loader refuses the item file and
+        names the key id. It exits with 2, and calls neither the probes nor the executor. Before, the problem of the
+        item check held the ID, and --start printed it with the escape \\ud83d. Before that, the print raised
+        UnicodeEncodeError."""
+        items = fixture_set()["items"]
+        items[0]["id"] = "P1-01\ud83d"
+        path = items_file(self.dir, "surrogate_id", items)
+        calls, probed = [], []
+        with mock.patch.object(sec003, "ITEM_FILE", str(path)):
+            rc, out = self.main("--start", "--sign-key", str(self.key), *self.selftest, calls=calls, probed=probed,
+                                strict=True)
+        self.assertEqual((rc, calls, probed), (2, [], []), out)
+        self.assertNotIn("Traceback", out)
+        self.assertEqual(out.split("Fix these points first:\n")[1].splitlines(),
+                         [f"  - TP-SEC-003: the item file {path} is refused: a JSON object holds a lone surrogate in "
+                          "the key or the value of 'id'"])
+
+    def test_a_lone_surrogate_in_an_item_turn_gives_no_estimate_and_one_problem_line(self):
+        """A lone surrogate (the JSON escape \\ud83d alone) in a turn of an item. The item check reads no turn in the
+        seeded store, so it would pass the set. The loader refuses the item file and names the key
+        (jsonkeys.unique_keys). The preflight prints the refusal and no estimate, and --start refuses in one problem
+        line, before the probes and the executor. Before, --start went on to the probes."""
+        items = fixture_set()["items"]
+        items[0]["turns"][0] += " \ud83d"
+        path = items_file(self.dir, "lone_turn", items)
+        reason = "a JSON object holds a lone surrogate in the key or the value of 'turns'"
+        calls, probed = [], []
+        with mock.patch.object(sec003, "ITEM_FILE", str(path)):
+            rc, out = self.main(*self.selftest)
+            self.assertEqual(rc, 0, out)
+            self.assertIn(f"Item file: {path} is refused: {reason}", out.splitlines())
+            self.assertIn("Worst-case estimate: not available (the item file is refused); cap: USD 1.0", out)
+            self.assertNotIn("Traceback", out)
+            rc, out = self.main("--start", "--sign-key", str(self.key), *self.selftest, calls=calls, probed=probed)
+        self.assertEqual((rc, calls, probed), (2, [], []), out)
+        self.assertEqual(out.split("Fix these points first:\n")[1].splitlines(),
+                         [f"  - TP-SEC-003: the item file {path} is refused: {reason}"])
+        self.assertNotIn("Traceback", out)
 
     def test_start_refuses_a_set_with_no_item_in_one_problem_line(self):
         """No field items, and an empty list: --start refuses in one problem line, the problem of the item check,
