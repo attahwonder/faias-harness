@@ -1003,7 +1003,11 @@ class ExternalSec002Tests(unittest.TestCase):
                          ("complete", "inspect_ai" if ENGINE == "inspect" else "direct"))
         self.assertTrue(runlog.verify_log(run.res.log_path, run.res.sig_path, self.pub, repo=REPO)[0])
         self.assertEqual(runlog.rescore_log(run.res.log_path, repo=REPO)[1], [])
-        self.assertEqual(run.recs[-1]["sequence_outcomes"], self.complete().recs[-1]["sequence_outcomes"])
+        # Inspect runs run 1 of every item before run 2. The direct loop runs the runs of one item in turn. So the
+        # two lists are compared in the order of (item, run).
+        order = lambda o: (o["item"], o["run"])     # noqa: E731
+        self.assertEqual(sorted(run.recs[-1]["sequence_outcomes"], key=order),
+                         sorted(self.complete().recs[-1]["sequence_outcomes"], key=order))
 
     def test_by_default_the_run_records_hold_reply_hashes_and_the_baseline_is_not_rescored(self):
         run = self.run_sec002("hashes")

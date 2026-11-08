@@ -428,11 +428,14 @@ class StopTests(unittest.TestCase):
 
     def test_a_cap_reached_in_the_benchmark_arm_stops_the_run(self):
         """Each call costs USD 0.15 (150,000 input tokens at USD 1 a million). The ten instrument calls and one
-        benchmark call reach the cap, so the second benchmark attempt is refused."""
+        benchmark call reach the cap, so the next benchmark call is refused. The direct loop runs the attempts of
+        one item in turn, so that call is attempt 2 of the same item. Inspect runs attempt 1 of every item before
+        attempt 2, so that call is attempt 1 of the next item."""
         res, h = run("cap_arm", stand_in=host(usage=(150_000, 0)), settings=mod_settings(cap_usd=1.65))
         recs = records(res)
         self.assertEqual([r["type"] for r in recs], ["header", "run", "run_stopped", "summary"])
-        self.assertEqual((recs[2]["reason"], recs[2]["arm"], recs[2]["attempt"]), ("stopped_at_cap", "benchmark", 2))
+        self.assertEqual((recs[2]["reason"], recs[2]["arm"], recs[2]["attempt"]),
+                         ("stopped_at_cap", "benchmark", 2 if ENGINE == "direct" else 1))
         self.assertEqual((res.status, recs[-1]["measures_complete"], len(h.requests)), ("stopped_at_cap", False, 11))
         self.assertEqual(runlog.check_log(res.log_path, repo=REPO), [])
         lines, diff = runlog.rescore_log(res.log_path, repo=REPO, replies=str(res.run_dir / mod011_log.STORE_FILE))
