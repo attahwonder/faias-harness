@@ -10,8 +10,8 @@ The cap and the limit come from the risk-appetite file (A-03). The owner declare
 25 GBP, and the session limit is 50 GBP. With a null value the gate cannot be built, so the orchestrator does not enable
 tools ("refund cap not declared"). The reader of the file (read_risk_appetite) gives one problem for a file that
 cannot be read. It does the same for a file that is not UTF-8 YAML and for a lone surrogate. It also does the same for
-a top level or a fee_refund value that is not a mapping, and for a declared_by or declared_on value that is not a text.
-The function load_risk_appetite raises that problem as RiskFileError.
+a top level or a fee_refund value that is not a mapping. A declared_by or declared_on value that is not a text gets
+one problem too. The function load_risk_appetite raises that problem as RiskFileError.
 
 Since 0.7, config_read("gate") also names the irreversible actions (IRREVERSIBLE_ACTIONS: one class, the fee
 refund, SPEC.md section 3, C-09), the function that checks, and the SHA-256 of this file. TP-AGT-012 reads them

@@ -12,7 +12,7 @@ mod011.check_comparators reads it. A run of OVERLAP_LIMIT (8) words or more is a
 
 The tool reads no network and calls no model. Before it reads any input, it refuses an --out path that exists, or
 whose folder is not found or is a file. It refuses a result file that it cannot write. It writes the result to a new
-temporary file in the folder of --out, and then moves that file to --out only while --out does not exist (write_new).
+temporary file in the folder of --out. Then it moves that file to --out only while --out does not exist (write_new).
 So a write that fails leaves no file at --out, and the tool never overwrites a file. It refuses a comparator file or a
 GSM8K file that is not found, or that the system does not let it read (read_file). It refuses a comparator file in
 which a JSON object holds a key more than once, at any depth, with the key, as the engine does (jsonkeys.unique_keys):
@@ -146,9 +146,10 @@ def result(comparator_raw, comparator_name, files):
 
 def write_new(out, data):
     """Write the bytes `data` to the new file `out`. They go to a new temporary file in the folder of `out` first. That
-    file then becomes `out` only if `out` does not exist: by a hard link on POSIX (os.rename would overwrite there),
-    and by os.rename on Windows. Each of them refuses an `out` that exists (FileExistsError). On any error the
-    temporary file is removed and the error goes on, so no part of the result stays at `out` or beside it."""
+    file then becomes `out` only if `out` does not exist. On POSIX the move is a hard link, because os.rename replaces
+    a file there. On Windows the move is os.rename. Each of them refuses an `out` that exists (FileExistsError). On
+    any error the temporary file is removed and the error goes on. So no part of the result stays at `out` or beside
+    it."""
     fd, tmp = tempfile.mkstemp(dir=out.parent, prefix=f".{out.name}.", suffix=".tmp")
     try:
         with os.fdopen(fd, "wb") as f:

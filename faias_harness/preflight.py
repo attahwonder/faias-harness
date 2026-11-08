@@ -803,7 +803,7 @@ def dat009_start_problems(settings, variant="standard"):
 
 def dat009_data_refusal(settings):
     """Why dat009.load_data refuses the bank or the documents of a TP-DAT-009 run, or None. The engine reads the two
-    files with it for the matrix (evidence output E1), so the preflight and --start read them with it too. The
+    files with it for the matrix (evidence output E1). So the preflight and --start read them with it too. The
     documents are the store of the tools file. So when tools_file_refusal names a refusal, this check is not made, and
     one fault gives one problem."""
     from .engine import dat009

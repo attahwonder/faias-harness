@@ -898,10 +898,10 @@ class PreflightTests(unittest.TestCase):
         self.assertTrue(self.problems(out)[0].startswith(f"  - {want}"), out[-1500:])
 
     def test_a_baseline_log_with_a_lone_surrogate_is_refused_with_or_without_a_key(self):
-        """A signed copy of the baseline log holds the JSON escape \\ud83d in the time of the owner's confirmation,
-        which no check reads. sec002_log.read_baseline reads it through sec006_log.read_baseline, which refuses it in
-        one problem, with no key and with the key. The preflight prints the problem, and --start refuses in that one
-        line, exit 2, before the typed `yes`. Before, the preflight and --start passed the log."""
+        """A signed copy of the baseline log holds the JSON escape \\ud83d in the time of the owner's confirmation. No
+        check reads that text. sec002_log.read_baseline reads the log through sec006_log.read_baseline. That reader
+        refuses it in one problem, with no key and with the key. The preflight prints the problem. --start refuses in
+        that one line, exit 2, before the typed `yes`. Before, the preflight and --start passed the log."""
         recs = runlog.read_log(_MOD["baseline"])
         recs[0]["owner_confirmation"]["time"] = "LONE_MARK"
         lines = [runlog.canonical(r) for r in recs]

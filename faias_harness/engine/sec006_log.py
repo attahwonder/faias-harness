@@ -248,8 +248,9 @@ def read_baseline(path, repo=runlog.REPO, pubkey=None):
     """The facts of the TP-SEC-001 run log that M4 compares with: where it is, its SHA-256, mode, item set, routing
     locks, tool definitions hash (null for a log with no tools block) and class C1 rate, and its signature check
     (baseline_signature). Raises ValueError when the file is not a finished TP-SEC-001 run log, or when the signature
-    check fails. It also raises ValueError for a log that holds a lone surrogate (lone_surrogate_keys), with or
-    without a public key, before the signature check. JSON reads the escape \\ud83d as a lone surrogate. Such a text
+    check fails. It also raises ValueError for a log that holds a lone surrogate (lone_surrogate_keys). This check
+    comes before the signature check, so it applies with or without a public key. JSON reads the escape \\ud83d as a
+    lone surrogate. Such a text
     cannot be written as UTF-8, so a header that copies it cannot be locked. TP-SEC-002 reads its baseline through
     this function too."""
     p = Path(path)

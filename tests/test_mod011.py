@@ -724,8 +724,8 @@ class OverlapToolTests(unittest.TestCase):
 
     @staticmethod
     def writes_as(make):
-        """Each open for writing in binary mode gives make(the real file object) in its place. The tool opens its
-        result file in this way, and the reads of the inputs are not changed."""
+        """Each open of a file in binary write mode gives make(the real file object) in its place. The tool opens
+        its result file in this way, and the reads of the inputs are not changed."""
         real_open = io.open
 
         def opener(file, mode="r", *a, **k):
@@ -750,8 +750,8 @@ class OverlapToolTests(unittest.TestCase):
             self.assertFalse(out.exists())
 
     def test_a_write_that_fails_part_way_leaves_no_file_and_a_second_run_writes_the_result(self):
-        """The write of the result stops part way (the disk is full here): half of the bytes reach the file, and then
-        the write raises OSError. The tool refuses in one line and exits 2. No file stays at --out, and no temporary
+        """The write of the result stops part way, as on a full disk. Half of the bytes reach the file, and then the
+        write raises OSError. The tool refuses in one line and exits 2. No file stays at --out, and no temporary
         file stays in its folder. So a second run with the same --out writes the whole result. Before, the part of the
         result stayed at --out, and the second run refused it because it existed."""
         class Half:
@@ -784,10 +784,10 @@ class OverlapToolTests(unittest.TestCase):
             self.assertEqual(sorted(p.name for p in d.iterdir()), sorted(before + [out.name]))
 
     def test_an_out_file_made_while_the_tool_runs_is_not_overwritten(self):
-        """Another process makes the --out file after the tool checked that it does not exist, and before the tool
-        moves its result there. The tool refuses in one line, in the words of its refusal of an --out path that exists,
-        and exits 2. The other file keeps its bytes, and no temporary file stays in the folder. Before, the tool
-        overwrote that file."""
+        """Another process makes the --out file while the tool runs. This comes after the check that --out does not
+        exist, and before the move of the result. The tool refuses in one line and exits 2. The line is the one for an
+        --out path that exists. The other file keeps its bytes, and no temporary file stays in the folder. Before, the
+        tool overwrote that file."""
         with tempfile.TemporaryDirectory() as d:
             d = Path(d)
             gsm = self.gsm8k_files(d)

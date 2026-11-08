@@ -328,12 +328,12 @@ class GateAndReconcileTests(_Base):
                 self.assertFalse((self.dir / f"risk_{name}").exists())
 
     def test_a_risk_appetite_file_with_a_date_or_a_value_that_is_not_a_mapping_is_refused_before_the_lock(self):
-        """A copy of the risk-appetite file with declared_on unquoted, which YAML reads as a date, and a copy whose
-        fee_refund value or top level is not a mapping. The checked reader (gate.read_risk_appetite) refuses each, so
-        the engine refuses the run in one message, before any file of the run. Before, the date passed the reader, and
-        the engine went on to the lock, where the canonical form of the header raised TypeError. A fee_refund or a top
-        level that is not a mapping stopped the engine with AttributeError. A stand-in for ToolRun fails the test at
-        once when the run goes past the check."""
+        """One copy of the risk-appetite file has declared_on with no quotes, which YAML reads as a date. Other
+        copies have a fee_refund value or a top level that is not a mapping. The checked reader
+        (gate.read_risk_appetite) refuses each. So the engine refuses the run in one message, before any file of the
+        run. Before, the date passed the reader, and the engine went on to the lock. There the canonical form of the
+        header raised TypeError. A fee_refund or a top level that is not a mapping stopped the engine with
+        AttributeError. A stand-in for ToolRun fails the test at once when the run goes past the check."""
         from targets.srd1.app import gate as gate_mod
         risk, real_bytes = gate_mod.RISK_FILE.resolve(), Path.read_bytes
         raw, line = real_bytes(risk), b'declared_on: "2026-10-29"'

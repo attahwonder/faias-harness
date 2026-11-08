@@ -1159,13 +1159,13 @@ class _PreflightCase(unittest.TestCase):
 
 
 class ValueFileFormTests(_PreflightCase):
-    """The firm-values file and the risk-appetite file of SRD-1. A changed copy has a top level, a `values` value or a
-    `fee_refund` value that is present and not a mapping. Another copy of the risk-appetite file has a declared_by or
-    declared_on value that is not a text: an unquoted date or time, or a number. The reader of each file refuses it in
-    one problem (profile.read_firm_values, gate.read_risk_appetite). The preflight of TP-AGT-012 prints the refusal, and
-    --start refuses in one problem line, exit 2, before any model call. An empty file and a null value read as an
-    empty mapping, and the shipped files read as before. Before, a value that is not a mapping stopped the preflight
-    with AttributeError, and 0, an empty text and an empty list read as an empty mapping. An unquoted date passed the
+    """The firm-values file and the risk-appetite file of SRD-1. In changed copies, a top level, a `values` value or a
+    `fee_refund` value is present and not a mapping. In another copy of the risk-appetite file, declared_by or
+    declared_on is a date, a time or a number. The reader of each file refuses it in one problem
+    (profile.read_firm_values, gate.read_risk_appetite). The preflight of TP-AGT-012 prints the refusal. --start
+    refuses in one problem line, exit 2, before any model call. An empty file and a null value read as an empty
+    mapping. The shipped files read as before. Before, a value that is not a mapping stopped the preflight with
+    AttributeError. A value of 0, an empty text or an empty list read as an empty mapping. An unquoted date passed the
     preflight and --start, and the TP-AGT-012 engine then stopped with TypeError at the lock."""
     FIRM, RISK = "targets/srd1/firm_values.yaml", "targets/srd1/risk_appetite.yaml"
     TOP = {"a list": b"- a\n- b\n", "a text": b"a text\n", "0": b"0\n", "an empty text": b"''\n",
@@ -1223,7 +1223,8 @@ class ValueFileFormTests(_PreflightCase):
         with changed_bytes(self.RISK, raw.replace(self.DECLARED_ON, b"declared_on: null")):
             self.assertIsNone(gate.read_risk_appetite()[0]["declared_on"])
         values, sha256, problem = gate.read_risk_appetite()
-        self.assertEqual((values["declared_on"], sha256, problem), ("2026-10-29", hashlib.sha256(raw).hexdigest(), None))
+        self.assertEqual((values["declared_on"], sha256, problem),
+                         ("2026-10-29", hashlib.sha256(raw).hexdigest(), None))
         self.assertEqual(read_firm_values(REPO / self.FIRM)[0]["firm.TP-AGT-012.M3"], 5)
 
     def test_the_preflight_of_tp_agt_012_names_each_form_refusal_and_start_refuses_in_one_problem_line(self):
@@ -1243,12 +1244,12 @@ class ValueFileFormTests(_PreflightCase):
 
 class Dat009DataFileTests(_PreflightCase):
     """The TP-DAT-009 engine reads the synthetic bank and the synthetic documents with dat009.load_data, for the matrix
-    (evidence output E1). load_data refuses a lone surrogate, a file that is not UTF-8 YAML and a file that cannot be
-    read, in one problem (DataError, a ValueError). The preflight of TP-DAT-009 reads the two files with it. It prints
-    `Data files: a file is refused: <problem>`, and --start refuses in one problem line, exit 2, before any model
-    call. A fault in the documents, which are the store of the tools file, is named once, as a refused tool emulator
-    file. Before, the preflight did not read the bank, and the pure-Python YAML loader passed the escape into the
-    matrix."""
+    (evidence output E1). load_data refuses each of three faults in one problem (DataError, a ValueError). These are
+    a lone surrogate, a file that is not UTF-8 YAML and a file that cannot be read. The preflight of TP-DAT-009
+    reads the two files with it. It prints `Data files: a file is refused: <problem>`. --start refuses in one
+    problem line, exit 2, before any model call. The documents are also the store of the tools file. So a fault in
+    the documents is named once, as a refused tool emulator file. Before, the preflight did not read the bank, and
+    the pure-Python YAML loader passed the escape into the matrix."""
     LOADERS = [yaml.SafeLoader] + ([yaml.CSafeLoader] if hasattr(yaml, "CSafeLoader") else [])
     BANK, DOCS = "targets/srd1/data/synthetic_bank.yaml", "targets/srd1/data/synthetic_documents.yaml"
     ROW = b"{customer_ref: SYN-C-0001, domain: retail}"
@@ -1275,7 +1276,7 @@ class Dat009DataFileTests(_PreflightCase):
                 self.assertEqual(str(cm.exception), problem)
                 self.preflight_and_start(argv, f"Data files: a file is refused: {problem}\n",
                                          f"TP-DAT-009: a data file is refused: {problem}")
-        # A fault in the documents: the tools file check names it, and the data check is not made (one problem).
+        # A fault in the documents gives one problem. The tools file check names it, and the data check is not made.
         docs = (REPO / self.DOCS).read_bytes()
         store = "the store holds a lone surrogate in the key or the value of 'probe'"
         with no_outside_network(), mock.patch.dict(os.environ, {KEY_ENV: FAKE_KEY_VALUE}), \
@@ -1295,8 +1296,9 @@ class Dat009DataFileTests(_PreflightCase):
 
 
 class ToolsFileAtTheRunTests(_PreflightCase):
-    """A run that serves a tools file reads it again when it starts the tool emulator (toolrun.ToolRun), after the typed
-    `yes` and before the lock. Here the file changes after the preflight: each read of it in the engine gives bytes
+    """A run that serves a tools file reads it again when it starts the tool emulator (toolrun.ToolRun). That read comes
+    after the typed `yes` and before the lock. Here the file changes after the preflight. Each read of it in the engine
+    gives bytes
     that are not UTF-8. ToolRun then raises a ValueError with the problem line of the preflight. So --start prints one
     `Run refused:` line and the run folder, and exits 2, with no traceback. The engine sends no request and opens no
     run log. TP-AGT-012, TP-SEC-001 and TP-SEC-006 serve targets/srd1/tools.yaml, and TP-DAT-009 serves

@@ -133,10 +133,10 @@ class DataError(ValueError):
 
 
 def _read_data(path):
-    """(the data of the YAML file at `path`, its bytes). A file that cannot be read, a file that is not UTF-8 YAML and
-    a lone surrogate (lone_surrogate_keys) raise DataError, in the form of the reader of the firm-values file
-    (profile.read_firm_values). The pure-Python YAML loader reads the escape \\ud83d as a lone surrogate, and libyaml
-    refuses it."""
+    """(the data of the YAML file at `path`, its bytes). Three faults raise DataError, in the form of the reader of the
+    firm-values file (profile.read_firm_values). These are a file that cannot be read, a file that is not UTF-8 YAML
+    and a lone surrogate (lone_surrogate_keys). The pure-Python YAML loader reads the escape \\ud83d as a lone
+    surrogate, and libyaml refuses it."""
     path = Path(path)
     try:
         raw = path.read_bytes()

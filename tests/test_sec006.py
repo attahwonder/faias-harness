@@ -1075,8 +1075,8 @@ class EndToEndTests(unittest.TestCase):
 
     def lone_copy(self, name, set_mark):
         """A copy of the TP-SEC-001 baseline log, signed with the key of this class. set_mark(header) sets one text of
-        its header to the mark LONE_MARK. In the file, the mark becomes a placeholder text and the JSON escape \\ud83d,
-        which JSON reads as a lone surrogate. The lock of the header does not cover that text."""
+        its header to the mark LONE_MARK. In the file, the mark becomes a placeholder text and the JSON escape
+        \\ud83d. JSON reads that escape as a lone surrogate. The lock of the header does not cover that text."""
         recs = runlog.read_log(self.baseline)
         set_mark(recs[0])
         lines = [runlog.canonical(r) for r in recs]
@@ -1089,13 +1089,13 @@ class EndToEndTests(unittest.TestCase):
         return copy
 
     def test_a_baseline_log_with_a_lone_surrogate_is_refused_with_or_without_a_key(self):
-        """A signed copy of the baseline log holds the JSON escape \\ud83d in a text of its header: the time of the
-        owner's confirmation, which no check reads. The reader of the M4 baseline (sec006_log.read_baseline) refuses it
-        in one problem, with no key and with the key. The preflight prints the problem. --start refuses in that one
-        line, exit 2, before the typed `yes`. The engine refuses the run before any model call and before the run
-        folder, and so it does for a lone surrogate in a text that the header of a run copies (routing.only). Before,
-        the preflight passed the log, and --start reached the typed `yes`. The engine then ran the whole set with the
-        first log, and stopped at the lock with UnicodeEncodeError with the second."""
+        """A signed copy of the baseline log holds the JSON escape \\ud83d in the time of the owner's confirmation. No
+        check reads that text. The reader of the M4 baseline (sec006_log.read_baseline) refuses it in one problem,
+        with no key and with the key. The preflight prints the problem. --start refuses in that one line, exit 2,
+        before the typed `yes`. The engine refuses the run before any model call and before the run folder. It does
+        the same for a lone surrogate in a text that the header of a run copies (routing.only). Before, the preflight
+        passed the log, and --start reached the typed `yes`. With the first log, the engine then ran the whole set.
+        With the second, it stopped at the lock with UnicodeEncodeError."""
         def confirmation(h):
             h["owner_confirmation"]["time"] = "LONE_MARK"
         copy = self.lone_copy("lone", confirmation)
@@ -1331,9 +1331,10 @@ class BaselineTests(unittest.TestCase):
                 sec006_log.read_baseline(Path(t) / "missing.jsonl")
 
     def test_a_log_with_a_lone_surrogate_is_refused_in_one_problem_by_both_baseline_readers(self):
-        """The JSON escape \\ud83d in a text of a record after the header. The reader of the M4 baseline of TP-SEC-006
-        and the reader of the baseline of TP-SEC-002 refuse the log in one problem that names the key, before any other
-        check. Before, the first said that the log has no complete summary, and a complete log passed."""
+        """The JSON escape \\ud83d in a text of a record after the header. Two readers refuse the log in one problem
+        that names the key, before any other check. They are the reader of the M4 baseline of TP-SEC-006 and the
+        reader of the baseline of TP-SEC-002. Before, the first said that the log has no complete summary, and a
+        complete log passed."""
         from faias_harness.engine import sec002_log
         with tempfile.TemporaryDirectory() as t:
             p = Path(t) / "x.jsonl"
