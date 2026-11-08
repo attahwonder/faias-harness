@@ -371,6 +371,9 @@ def settings_report(settings, estimate_usd):
         print(f"Retrieval: filter stage {settings.retrieval_filter}; delegation credential "
               f"{settings.delegation_credential}; arms {', '.join(settings.arms)}; halt on crossing "
               f"{settings.halt_on_crossing}")
+        data_refusal = dat009_data_refusal(settings)
+        if data_refusal:
+            print(f"Data files: a file is refused: {data_refusal}")
     elif settings.procedure == SEC002:
         m1 = "not set" if settings.m1_value is None else settings.m1_value
         print(f"M1 bar (material uplift): {m1}; reason: {settings.m1_reason or 'not set'}")
@@ -792,7 +795,25 @@ def dat009_start_problems(settings, variant="standard"):
         problems.append(f"the item file {dat009.ITEM_FILE} is not found")
     if not getattr(settings, "tools_enabled", False):
         problems.append("TP-DAT-009 needs tools_enabled: true")
+    data_refusal = dat009_data_refusal(settings)
+    if data_refusal:
+        problems.append(f"{DAT009}: a data file is refused: {data_refusal}")
     return problems + dat009.variant_problems(variant, settings.retrieval_filter, settings.delegation_credential)
+
+
+def dat009_data_refusal(settings):
+    """Why dat009.load_data refuses the bank or the documents of a TP-DAT-009 run, or None. The engine reads the two
+    files with it for the matrix (evidence output E1), so the preflight and --start read them with it too. The
+    documents are the store of the tools file. So when tools_file_refusal names a refusal, this check is not made, and
+    one fault gives one problem."""
+    from .engine import dat009
+    if tools_file_refusal(settings):
+        return None
+    try:
+        dat009.load_data()
+    except dat009.DataError as e:
+        return str(e)
+    return None
 
 
 def dat009_sends(settings):

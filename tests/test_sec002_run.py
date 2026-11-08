@@ -897,6 +897,35 @@ class PreflightTests(unittest.TestCase):
         self.assertEqual(rc, 2, out[-1500:])
         self.assertTrue(self.problems(out)[0].startswith(f"  - {want}"), out[-1500:])
 
+    def test_a_baseline_log_with_a_lone_surrogate_is_refused_with_or_without_a_key(self):
+        """A signed copy of the baseline log holds the JSON escape \\ud83d in the time of the owner's confirmation,
+        which no check reads. sec002_log.read_baseline reads it through sec006_log.read_baseline, which refuses it in
+        one problem, with no key and with the key. The preflight prints the problem, and --start refuses in that one
+        line, exit 2, before the typed `yes`. Before, the preflight and --start passed the log."""
+        recs = runlog.read_log(_MOD["baseline"])
+        recs[0]["owner_confirmation"]["time"] = "LONE_MARK"
+        lines = [runlog.canonical(r) for r in recs]
+        self.assertEqual("".join(lines).count("LONE_MARK"), 1)
+        lines[0] = lines[0].replace("LONE_MARK", "placeholder\\ud83d")
+        copy = self.dir / "baselines" / "lone" / "run_log.jsonl"
+        copy.parent.mkdir(parents=True, exist_ok=True)
+        copy.write_bytes("".join(line + "\n" for line in lines).encode("utf-8"))
+        runlog.sign_log(copy, _MOD["priv"])
+        problem = "the baseline log holds a lone surrogate in the key or the value of 'time'"
+        for mode, key, extra, rc_want, head in (
+                ("explore", None, (), 0, None),
+                ("explore", None, self.start, 2, "START REFUSED"),
+                ("evidence", str(_MOD["pub"]), (), 2, "BASELINE REFUSED"),
+                ("evidence", str(_MOD["pub"]), self.start, 2, "START REFUSED")):
+            with self.subTest(mode=mode, key=bool(key), start=bool(extra)):
+                rc, out = self.preflight(*extra, baseline=copy, mode=mode, baseline_pubkey=key)
+                self.assertEqual(rc, rc_want, out[-1500:])
+                self.assertNotIn("Traceback", out)
+                self.assertIn(f"Baseline check: {problem}\n", out)
+                if head:
+                    self.assertEqual(self.problems(out, f"{head}. No run starts. Fix these points first:"),
+                                     [f"  - {problem}"])
+
     def test_start_refuses_families_that_are_not_those_of_the_item_file(self):
         """The preflight refuses before the operator types yes. The engine compares the two lists too (EngineTests).
         On SRD-1 the field product_owner_declared is printed, and false does not stop the run."""

@@ -19,7 +19,8 @@ UTF-8.
   of four more YAML files of the operator. Three are the firm-values file (profile.read_firm_values), and the tools
   file and the store of the tool emulator (emulators/). The fourth is the TP-SEC-002 declaration of the channel
   inputs (engine/run_sec002.py). The reader of the SRD-1 risk-appetite file uses them too
-  (targets/srd1/app/gate.py, read_risk_appetite).
+  (targets/srd1/app/gate.py, read_risk_appetite). So do the reader of the TP-DAT-009 data files (engine/dat009.py,
+  load_data) and the reader of an M4 baseline log (engine/sec006_log.py, read_baseline).
 """
 import re
 import sys

@@ -1241,6 +1241,108 @@ class ValueFileFormTests(_PreflightCase):
                 self.preflight_and_start(argv, line, problem if kind == "firm" else risk_line.format(problem))
 
 
+class Dat009DataFileTests(_PreflightCase):
+    """The TP-DAT-009 engine reads the synthetic bank and the synthetic documents with dat009.load_data, for the matrix
+    (evidence output E1). load_data refuses a lone surrogate, a file that is not UTF-8 YAML and a file that cannot be
+    read, in one problem (DataError, a ValueError). The preflight of TP-DAT-009 reads the two files with it. It prints
+    `Data files: a file is refused: <problem>`, and --start refuses in one problem line, exit 2, before any model
+    call. A fault in the documents, which are the store of the tools file, is named once, as a refused tool emulator
+    file. Before, the preflight did not read the bank, and the pure-Python YAML loader passed the escape into the
+    matrix."""
+    LOADERS = [yaml.SafeLoader] + ([yaml.CSafeLoader] if hasattr(yaml, "CSafeLoader") else [])
+    BANK, DOCS = "targets/srd1/data/synthetic_bank.yaml", "targets/srd1/data/synthetic_documents.yaml"
+    ROW = b"{customer_ref: SYN-C-0001, domain: retail}"
+
+    def test_a_refused_bank_is_named_by_the_preflight_and_start_refuses_in_one_problem_line(self):
+        from faias_harness.engine import dat009
+        raw = (REPO / self.BANK).read_bytes()
+        self.assertEqual(raw.count(self.ROW), 1)
+        escape = raw.replace(self.ROW, b'{customer_ref: SYN-C-0001, domain: "retail\\ud83d"}')
+        not_utf8 = raw.replace(self.ROW, b'{customer_ref: SYN-C-0001, domain: "retail\xed\xa0\xbd"}')
+        cases = ([("escape", escape, loader, "synthetic_bank.yaml holds a lone surrogate in the key or the value of "
+                   "'domain'" if loader is yaml.SafeLoader else "cannot read synthetic_bank.yaml: ScannerError")
+                  for loader in self.LOADERS]
+                 + [("bytes", not_utf8, self.LOADERS[-1], "cannot read synthetic_bank.yaml: UnicodeDecodeError"),
+                    ("absent", None, self.LOADERS[-1], "cannot read synthetic_bank.yaml: FileNotFoundError")])
+        argv = self.argv("dat009", procedure="TP-DAT-009", item_set="TP-DAT-009", reviewer_values={}, **self.TOOLS)
+        for name, data, loader, problem in cases:
+            with self.subTest(file=name, loader=loader.__name__), no_outside_network(), \
+                    mock.patch.dict(os.environ, {KEY_ENV: FAKE_KEY_VALUE}), \
+                    mock.patch.object(yamlio, "loader", lambda: loader), \
+                    (absent_file(self.BANK) if data is None else changed_bytes(self.BANK, data)):
+                with self.assertRaises(dat009.DataError) as cm:
+                    dat009.load_data()
+                self.assertEqual(str(cm.exception), problem)
+                self.preflight_and_start(argv, f"Data files: a file is refused: {problem}\n",
+                                         f"TP-DAT-009: a data file is refused: {problem}")
+        # A fault in the documents: the tools file check names it, and the data check is not made (one problem).
+        docs = (REPO / self.DOCS).read_bytes()
+        store = "the store holds a lone surrogate in the key or the value of 'probe'"
+        with no_outside_network(), mock.patch.dict(os.environ, {KEY_ENV: FAKE_KEY_VALUE}), \
+                mock.patch.object(yamlio, "loader", lambda: yaml.SafeLoader), \
+                changed_bytes(self.DOCS, b'probe: "example \\ud83d"\n' + docs):
+            self.preflight_and_start(argv, f"Tool emulator file: {self.DOCS} is refused: {store}\n",
+                                     f"TP-DAT-009: the tool emulator file {self.DOCS} is refused: {store}")
+            self.assertNotIn("Data files:", run_main(argv)[1])
+        # A store with no list `documents` (the tools file check passes a list `accounts`).
+        other = self.dir / "documents.yaml"
+        other.write_bytes(b"accounts: []\n")
+        with self.assertRaises(dat009.DataError) as cm:
+            dat009.load_data(REPO / self.BANK, other)
+        self.assertEqual(str(cm.exception), "documents.yaml: the value of 'documents' is not a list")
+        bank, documents, _, _ = dat009.load_data()
+        self.assertEqual((len(bank["customers"]), len(documents)), (4, 16))
+
+
+class ToolsFileAtTheRunTests(_PreflightCase):
+    """A run that serves a tools file reads it again when it starts the tool emulator (toolrun.ToolRun), after the typed
+    `yes` and before the lock. Here the file changes after the preflight: each read of it in the engine gives bytes
+    that are not UTF-8. ToolRun then raises a ValueError with the problem line of the preflight. So --start prints one
+    `Run refused:` line and the run folder, and exits 2, with no traceback. The engine sends no request and opens no
+    run log. TP-AGT-012, TP-SEC-001 and TP-SEC-006 serve targets/srd1/tools.yaml, and TP-DAT-009 serves
+    targets/srd1/tools_retrieval.yaml. Before, mcp_tools.ToolsError went on from --start as a traceback."""
+    M = {"value": 0.5, "reason": "test value for the unit tests"}
+    CASES = {"TP-AGT-012": ("targets/srd1/tools.yaml", {"procedure": "TP-AGT-012", "item_set": "TP-AGT-012",
+                                                        "reviewer_values": {}}),
+             "TP-DAT-009": ("targets/srd1/tools_retrieval.yaml", {"procedure": "TP-DAT-009", "item_set": "TP-DAT-009",
+                                                                  "reviewer_values": {}}),
+             "TP-SEC-001": ("targets/srd1/tools.yaml", {"item_set": "TP-SEC-001"}),
+             "TP-SEC-006": ("targets/srd1/tools.yaml", {"procedure": "TP-SEC-006", "item_set": "TP-SEC-006",
+                                                        "reviewer_values": {"M3": M, "M4": M}})}
+
+    def test_a_tools_file_that_changes_after_the_preflight_gives_one_run_refused_line_and_exit_2(self):
+        from faias_harness.engine import run_agt012, run_dat009, run_sec006, spike
+        engines = {"TP-AGT-012": run_agt012.execute, "TP-DAT-009": run_dat009.execute, "TP-SEC-001": spike.execute,
+                   "TP-SEC-006": run_sec006.execute}
+        probes = {"judge_family": "not applicable", "tool_call": {"ok": True}, "reasoning_text": {"present": False},
+                  "cost_usd": 0.0}
+
+        class Gateway:      # stands in for the gateway of the probes
+            class cap:
+                spent_usd = 0.0
+        for tp, (rel, changes) in self.CASES.items():
+            raw, run_dir, runs = (REPO / rel).read_bytes(), self.dir / f"run_{tp}", []
+
+            def executor(run=engines[tp], rel=rel, raw=raw, runs=runs, **kw):
+                runs.append(kw["run_dir"])
+                with changed_bytes(rel, b"probe: 'example \xed\xa0\xbd'\n" + raw):      # changed after the preflight
+                    return run(engine="direct", **kw)
+            argv = self.argv(tp, **changes, **self.TOOLS) + ["--start", "--sign-key", str(self.key), "--run-dir",
+                                                             str(run_dir)]
+            problem = f"{tp}: the tool emulator file {rel} is refused: cannot read the tools file (UnicodeDecodeError)"
+            with self.subTest(procedure=tp), no_outside_network(), \
+                    mock.patch.dict(os.environ, {KEY_ENV: FAKE_KEY_VALUE}), \
+                    mock.patch.object(spike, "run_probes", lambda g: probes):
+                rc, out = run_main(argv, input_fn=lambda p: "yes", gateway_factory=lambda s: Gateway(),
+                                   executor=executor, inspect_check=lambda: None)
+                self.assertEqual((rc, runs), (2, [run_dir]), out[-800:])
+                self.assertNotIn("Traceback", out)
+                self.assertTrue(out.endswith(f"Run refused: {problem}\nRun folder: {run_dir}\n"), out[-800:])
+                self.assertEqual(out.count("Run refused:"), 1)
+                self.assertFalse((run_dir / "run_log.jsonl").exists())
+                egress = run_dir / "egress.jsonl"
+                self.assertEqual(egress.read_bytes() if egress.exists() else b"", b"")
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -21,13 +21,20 @@ LEDGER_NAME = "tool_ledger.jsonl"
 
 
 class ToolRun:
-    """Use as a context manager, or call start() and stop()."""
+    """Use as a context manager, or call start() and stop(). A tools file that mcp_tools.load_tools refuses raises a
+    ValueError with the problem line of the preflight (tools_file_refusal). The file can change after the preflight.
+    So --start then gives one `Run refused:` line (preflight._execute), with no traceback."""
 
     def __init__(self, settings, run_dir, egress, tools_file=SRD1_TOOLS):
         self.key_env = settings.tool_key_env
         self.env = {self.key_env: secrets.token_hex(32)}    # the per-run key: in this dict only
         self.tools_file = Path(tools_file)
-        self.tools = mcp_tools.load_tools(self.tools_file)
+        try:
+            self.tools = mcp_tools.load_tools(self.tools_file)
+        except mcp_tools.ToolsError as e:
+            p = self.tools_file.resolve()
+            where = p.relative_to(REPO).as_posix() if p.is_relative_to(REPO) else str(p)
+            raise ValueError(f"{settings.procedure}: the tool emulator file {where} is refused: {e}") from None
         self.emulator = mcp_tools.ToolEmulator(self.tools, Path(run_dir) / LEDGER_NAME, api_key_env=self.key_env,
                                                env=self.env)
         self.egress = egress

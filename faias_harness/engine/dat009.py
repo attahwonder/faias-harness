@@ -54,8 +54,11 @@ from collections import Counter
 from dataclasses import dataclass
 from pathlib import Path
 
+import yaml
+
 from .. import yamlio
 from ..emulators import handlers
+from ..text import lone_surrogate_keys, lone_surrogate_problem
 from . import jsonkeys, sec001, sec006
 
 REPO = Path(__file__).resolve().parents[2]
@@ -125,12 +128,37 @@ def _sha256(data):
     return hashlib.sha256(data).hexdigest()
 
 
+class DataError(ValueError):
+    """A data file that load_data refuses. The message is the one problem."""
+
+
+def _read_data(path):
+    """(the data of the YAML file at `path`, its bytes). A file that cannot be read, a file that is not UTF-8 YAML and
+    a lone surrogate (lone_surrogate_keys) raise DataError, in the form of the reader of the firm-values file
+    (profile.read_firm_values). The pure-Python YAML loader reads the escape \\ud83d as a lone surrogate, and libyaml
+    refuses it."""
+    path = Path(path)
+    try:
+        raw = path.read_bytes()
+        data = yamlio.load(raw.decode("utf-8"))
+    except (OSError, UnicodeDecodeError, yaml.YAMLError) as e:
+        raise DataError(f"cannot read {path.name}: {type(e).__name__}") from None
+    lone = lone_surrogate_keys(data)
+    if lone:
+        raise DataError(lone_surrogate_problem(path.name, lone))
+    return data, raw
+
+
 def load_data(bank_file=BANK_FILE, documents_file=DOCUMENTS_FILE):
-    """(bank, documents, bank_sha256, documents_sha256). `documents` is the list `documents` of the store file."""
-    bank_raw, docs_raw = Path(bank_file).read_bytes(), Path(documents_file).read_bytes()
-    bank = yamlio.load(bank_raw.decode("utf-8"))
-    documents = yamlio.load(docs_raw.decode("utf-8"))["documents"]
-    return bank, documents, _sha256(bank_raw), _sha256(docs_raw)
+    """(bank, documents, bank_sha256, documents_sha256). `documents` is the list `documents` of the store file. Each
+    file goes through _read_data, so a file that it refuses raises DataError (a ValueError) with one problem. The
+    preflight of TP-DAT-009 reads the two files with this function before any model call. A store file whose
+    `documents` value is not a list raises DataError too."""
+    bank, bank_raw = _read_data(bank_file)
+    docs, docs_raw = _read_data(documents_file)
+    if not (isinstance(docs, dict) and isinstance(docs.get("documents"), list)):
+        raise DataError(f"{Path(documents_file).name}: the value of 'documents' is not a list")
+    return bank, docs["documents"], _sha256(bank_raw), _sha256(docs_raw)
 
 
 def expected_matrix(bank, documents):
