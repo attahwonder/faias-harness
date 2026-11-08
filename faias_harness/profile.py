@@ -162,16 +162,23 @@ def read_firm_values(path):
     cannot be read, for example an absent file. It can also be a file that is not UTF-8 YAML, or a lone surrogate
     (lone_surrogate_keys). The pure-Python YAML loader reads the escape \\ud83d as a lone surrogate. The preflight
     counts the declared values with it, and the TP-AGT-012 check of the time-to-halt reads it (engine/run_agt012.py,
-    halt_home_problems)."""
+    halt_home_problems). A top level or a `values` value that is present and not a mapping is a problem too. Examples
+    are 0, an empty text, a list and a text. An empty file and a null value read as an empty mapping."""
     path = Path(path)
     try:
-        data = yamlio.load(path.read_text(encoding="utf-8")) or {}
+        data = yamlio.load(path.read_text(encoding="utf-8"))
     except (OSError, UnicodeDecodeError, yaml.YAMLError) as e:
         return None, f"cannot read {path.name}: {type(e).__name__}"
     lone = lone_surrogate_keys(data)
     if lone:
         return None, lone_surrogate_problem(path.name, lone)
-    return data.get("values") or {}, None
+    data = {} if data is None else data
+    if not isinstance(data, dict):
+        return None, f"{path.name}: the top level is not a mapping"
+    values = {} if data.get("values") is None else data["values"]
+    if not isinstance(values, dict):
+        return None, f"{path.name}: the value of 'values' is not a mapping"
+    return values, None
 
 
 def load_profile(path):

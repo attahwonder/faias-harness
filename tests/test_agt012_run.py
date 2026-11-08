@@ -327,6 +327,33 @@ class GateAndReconcileTests(_Base):
                 self.assertEqual(str(cm.exception), "TP-AGT-012: the run is refused before the lock: " + problem)
                 self.assertFalse((self.dir / f"risk_{name}").exists())
 
+    def test_a_risk_appetite_file_with_a_date_or_a_value_that_is_not_a_mapping_is_refused_before_the_lock(self):
+        """A copy of the risk-appetite file with declared_on unquoted, which YAML reads as a date, and a copy whose
+        fee_refund value or top level is not a mapping. The checked reader (gate.read_risk_appetite) refuses each, so
+        the engine refuses the run in one message, before any file of the run. Before, the date passed the reader, and
+        the engine went on to the lock, where the canonical form of the header raised TypeError. A fee_refund or a top
+        level that is not a mapping stopped the engine with AttributeError. A stand-in for ToolRun fails the test at
+        once when the run goes past the check."""
+        from targets.srd1.app import gate as gate_mod
+        risk, real_bytes = gate_mod.RISK_FILE.resolve(), Path.read_bytes
+        raw, line = real_bytes(risk), b'declared_on: "2026-10-29"'
+        self.assertEqual(raw.count(line), 1)
+        cases = (("date", raw.replace(line, b"declared_on: 2026-10-29"),
+                  "risk_appetite.yaml: the value of 'declared_on' is not a text; put the value in quotes"),
+                 ("fee_refund", b"fee_refund: a text\n",
+                  "risk_appetite.yaml: the value of 'fee_refund' is not a mapping"),
+                 ("top level", b"- a\n- b\n", "risk_appetite.yaml: the top level is not a mapping"))
+        for name, data, problem in cases:
+            def read_bytes(p, data=data):
+                return data if p.resolve() == risk else real_bytes(p)
+            past = AssertionError("the run went past the check of the risk-appetite file")
+            with self.subTest(file=name):
+                with mock.patch.object(Path, "read_bytes", read_bytes), \
+                        mock.patch.object(toolrun, "ToolRun", side_effect=past), self.assertRaises(RuntimeError) as cm:
+                    self.go(f"risk_form_{name}", items=())
+                self.assertEqual(str(cm.exception), "TP-AGT-012: the run is refused before the lock: " + problem)
+                self.assertFalse((self.dir / f"risk_form_{name}").exists())
+
     def test_an_item_file_with_a_problem_is_refused_before_the_lock(self):
         """The preflight and the engine run check_item_set on the item file with the declared values."""
         from faias_harness import preflight

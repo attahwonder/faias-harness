@@ -1113,5 +1113,134 @@ class RiskAppetiteFileTests(unittest.TestCase):
                                  [f"  - {line}"])
 
 
+class _PreflightCase(unittest.TestCase):
+    """A profile with an attestation in a temporary folder, a run key, and the shared self-test log of this process."""
+    TOOLS = {"tools_enabled": True, "tool_key_env": "FAIAS_TEST_TOOL_KEY"}
+
+    @classmethod
+    def setUpClass(cls):
+        from tests.helpers import shared_selftest
+        log, _, pub = shared_selftest(REPO)
+        cls.selftest = ["--selftest-log", str(log), "--selftest-pubkey", str(pub)]
+
+    def setUp(self):
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        self.dir = Path(tmp.name)
+        att = self.dir / "attestation.txt"
+        att.write_text("Test system, synthetic data only.\n", encoding="utf-8")
+        doc = yaml.safe_load((REPO / "targets" / "srd1" / "profile.yaml").read_text(encoding="utf-8"))
+        doc["attestation_file"] = str(att)
+        self.profile = self.dir / "profile.yaml"
+        self.profile.write_text(yaml.safe_dump(doc), encoding="utf-8")
+        self.key = runlog.make_key(self.dir / "keys", repo=REPO)[0]
+
+    def argv(self, name, **changes):
+        """The preflight arguments with a settings file of `changes` in explore mode."""
+        path = self.dir / f"settings_{name}.yaml"
+        path.write_text(yaml.safe_dump(raw_settings(mode="explore", **changes)), encoding="utf-8")
+        return ["--profile", str(self.profile), "--settings", str(path), *self.selftest]
+
+    def preflight_and_start(self, argv, line, problem):
+        """The preflight exits 0 with `line` in its output and no traceback. Then --start exits 2 with the one problem
+        line `problem`, before any model call and with no run."""
+        called = []
+        rc, out = run_main(argv)
+        self.assertEqual(rc, 0, out[-800:])
+        self.assertNotIn("Traceback", out)
+        self.assertIn(line, out)
+        rc, out = run_main(argv + ["--start", "--sign-key", str(self.key)], inspect_check=lambda: None,
+                           gateway_factory=lambda s: called.append("model call"),
+                           executor=lambda **k: called.append("run"))
+        self.assertEqual((rc, called), (2, []), out[-800:])
+        self.assertNotIn("Traceback", out)
+        self.assertEqual(out.split("START REFUSED. No run starts. Fix these points first:\n")[1].splitlines(),
+                         [f"  - {problem}"])
+
+
+class ValueFileFormTests(_PreflightCase):
+    """The firm-values file and the risk-appetite file of SRD-1. A changed copy has a top level, a `values` value or a
+    `fee_refund` value that is present and not a mapping. Another copy of the risk-appetite file has a declared_by or
+    declared_on value that is not a text: an unquoted date or time, or a number. The reader of each file refuses it in
+    one problem (profile.read_firm_values, gate.read_risk_appetite). The preflight of TP-AGT-012 prints the refusal, and
+    --start refuses in one problem line, exit 2, before any model call. An empty file and a null value read as an
+    empty mapping, and the shipped files read as before. Before, a value that is not a mapping stopped the preflight
+    with AttributeError, and 0, an empty text and an empty list read as an empty mapping. An unquoted date passed the
+    preflight and --start, and the TP-AGT-012 engine then stopped with TypeError at the lock."""
+    FIRM, RISK = "targets/srd1/firm_values.yaml", "targets/srd1/risk_appetite.yaml"
+    TOP = {"a list": b"- a\n- b\n", "a text": b"a text\n", "0": b"0\n", "an empty text": b"''\n",
+           "an empty list": b"[]\n"}
+    VALUE = {"a text": b"a text", "0": b"0", "an empty text": b"''", "an empty list": b"[]", "a list": b"[a]"}
+    DECLARED_BY, DECLARED_ON = b'declared_by: "the owner (maintainer)"', b'declared_on: "2026-10-29"'
+
+    def firm_cases(self):
+        """{name: (bytes, the one problem)} for the firm-values file."""
+        top, key = ("firm_values.yaml: the top level is not a mapping",
+                    "firm_values.yaml: the value of 'values' is not a mapping")
+        return ({f"top level {n}": (b, top) for n, b in self.TOP.items()}
+                | {f"values {n}": (b"values: " + v + b"\n", key) for n, v in self.VALUE.items()})
+
+    def risk_cases(self):
+        """{name: (bytes, the one problem)} for the risk-appetite file."""
+        raw = (REPO / self.RISK).read_bytes()
+        self.assertEqual((raw.count(self.DECLARED_BY), raw.count(self.DECLARED_ON)), (1, 1))
+        top, key = ("risk_appetite.yaml: the top level is not a mapping",
+                    "risk_appetite.yaml: the value of 'fee_refund' is not a mapping")
+        text = "risk_appetite.yaml: the value of {} is not a text; put the value in quotes"
+        date, number = b"declared_on: 2026-10-29", b"declared_by: 2026"
+        return ({f"top level {n}": (b, top) for n, b in self.TOP.items()}
+                | {f"fee_refund {n}": (b"fee_refund: " + v + b"\n", key) for n, v in self.VALUE.items()}
+                | {"declared_on a date": (raw.replace(self.DECLARED_ON, date), text.format("'declared_on'")),
+                   "declared_on a time": (raw.replace(self.DECLARED_ON, b"declared_on: 2026-10-29 10:00:00"),
+                                          text.format("'declared_on'")),
+                   "declared_by a number": (raw.replace(self.DECLARED_BY, number), text.format("'declared_by'")),
+                   "both": (raw.replace(self.DECLARED_BY, number).replace(self.DECLARED_ON, date),
+                            text.format("'declared_by', 'declared_on'"))})
+
+    def test_each_reader_refuses_each_case_in_one_problem_and_reads_an_empty_file_and_null_as_an_empty_mapping(self):
+        import hashlib
+
+        from targets.srd1.app import gate
+        path = self.dir / "firm_values.yaml"
+        for name, (data, problem) in self.firm_cases().items():
+            path.write_bytes(data)
+            with self.subTest(file="firm", case=name):
+                self.assertEqual(read_firm_values(path), (None, problem))
+        for name, (data, problem) in self.risk_cases().items():
+            with self.subTest(file="risk", case=name), changed_bytes(self.RISK, data):
+                self.assertEqual(gate.read_risk_appetite(), (None, None, problem))
+                with self.assertRaises(gate.RiskFileError) as cm:
+                    gate.load_risk_appetite()
+                self.assertEqual(str(cm.exception), problem)
+        for data in (b"", b"null\n", b"values: null\n", b"note: x\n"):
+            path.write_bytes(data)
+            with self.subTest(file="firm", case=data):
+                self.assertEqual(read_firm_values(path), ({}, None))
+        for data in (b"", b"null\n", b"fee_refund: null\n", b"note: x\n"):
+            with self.subTest(file="risk", case=data), changed_bytes(self.RISK, data):
+                self.assertEqual(gate.read_risk_appetite(), ({}, hashlib.sha256(data).hexdigest(), None))
+        raw = (REPO / self.RISK).read_bytes()
+        with changed_bytes(self.RISK, raw.replace(self.DECLARED_ON, b"declared_on: null")):
+            self.assertIsNone(gate.read_risk_appetite()[0]["declared_on"])
+        values, sha256, problem = gate.read_risk_appetite()
+        self.assertEqual((values["declared_on"], sha256, problem), ("2026-10-29", hashlib.sha256(raw).hexdigest(), None))
+        self.assertEqual(read_firm_values(REPO / self.FIRM)[0]["firm.TP-AGT-012.M3"], 5)
+
+    def test_the_preflight_of_tp_agt_012_names_each_form_refusal_and_start_refuses_in_one_problem_line(self):
+        argv = self.argv("agt012", procedure="TP-AGT-012", item_set="TP-AGT-012", reviewer_values={}, **self.TOOLS)
+        firm, risk = self.firm_cases(), self.risk_cases()
+        cases = [("firm", self.FIRM, *firm[n]) for n in ("top level a list", "values a text")]
+        cases += [("risk", self.RISK, *risk[n]) for n in ("top level a list", "fee_refund a text", "declared_on a date",
+                                                          "declared_on a time", "declared_by a number")]
+        risk_line = "the risk-appetite file targets/srd1/risk_appetite.yaml is refused: {}"
+        for kind, rel, data, problem in cases:
+            line = (f"Firm values: the file is refused: {problem}; " if kind == "firm"
+                    else f"  - {risk_line.format(problem)}\n")
+            with self.subTest(file=kind, problem=problem), no_outside_network(), \
+                    mock.patch.dict(os.environ, {KEY_ENV: FAKE_KEY_VALUE}), changed_bytes(rel, data):
+                self.preflight_and_start(argv, line, problem if kind == "firm" else risk_line.format(problem))
+
+
+
 if __name__ == "__main__":
     unittest.main()
