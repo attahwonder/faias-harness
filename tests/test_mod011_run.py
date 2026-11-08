@@ -37,8 +37,8 @@ from faias_harness import preflight, selftest, settings as sm
 from faias_harness.adapters.srd1_http import Srd1ChatError, Srd1ChatTarget
 from faias_harness.engine import mod011, mod011_log, run_mod011, runlog, spike
 from targets.srd1.app import orchestrator
-from tests.helpers import (EVIDENCE_RAW, FAKE_KEY_VALUE, KEY_ENV, StandInModelHost, no_outside_network,
-                           shared_selftest)
+from tests.helpers import (EVIDENCE_RAW, FAKE_KEY_VALUE, KEY_ENV, StandInModelHost, SteadyClock, clock_back_after_lock,
+                           no_outside_network, run_clock_problems, shared_selftest)
 from tests.test_mod011 import CUTOFF, fixture_comparator, mod_raw, overlap_result
 
 REPO = Path(__file__).resolve().parents[1]
@@ -410,6 +410,27 @@ class RunTests(unittest.TestCase):
         self.assertEqual(code, 0, text)
         self.assertIn("runs rescored: 300 of 300; mismatches: 0", text)
         self.assertIn("differences: 0", text)
+
+
+class RunClockTests(unittest.TestCase):
+    """Each time after the lock is the lock time plus the steady time since the lock (runlog.run_clock). The run stops
+    at the cap after one benchmark call (StopTests), so it writes a run record and a run_stopped record."""
+
+    def run_clocks(self, name, **clocks):
+        return run(name, stand_in=host(usage=(150_000, 0)), settings=mod_settings(cap_usd=1.65), **clocks)[0]
+
+    def test_a_system_clock_that_moves_back_after_the_lock_gives_a_log_that_verifies(self):
+        """Before, each record took the system time, so a system clock that moved back made verify fail the log."""
+        res = self.run_clocks("clock_back", clock_ns=clock_back_after_lock())
+        ok, msg = runlog.verify_log(res.log_path, res.sig_path, fixture()["pub"], repo=REPO)
+        self.assertTrue(ok, msg)
+
+    def test_each_record_time_is_the_lock_time_plus_the_steady_time_since_the_lock(self):
+        steady = SteadyClock()
+        res = self.run_clocks("clock_steady", clock_ns=clock_back_after_lock(), steady_ns=steady)
+        recs = records(res)
+        self.assertEqual([r["type"] for r in recs], ["header", "run", "run_stopped", "summary"])
+        self.assertEqual(run_clock_problems(recs, steady), [])
 
 
 class StopTests(unittest.TestCase):

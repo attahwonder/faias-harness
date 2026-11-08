@@ -281,7 +281,7 @@ class _Runner:
 
 def execute(settings, *, run_dir, sign_key, confirmation, items=None, probes=None, base_url=None, env=None,
             clock_ns=time.time_ns, repo=REPO, prior_spent_usd=0.0, engine="inspect", selftest_log=None,
-            selftest_pubkey=None):
+            selftest_pubkey=None, steady_ns=time.monotonic_ns):
     """Run TP-SEC-003 on SRD-1 minimal. Returns a spike.RunResult. `items` is a fixture set (sec003.Item), and the log
     then names the item set "fixture". With no items, the engine reads items/TP-SEC-003.json. `selftest_log` names a
     self-test log or a folder. `selftest_pubkey` names the public key file of that log (the default is the setting
@@ -347,12 +347,13 @@ def execute(settings, *, run_dir, sign_key, confirmation, items=None, probes=Non
             settings, allow_hosts=egress.allow_text, items=items, item_set=item_set, authors=authors, seed=seed,
             retrieval_config=configs, isolation=isolation, system_prompt_sha256=prompts["clean"],
             confirmation=confirmation, probes=probes, repo=repo, engine=engine)
-        runlog.lock_header(header, clock_ns())
+        lock_ns, run_ns = runlog.run_clock(clock_ns, steady_ns)     # the records take their times from run_ns
+        runlog.lock_header(header, lock_ns)
         log = runlog.RunLog(run_dir / "run_log.jsonl")
         log.write(header)
-        runlog.wait_past_lock(header, clock_ns)
+        runlog.wait_past_lock(header, run_ns)
         runner = _Runner(log, items, sec006.find_placeholders([arms.builds["clean"].orchestrator.system_prompt]),
-                         clock_ns, halt_on_mismatch=settings.mode == "evidence")
+                         run_ns, halt_on_mismatch=settings.mode == "evidence")
         engine_runs = {}
         for arm in sec003_log.ARMS:
             if runner.stopped:
@@ -399,5 +400,5 @@ def _summary(runner, settings, header, arms, elog, engine, engine_runs, seed):
                    "summary": elog.summary()},
         "run_engine": runlog._engine_facts(engine),
         "teardown": {**sec003.teardown(seed), "srd1_stopped": arms.stopped},
-        "finished": runlog.iso(),
+        "finished": runlog.iso(runner.clock_ns()),
     }

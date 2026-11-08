@@ -28,8 +28,8 @@ from faias_harness.adapters.base import CallBudget, ChannelError
 from faias_harness.engine import external, runlog, sec001, sec002, sec002_families, sec002_log
 from faias_harness.profile import load_profile
 from faias_harness.settings import external_from_raw, load_settings, validate_external
-from tests.helpers import (FAKE_KEY_VALUE, SEC002_WRONG_TYPE, StandInModelHost, lock_time_twice_clock,
-                           no_outside_network, sec002_neutral_fixture)
+from tests.helpers import (FAKE_KEY_VALUE, SEC002_WRONG_TYPE, StandInModelHost, SteadyClock, clock_back_after_lock,
+                           lock_time_twice_clock, no_outside_network, run_clock_problems, sec002_neutral_fixture)
 from tests.standins import StandInA2A, StandInDirectLine, StandInJsonApp, StandInResponses
 from tests.test_sec002_run import A_TURNS, CELL_FAMILIES, E2_TEXT, MARKER, OBJ, POOL_TEXT, REFUSAL, item_file
 
@@ -182,6 +182,24 @@ class ExternalRunTests(unittest.TestCase):
         runs = [r for r in recs if r["type"] == "run"]
         self.assertLess(recs[0]["lock"]["time_ns"], runs[0]["t_ns"])
         self.assertTrue(runlog.verify_log(res.log_path, res.sig_path, self.pub, repo=REPO)[0])
+
+    def test_a_system_clock_that_moves_back_after_the_lock_gives_a_log_that_verifies(self):
+        """Each record time is the lock time plus the steady time since the lock (runlog.run_clock). Before, each
+        record took the system time, so a system clock that moved back made verify fail the log."""
+        settings, _ = ext_settings(cap_usd=0.105)
+        with StandInDirectLine(respond, secret=FAKE_KEY_VALUE) as dl:
+            res = self.run_ext(self.dl_profile(dl), settings, clock_ns=clock_back_after_lock())
+        ok, msg = runlog.verify_log(res.log_path, res.sig_path, self.pub, repo=REPO)
+        self.assertTrue(ok, msg)
+
+    def test_each_record_time_is_the_lock_time_plus_the_steady_time_since_the_lock(self):
+        settings, _ = ext_settings(cap_usd=0.105)
+        steady = SteadyClock()
+        with StandInDirectLine(respond, secret=FAKE_KEY_VALUE) as dl:
+            res = self.run_ext(self.dl_profile(dl), settings, clock_ns=clock_back_after_lock(), steady_ns=steady)
+        recs = runlog.read_log(res.log_path)
+        self.assertEqual((res.status, recs[-2]["type"]), ("stopped_at_cap", "run_stopped"))
+        self.assertEqual(run_clock_problems(recs, steady), [])
 
     def test_channel_errors_in_a_row_stop_the_run(self):
         settings, _ = ext_settings(max_consecutive_errors=4)
@@ -995,6 +1013,30 @@ class ExternalSec002Tests(unittest.TestCase):
 
     def complete(self):
         return self.run_sec002("complete", **FULL)
+
+    def clock_run(self, name, **clocks):
+        """One run with the clocks of the test (runlog.run_clock), not kept for the other tests."""
+        settings = self.settings(**FULL)
+        probe, prior = self.probe(settings, self.profile_path)
+        with no_outside_network():
+            return external.execute(settings, load_profile(self.profile_path), run_dir=self.dir / name,
+                                    sign_key=self.priv, confirmation=CONFIRM, probes={"channel": probe},
+                                    engine=ENGINE, env=ENV, prior_calls=prior, **clocks)
+
+    def test_a_system_clock_that_moves_back_after_the_lock_gives_a_log_that_verifies(self):
+        """Each record time is the lock time plus the steady time since the lock (runlog.run_clock). Before, each
+        record took the system time, so a system clock that moved back made verify fail the log."""
+        res = self.clock_run("clock_back", clock_ns=clock_back_after_lock())
+        ok, msg = runlog.verify_log(res.log_path, res.sig_path, self.pub, repo=REPO)
+        self.assertTrue(ok, msg)
+
+    def test_each_record_time_is_the_lock_time_plus_the_steady_time_since_the_lock(self):
+        steady = SteadyClock()
+        res = self.clock_run("clock_steady", clock_ns=clock_back_after_lock(), steady_ns=steady)
+        recs = runlog.read_log(res.log_path)
+        self.assertEqual(res.status, "complete")
+        self.assertTrue(any(r["type"] == "isolation_set" for r in recs))
+        self.assertEqual(run_clock_problems(recs, steady), [])
 
     def test_the_run_engine_of_the_tests_gives_a_log_that_verifies_and_rescores(self):
         """The engine of the other external tests: Inspect where it is installed, else the direct loop."""

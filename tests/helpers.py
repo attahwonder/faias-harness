@@ -144,6 +144,58 @@ def lock_time_twice_clock():
     return lambda: start + max(0, next(calls) - 1)
 
 
+def clock_back_after_lock(back_s=5):
+    """A system clock that moves back after the lock. The engine reads it first for the lock time, and gets the time
+    now. Each later call gives a time `back_s` seconds earlier. A record time read from it is not later than the lock
+    time, so `verify` fails such a record."""
+    start, calls = time.time_ns(), itertools.count()
+    return lambda: start if next(calls) == 0 else start - back_s * 10**9
+
+
+class SteadyClock:
+    """A steady clock for a test. Each call gives a value 1 ms later than the call before. The engine reads it first
+    at the lock (runlog.run_clock). `given` holds each value in the order given."""
+
+    def __init__(self, start=7 * 10**15, step_ns=10**6):
+        self.now, self.step, self.given, self._lock = start, step_ns, [], threading.Lock()
+
+    def __call__(self):
+        with self._lock:
+            self.now += self.step
+            self.given.append(self.now)
+            return self.now
+
+
+def run_clock_problems(recs, steady):
+    """The problems of the times of a log after the lock (empty if none). Each must be the lock time plus the steady
+    time since the lock (runlog.run_clock). That is the lock time plus a value of `steady` minus its first value. The
+    times are `t_ns` and `time` of each record, the time in each `escalated` text, and `finished` of the summary.
+    Each must be later than the lock time and not earlier than the time before it."""
+    from faias_harness.engine import runlog
+    lock = recs[0]["lock"]["time_ns"]
+    allowed = {lock + v - steady.given[0] for v in steady.given[1:]}
+    by_iso = {runlog.iso(ns): ns for ns in allowed}
+    out, last = [], lock
+    for n, r in enumerate(recs[1:], 2):
+        times = []
+        if "t_ns" in r:
+            times.append(r["t_ns"] if r["t_ns"] in allowed else None)
+            if "time" in r and r["time"] != runlog.iso(r["t_ns"]):
+                out.append(f"line {n}: time is not the ISO form of t_ns")
+            if "escalated" in r and f"printed at {runlog.iso(r['t_ns'])};" not in r["escalated"]:
+                out.append(f"line {n}: the escalated time is not the ISO form of t_ns")
+        if r.get("type") == "summary":
+            times.append(by_iso.get(r.get("finished")))
+        for t in times:
+            if t is None:
+                out.append(f"line {n} ({r.get('type')}): a time that is not the lock time plus a steady time")
+            elif not lock < t or t < last:
+                out.append(f"line {n} ({r.get('type')}): a time not later than the lock or earlier than the last")
+            else:
+                last = t
+    return out
+
+
 class StrictStdout:
     """A stdout for a test that encodes as strict UTF-8. A real stdout fails on a lone surrogate in the same way: with
     -X utf8 its error handler is surrogateescape, which fails on a high surrogate such as U+D83D. A command that calls

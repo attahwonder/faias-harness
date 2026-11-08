@@ -90,6 +90,23 @@ class HeaderTests(unittest.TestCase):
         build_log(self.dir / "log.jsonl", lock_ns=9_000, run_ns=5_000)
         self.assertTrue(runlog.check_log(self.dir / "log.jsonl"))
 
+    def test_the_clock_of_a_run_is_the_lock_time_plus_the_steady_time_since_the_lock(self):
+        """run_clock reads the system clock once, for the lock time. Each later time is the lock time plus the steady
+        time since the lock, also when the system clock moves back."""
+        wall, steady = iter([5_000_000, 1_000, 1_000]), iter([700, 900, 900, 2_700])
+        lock_ns, now = runlog.run_clock(lambda: next(wall), lambda: next(steady))
+        self.assertEqual((lock_ns, now(), now(), now()), (5_000_000, 5_000_200, 5_000_200, 5_002_000))
+        self.assertEqual(next(wall), 1_000)         # the system clock was read once only
+
+    def test_the_first_record_waits_until_the_steady_clock_passes_the_lock(self):
+        """On Python before 3.13 on Windows the steady clock moves in steps of up to 15.6 ms. So it can give the value
+        of the lock again. wait_past_lock waits for the next step."""
+        steady = iter([700, 700, 700, 701, 701])
+        lock_ns, now = runlog.run_clock(lambda: 5_000_000, lambda: next(steady))
+        runlog.wait_past_lock({"lock": {"time_ns": lock_ns}}, now)
+        self.assertEqual(now(), 5_000_001)
+        self.assertIsNone(next(steady, None))       # the wait read the steady clock until it passed the lock
+
     def test_the_form_check_catches_missing_header_parts(self):
         def drop_reason(h):
             h["thresholds"]["M4"]["value_reason"] = None

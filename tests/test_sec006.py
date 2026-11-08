@@ -30,8 +30,8 @@ from targets.srd1.app.entitlements import DATA_FILE
 from targets.srd1.app.gate import RefundGate
 from targets.srd1.app.orchestrator import PROMPT_VARIANTS, Orchestrator, load_system_prompt
 from targets.srd1.app.server import Srd1Server
-from tests.helpers import (EVIDENCE_RAW, FAKE_KEY_VALUE, KEY_ENV, StandInModelHost, make_settings, no_outside_network,
-                           raw_settings)
+from tests.helpers import (EVIDENCE_RAW, FAKE_KEY_VALUE, KEY_ENV, StandInModelHost, SteadyClock, clock_back_after_lock,
+                           make_settings, no_outside_network, raw_settings, run_clock_problems)
 from tests.test_srd1 import FakeGateway
 
 REPO = Path(__file__).resolve().parents[1]
@@ -917,6 +917,32 @@ class EndToEndTests(unittest.TestCase):
         self.assertTrue(runs)
         self.assertLess(recs[0]["lock"]["time_ns"], runs[0]["t_ns"])
         self.assertTrue(runlog.verify_log(res.log_path, res.sig_path, self.pub)[0])
+
+    def test_a_system_clock_that_moves_back_after_the_lock_gives_a_log_that_verifies(self):
+        """Each record time is the lock time plus the steady time since the lock (runlog.run_clock). Before, each
+        record took the system time, so a system clock that moved back made verify fail the log."""
+        settings = sec006_settings(price_in_per_m=1.0, price_out_per_m=1.0, cap_usd=0.0062, max_tokens=50)
+        with StandInModelHost(follower, usage=(1000, 1000), with_messages=True) as host, no_outside_network():
+            res = run_sec006.execute(settings, run_dir=self.dir / "clock_back", sign_key=self.priv,
+                                     confirmation=CONFIRM, base_url=host.base_url, env=ENV, engine=ENGINE,
+                                     clock_ns=clock_back_after_lock())
+        ok, msg = runlog.verify_log(res.log_path, res.sig_path, self.pub)
+        self.assertTrue(ok, msg)
+
+    def test_each_record_time_is_the_lock_time_plus_the_steady_time_since_the_lock(self):
+        """The first pass sends one item and one sequence of the positive control, so the follow-on set is built and
+        sent. The log holds run records, the followon_set record and the summary."""
+        steady = SteadyClock()
+        items, seqs = sec006.load_items(REPO)
+        with StandInModelHost(follower, with_messages=True) as host, no_outside_network(), \
+                mock.patch.object(run_sec006, "run_items", lambda repo=REPO: items[:1] + seqs[:1]):
+            res = run_sec006.execute(sec006_settings(cap_usd=10.0), run_dir=self.dir / "clock_steady",
+                                     sign_key=self.priv, confirmation=CONFIRM, base_url=host.base_url, env=ENV, engine=ENGINE,
+                                     variant="positive_control", clock_ns=clock_back_after_lock(), steady_ns=steady)
+        recs = runlog.read_log(res.log_path)
+        self.assertEqual(res.status, "complete")
+        self.assertTrue(next(r for r in recs if r["type"] == "followon_set")["applicable"])
+        self.assertEqual(run_clock_problems(recs, steady), [])
 
     def preflight(self, baseline, *extra, mode="evidence", pubkey="the test key", tools=False):
         """The preflight of a TP-SEC-006 run that names `baseline` and, by default, the public key of this class.

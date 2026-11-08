@@ -210,10 +210,11 @@ class _Runner:
                                                     for d in facts["crossing_detail"]) or None}
         if facts["crossing"]:
             self.crossings += 1
+            c_ns = self.clock_ns()
             self.log.write({"type": "crossing", "item": item.id, "run": n, "arm": self.arm, "tier": item.tier,
                             "direction": item.direction, "crossing_detail": facts["crossing_detail"],
-                            "t_ns": self.clock_ns(),
-                            "escalated": f"printed at {runlog.iso()}; the engagement lead is the operator"})
+                            "t_ns": c_ns,
+                            "escalated": f"printed at {runlog.iso(c_ns)}; the engagement lead is the operator"})
             print(f"CROSSING {item.id}/{self.arm}/{n}: {facts['crossing_detail']} (escalated at once; "
                   f"{'the run stops' if self.halt_on_crossing else 'the run continues'})")
             if self.halt_on_crossing:
@@ -288,7 +289,8 @@ class _Arms:
 
 def execute(settings, *, run_dir, sign_key, confirmation, items=None, probes=None, base_url=None, env=None,
             clock_ns=time.time_ns, repo=REPO, prior_spent_usd=0.0, variant="standard", engine="inspect",
-            selftest_log=None, selftest_pubkey=None, srd1_bank_file=None, srd1_documents_file=None):
+            selftest_log=None, selftest_pubkey=None, srd1_bank_file=None, srd1_documents_file=None,
+            steady_ns=time.monotonic_ns):
     """Run TP-DAT-009 on SRD-1 minimal. Returns a spike.RunResult. `items` overrides the shipped item file (tests pass
     their own). `selftest_log` names a self-test log or a folder. `selftest_pubkey` names the public key file of
     that log (the default is the setting selftest_pubkey). `base_url`, `env`, `srd1_bank_file` and
@@ -387,11 +389,12 @@ def execute(settings, *, run_dir, sign_key, confirmation, items=None, probes=Non
             delegation=delegation, emulator=emulator, tools=arms.tool_run.header(defs_sha) if arms.tool_run else None,
             arms=arms_run, scorer_keys=keys, system_prompt_sha256=prompts[arms_run[0]], confirmation=confirmation,
             probes=probes, repo=repo, variant=variant, engine=engine)
-        runlog.lock_header(header, clock_ns())
+        lock_ns, run_ns = runlog.run_clock(clock_ns, steady_ns)     # the records take their times from run_ns
+        runlog.lock_header(header, lock_ns)
         log = runlog.RunLog(run_dir / "run_log.jsonl")
         log.write(header)
-        runlog.wait_past_lock(header, clock_ns)
-        runner = _Runner(log, matrix, keys, sec006.find_placeholders([first.orchestrator.system_prompt]), clock_ns,
+        runlog.wait_past_lock(header, run_ns)
+        runner = _Runner(log, matrix, keys, sec006.find_placeholders([first.orchestrator.system_prompt]), run_ns,
                          halt_on_crossing=settings.halt_on_crossing, halt_on_mismatch=settings.mode == "evidence",
                          tools=(header.get("tools") or {}).get("names") or (),
                          target_turns={m["id"]: m["target_turns"] for m in header["corpus"]["manifest"]})
@@ -454,7 +457,7 @@ def _summary(runner, settings, arms, elog, engine, engine_runs, declared_stage, 
                      runlog.sha256_hex(Path(emu.store_path).read_bytes()) != emu.store_sha256,
                      "note": "SRD-1 is built from files for each run and stopped before this summary; the store is "
                              "a file that nothing writes"},
-        "finished": runlog.iso(),
+        "finished": runlog.iso(runner.clock_ns()),
     }
     if variant == "positive_control":
         out["positive_control"] = dat009.control_result(facts, arms=arms_run)

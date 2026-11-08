@@ -247,7 +247,7 @@ def _run_inspect(target, runner, run_dir, runs_per_item, items, model_name="srd1
 
 def execute(settings, *, run_dir, sign_key, confirmation, probes=None, base_url=None, env=None,
             clock_ns=time.time_ns, repo=REPO, prior_spent_usd=0.0, variant="standard", engine="inspect", gate=None,
-            example=False):
+            example=False, steady_ns=time.monotonic_ns):
     """Run the engine on the item set of the settings. Return a RunResult. `base_url` and `env` are for tests; a real run uses the defaults.
 
     `prior_spent_usd` is the cost of the probe calls. It counts against the cap.
@@ -301,16 +301,17 @@ def execute(settings, *, run_dir, sign_key, confirmation, probes=None, base_url=
     header["redaction"] = REDACTION_NOTE
     if example:
         header["label"] = runlog.example_label(header["label"])
-    runlog.lock_header(header, clock_ns())
+    lock_ns, run_ns = runlog.run_clock(clock_ns, steady_ns)     # the records take their times from run_ns
+    runlog.lock_header(header, lock_ns)
     log = runlog.RunLog(log_path)
     try:
         log.write(header)                   # the lock is on disk before the first item is sent
-        runlog.wait_past_lock(header, clock_ns)
+        runlog.wait_past_lock(header, run_ns)
         # the call to SRD-1 waits longer than the gateway's retries can take, so a retry never ends the run
         target = Srd1ChatTarget(srd1.server.url, egress, timeout=gw.max_call_seconds(egress.timeout) + LOCAL_MARGIN_S,
                                 tools_url=tool_run.url if tool_run else None,
                                 ledger_path=tool_run.emulator.ledger.path if tool_run else None)
-        runner = _Runner(log, clock_ns, halt_on_mismatch=settings.mode == "evidence",
+        runner = _Runner(log, run_ns, halt_on_mismatch=settings.mode == "evidence",
                          placeholders=sec006.find_placeholders([system_prompt]))
         srd1.server.start()
         try:
@@ -347,7 +348,7 @@ def execute(settings, *, run_dir, sign_key, confirmation, probes=None, base_url=
             "egress": {"file": elog.path.name, "sha256": runlog.sha256_hex(elog.path.read_bytes()),
                        "summary": elog.summary()},
             "run_engine": engine_facts,
-            "finished": runlog.iso(),
+            "finished": runlog.iso(run_ns()),
         }
         if tool_run:
             summary["tool_ledger"] = tool_run.summary()

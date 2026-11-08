@@ -492,11 +492,26 @@ def lock_header(header, clock_ns=None):
     return header
 
 
-def wait_past_lock(header, clock_ns, limit_s=0.1):
-    """Wait until `clock_ns` passes the lock time, for at most `limit_s` seconds. Call this before the first item.
+def run_clock(clock_ns=time.time_ns, steady_ns=time.monotonic_ns):
+    """Read the system clock once, for the lock time, and the steady clock at the same point. Returns (the lock time,
+    the clock of the run). Call this at the lock.
 
-    `check_log` needs each run time to be later than the lock time. On Python before 3.13 on Windows the clock
-    moves in steps of up to 15.6 ms, so the first run can get the lock time again.
+    The clock of the run gives the lock time plus the steady time since the lock, in ns. Each record after the lock
+    takes its time from it. The system clock can move back during a run, for example when the computer corrects it
+    from the network. A steady clock only counts forward. So each record time is later than the lock time (after
+    `wait_past_lock`). It is also not earlier than the record before it. So `check_log` keeps its strict check. A
+    record time is thus the lock time plus the time since the lock. It is not the system time of the call.
+    """
+    lock_ns, start = clock_ns(), steady_ns()
+    return lock_ns, lambda: lock_ns + (steady_ns() - start)
+
+
+def wait_past_lock(header, clock_ns, limit_s=0.1):
+    """Wait until `clock_ns` passes the lock time, for at most `limit_s` seconds. Call this before the first item, with
+    the clock of the run (`run_clock`).
+
+    `check_log` needs each run time to be later than the lock time. On Python before 3.13 on Windows the steady clock
+    moves in steps of up to 15.6 ms, so the first record can get the lock time again.
     """
     deadline = time.monotonic() + limit_s
     while clock_ns() <= header["lock"]["time_ns"] and time.monotonic() < deadline:

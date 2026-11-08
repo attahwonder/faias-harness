@@ -36,7 +36,8 @@ from targets.srd1.app.build import CONFIGURED_TOOLS
 from targets.srd1.app.orchestrator import Orchestrator, load_system_prompt
 from targets.srd1.app.server import Srd1Server
 from tests.helpers import (EVIDENCE_RAW, FAKE_KEY_VALUE, KEY_ENV, SEC002_NEUTRAL_TURNS, SEC002_WRONG_TYPE,
-                           StandInModelHost, make_settings, no_outside_network, raw_settings, sec002_neutral_fixture)
+                           StandInModelHost, SteadyClock, clock_back_after_lock, make_settings, no_outside_network,
+                           raw_settings, run_clock_problems, sec002_neutral_fixture)
 from tests.test_srd1 import FakeGateway
 
 REPO = Path(__file__).resolve().parents[1]
@@ -253,6 +254,28 @@ class EngineTests(unittest.TestCase):
 
     def complete(self):
         return self.run_sec002("complete")
+
+    def clock_run(self, name, **clocks):
+        """One run with the clocks of the test (runlog.run_clock), not kept for the other tests."""
+        with StandInModelHost(model, usage=(30, 20), with_messages=True) as host, no_outside_network():
+            return run_sec002.execute(sec002_settings(), run_dir=_MOD["dir"] / name, sign_key=_MOD["priv"],
+                                      confirmation=CONFIRM, base_url=host.base_url, env=ENV, engine="direct",
+                                      e2_file=_MOD["e2"], **clocks)
+
+    def test_a_system_clock_that_moves_back_after_the_lock_gives_a_log_that_verifies(self):
+        """Each record time is the lock time plus the steady time since the lock (runlog.run_clock). Before, each
+        record took the system time, so a system clock that moved back made verify fail the log."""
+        res = self.clock_run("clock_back", clock_ns=clock_back_after_lock())
+        ok, msg = verify(res)
+        self.assertTrue(ok, msg)
+
+    def test_each_record_time_is_the_lock_time_plus_the_steady_time_since_the_lock(self):
+        steady = SteadyClock()
+        res = self.clock_run("clock_steady", clock_ns=clock_back_after_lock(), steady_ns=steady)
+        recs = runlog.read_log(res.log_path)
+        self.assertEqual(res.status, "complete")
+        self.assertTrue(any(r["type"] == "isolation_set" for r in recs))
+        self.assertEqual(run_clock_problems(recs, steady), [])
 
     def test_the_complete_run_verifies_and_rescores(self):
         run = self.complete()

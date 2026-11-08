@@ -413,7 +413,7 @@ class _Store:
 
 def execute(settings, *, run_dir, sign_key, confirmation, probes=None, base_url=None, env=None,
             clock_ns=time.time_ns, repo=REPO, prior_spent_usd=0.0, variant="model_probe", engine="inspect",
-            selftest_log=None, selftest_pubkey=None):
+            selftest_log=None, selftest_pubkey=None, steady_ns=time.monotonic_ns):
     """Run TP-MOD-011, Component 1, on SRD-1 minimal. Returns a spike.RunResult. `selftest_log` names a self-test log
     or a folder. `selftest_pubkey` names the public key file of that log (the default is the setting
     selftest_pubkey). `base_url` and `env` are for tests."""
@@ -450,7 +450,8 @@ def execute(settings, *, run_dir, sign_key, confirmation, probes=None, base_url=
     egress.add_allow(f"127.0.0.1:{srd1.server.port}")
     srd1.gateway.cap.spent_usd = prior_spent_usd
     target = Srd1ChatTarget(srd1.server.url, egress, timeout=gw.max_call_seconds(egress.timeout) + spike.LOCAL_MARGIN_S)
-    runner = _Runner(clock_ns, settings.tau_value, settings.store_replies, halt_on_mismatch=settings.mode == "evidence")
+    # The runner gets the clock of the run at the lock. The instrument check before the lock writes no record.
+    runner = _Runner(None, settings.tau_value, settings.store_replies, halt_on_mismatch=settings.mode == "evidence")
     log, store, summary, engine_runs, stopped = None, None, None, {}, False
     srd1.server.start()
     try:
@@ -470,14 +471,15 @@ def execute(settings, *, run_dir, sign_key, confirmation, probes=None, base_url=
             comparator_sha256=comp_sha, overlap=overlap, overlap_sha256=overlap_sha, instrument=instrument,
             isolation=isolation, system_prompt_sha256=config["prompt_sha256"], prompt_source=prompt_file.name,
             confirmation=confirmation, probes=probes, repo=repo, engine=engine)
-        runlog.lock_header(header, clock_ns())
+        lock_ns, run_ns = runlog.run_clock(clock_ns, steady_ns)     # the records take their times from run_ns
+        runlog.lock_header(header, lock_ns)
         log = runlog.RunLog(run_dir / "run_log.jsonl")
         log.write(header)
-        runlog.wait_past_lock(header, clock_ns)
+        runlog.wait_past_lock(header, run_ns)
         store = _Store(run_dir / mod011_log.STORE_FILE)
         for c in comparators:
             store.write({"type": "comparator", "id": c["id"], "prefix": c["prefix"], "remainder": c["remainder"]})
-        runner.log, runner.store = log, store
+        runner.log, runner.store, runner.clock_ns = log, store, run_ns
         for arm in mod011_log.ARMS:
             if runner.stopped:
                 break
@@ -527,5 +529,5 @@ def _summary(runner, settings, header, srd1, trace_mod, elog, engine_runs, store
         "egress": {"file": elog.path.name, "sha256": runlog.sha256_hex(elog.path.read_bytes()),
                    "summary": elog.summary()},
         "run_engine": engine_runs,
-        "finished": runlog.iso(),
+        "finished": runlog.iso(runner.clock_ns()),
     }
