@@ -153,12 +153,66 @@ def load_data(bank_file=BANK_FILE, documents_file=DOCUMENTS_FILE):
     """(bank, documents, bank_sha256, documents_sha256). `documents` is the list `documents` of the store file. Each
     file goes through _read_data, so a file that it refuses raises DataError (a ValueError) with one problem. The
     preflight of TP-DAT-009 reads the two files with this function before any model call. A store file whose
-    `documents` value is not a list raises DataError too."""
+    `documents` value is not a list raises DataError too. So does a file that is not of the form of _form_problem."""
     bank, bank_raw = _read_data(bank_file)
     docs, docs_raw = _read_data(documents_file)
     if not (isinstance(docs, dict) and isinstance(docs.get("documents"), list)):
         raise DataError(f"{Path(documents_file).name}: the value of 'documents' is not a list")
+    problem = _form_problem(bank, docs, Path(bank_file).name, Path(documents_file).name)
+    if problem:
+        raise DataError(problem)
     return bank, docs["documents"], _sha256(bank_raw), _sha256(docs_raw)
+
+
+def _rows_problem(name, data, key, texts):
+    """The problem of the list `key` of the mapping `data` of the file `name`, or None. The list must hold mappings,
+    and each mapping must hold each key of `texts` with a text value."""
+    rows = data.get(key)
+    if not isinstance(rows, list):
+        return f"{name}: the value of '{key}' is not a list"
+    keys = f"{', '.join(texts[:-1])} and {texts[-1]}"
+    for n, row in enumerate(rows, 1):
+        if not (isinstance(row, dict) and all(isinstance(row.get(k), str) for k in texts)):
+            return f"{name}: entry {n} of '{key}' is not a mapping with {keys} as texts"
+    return None
+
+
+def _form_problem(bank, docs, bank_name, docs_name):
+    """The one problem of the form of the two data files, or None. The engine, the scorer, SRD-1 and the tool
+    emulator read these values with no default.
+
+    The bank is a mapping. Its `customers` is a list of mappings with customer_ref and domain as texts
+    (expected_matrix, _searcher, entitlements.Entitlements). Its `accounts` is a list of mappings with customer_ref
+    and account_ref as texts (expected_matrix, Entitlements). Its `default_customer_ref` is a text that names a
+    customer (Entitlements).
+
+    The `documents` list of the documents file is not empty (handlers.DocumentSearch). Each entry is a mapping with
+    doc_id, title, text, domain, kind and canary as texts (retrieval.DocumentStore, scorer_keys, DocumentSearch). Its
+    `customer_ref` is present, and is a text or null (DocumentStore.inventory, _direction_problems). Its `facts` is a
+    list of texts (scorer_keys, score_run). The `customers` of the documents file is a list of mappings with
+    customer_ref and domain as texts. The tool emulator reads it as the entitlement table of the store
+    (DocumentSearch)."""
+    if not isinstance(bank, dict):
+        return f"{bank_name}: the top level is not a mapping"
+    for key, texts in (("customers", ("customer_ref", "domain")), ("accounts", ("customer_ref", "account_ref"))):
+        problem = _rows_problem(bank_name, bank, key, texts)
+        if problem:
+            return problem
+    default = bank.get("default_customer_ref")
+    if not (isinstance(default, str) and default in {c["customer_ref"] for c in bank["customers"]}):
+        return f"{bank_name}: the value of 'default_customer_ref' is not a text that names a customer"
+    if not docs["documents"]:
+        return f"{docs_name}: the list 'documents' is empty"
+    problem = _rows_problem(docs_name, docs, "documents", ("doc_id", "title", "text", "domain", "kind", "canary"))
+    if problem:
+        return problem
+    for n, d in enumerate(docs["documents"], 1):
+        ref, facts = d.get("customer_ref", ...), d.get("facts")
+        if not (ref is None or isinstance(ref, str)):
+            return f"{docs_name}: entry {n} of 'documents' does not have a customer_ref that is a text or null"
+        if not (isinstance(facts, list) and all(isinstance(f, str) for f in facts)):
+            return f"{docs_name}: entry {n} of 'documents' does not have facts that are a list of texts"
+    return _rows_problem(docs_name, docs, "customers", ("customer_ref", "domain"))
 
 
 def expected_matrix(bank, documents):

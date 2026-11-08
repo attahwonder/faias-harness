@@ -1241,6 +1241,40 @@ class ValueFileFormTests(_PreflightCase):
                     mock.patch.dict(os.environ, {KEY_ENV: FAKE_KEY_VALUE}), changed_bytes(rel, data):
                 self.preflight_and_start(argv, line, problem if kind == "firm" else risk_line.format(problem))
 
+    def test_a_refund_cap_or_limit_that_is_not_a_number_is_named_once_and_start_refuses_in_one_line(self):
+        """A changed copy of the risk-appetite file holds a refund cap or a session limit that is not a number. An
+        example is `cap_gbp: twenty-five`. The reader passes the file, and gate.declared_problems names the value. The
+        preflight of TP-AGT-012 prints that problem under the tools line, and exits 0. --start refuses in that one
+        line, exit 2, before any model call. The item-set check compares the fees with the two values, so the
+        preflight does not make it. The engine refuses the run before the lock, in one `Run refused:` line
+        (gate.RefundGate.from_file). It does not make the run folder. Before, --start stopped with TypeError in the
+        item-set check."""
+        from faias_harness.engine import run_agt012
+        from targets.srd1.app import gate
+        raw = (REPO / self.RISK).read_bytes()
+        cap, limit = b"cap_gbp: 25", b"session_limit_gbp: 50"
+        self.assertEqual((raw.count(cap), raw.count(limit)), (1, 1))
+        argv = self.argv("agt012", procedure="TP-AGT-012", item_set="TP-AGT-012", reviewer_values={}, **self.TOOLS)
+        cases = {"the cap a text": (raw.replace(cap, b"cap_gbp: twenty-five"), "refund cap not declared"),
+                 "the cap a list": (raw.replace(cap, b"cap_gbp: [25]"), "refund cap not declared"),
+                 "the limit a text": (raw.replace(limit, b"session_limit_gbp: fifty"),
+                                      "session refund limit not declared")}
+        for n, (name, (data, problem)) in enumerate(cases.items()):
+            line, run_dir = f"{problem} (targets/srd1/risk_appetite.yaml): SRD-1 does not enable its tool", \
+                self.dir / f"engine_{n}"
+            with self.subTest(case=name), no_outside_network(), \
+                    mock.patch.dict(os.environ, {KEY_ENV: FAKE_KEY_VALUE}), changed_bytes(self.RISK, data):
+                self.assertEqual((gate.read_risk_appetite()[2], gate.declared_problems()), (None, [problem]))
+                self.preflight_and_start(argv, f"  - {line}\n", line)
+                buf = io.StringIO()
+                with contextlib.redirect_stdout(buf):
+                    result = preflight._execute(
+                        run_agt012.execute, settings=sm.load_settings(argv[3]), run_dir=run_dir, sign_key=self.key,
+                        confirmation={"typed": "yes", "time": "2026-11-08T00:00:00Z"}, engine="direct",
+                        selftest_log=self.selftest[1], selftest_pubkey=self.selftest[3])
+                self.assertEqual((result, buf.getvalue()), (None, f"Run refused: {problem}\n"))
+                self.assertFalse(run_dir.exists())
+
 
 class Dat009DataFileTests(_PreflightCase):
     """The TP-DAT-009 engine reads the synthetic bank and the synthetic documents with dat009.load_data, for the matrix
@@ -1293,6 +1327,94 @@ class Dat009DataFileTests(_PreflightCase):
         self.assertEqual(str(cm.exception), "documents.yaml: the value of 'documents' is not a list")
         bank, documents, _, _ = dat009.load_data()
         self.assertEqual((len(bank["customers"]), len(documents)), (4, 16))
+
+    def form_cases(self):
+        """Each case maps a name to the file, its bytes and the one problem. Each is a changed copy of the bank or the
+        documents. Its form is not the one that the engine, the scorer, SRD-1 and the tool emulator read
+        (dat009._form_problem)."""
+        bank, docs = (REPO / self.BANK).read_bytes(), (REPO / self.DOCS).read_bytes()
+        anchors = {self.BANK: (self.ROW, b"\ncustomers:\n", b"\naccounts:\n", b"default_customer_ref: SYN-C-0001\n",
+                               b"  - account_ref: SYN-A-0001\n"),
+                   self.DOCS: (b"\ndocuments:\n", b"\ncustomers:\n", b"  - doc_id: SYN-D-0001\n",
+                               b"    title: Retail tariff of charges\n", b"    canary: SYN-CANARY-D0001-KELP\n",
+                               b"    facts: [Tarnwick Everyday account, Velbrook card fee table]\n",
+                               b"  - {customer_ref: SYN-C-0001, domain: retail}\n")}
+        for rel, raw in ((self.BANK, bank), (self.DOCS, docs)):
+            for a in anchors[rel]:
+                self.assertEqual(raw.count(a), 1, (rel, a))
+        b, d = "synthetic_bank.yaml: ", "synthetic_documents.yaml: "
+        customer, account = (b + "entry 1 of 'customers' is not a mapping with customer_ref and domain as texts",
+                             b + "entry 1 of 'accounts' is not a mapping with customer_ref and account_ref as texts")
+        document = (d + "entry 1 of 'documents' is not a mapping with doc_id, title, text, domain, kind and canary as "
+                    "texts")
+        ref = d + "entry 1 of 'documents' does not have a customer_ref that is a text or null"
+        facts = d + "entry 1 of 'documents' does not have facts that are a list of texts"
+        default = b + "the value of 'default_customer_ref' is not a text that names a customer"
+        head = docs.split(b"\ndocuments:\n")[0]
+        return {
+            "the top level of the bank a list": (self.BANK, b"- a\n- b\n", b + "the top level is not a mapping"),
+            "customers a text": (self.BANK, bank.replace(b"\ncustomers:\n", b"\ncustomers: a text\nold_customers:\n"),
+                                 b + "the value of 'customers' is not a list"),
+            "a customer that is a number": (self.BANK, bank.replace(b"\ncustomers:\n", b"\ncustomers:\n  - 5\n"),
+                                            customer),
+            "a customer with no domain": (self.BANK, bank.replace(self.ROW, b"{customer_ref: SYN-C-0001}"), customer),
+            "accounts a text": (self.BANK, bank.replace(b"\naccounts:\n", b"\naccounts: a text\nold_accounts:\n"),
+                                b + "the value of 'accounts' is not a list"),
+            "an account_ref that is a number": (
+                self.BANK, bank.replace(b"  - account_ref: SYN-A-0001\n", b"  - account_ref: 1\n"), account),
+            "no default_customer_ref": (self.BANK, bank.replace(b"default_customer_ref: SYN-C-0001\n", b""), default),
+            "a default_customer_ref of no customer": (
+                self.BANK, bank.replace(b"default_customer_ref: SYN-C-0001\n", b"default_customer_ref: SYN-C-0009\n"),
+                default),
+            "documents [1, 2]": (self.DOCS, head + b"\ndocuments: [1, 2]\n", document),
+            "documents empty": (self.DOCS, head + b"\ndocuments: []\n", d + "the list 'documents' is empty"),
+            "a document with no title": (self.DOCS, docs.replace(b"    title: Retail tariff of charges\n", b""),
+                                         document),
+            "a doc_id that is a number": (self.DOCS, docs.replace(b"  - doc_id: SYN-D-0001\n", b"  - doc_id: 1\n"),
+                                          document),
+            "a document with no kind": (self.DOCS, docs.replace(b"    kind: content\n", b"", 1), document),
+            "a document with no canary": (self.DOCS, docs.replace(b"    canary: SYN-CANARY-D0001-KELP\n", b""),
+                                          document),
+            "a document with no customer_ref": (self.DOCS, docs.replace(b"    customer_ref: null\n", b"", 1), ref),
+            "a customer_ref that is a number": (
+                self.DOCS, docs.replace(b"    customer_ref: null\n", b"    customer_ref: 5\n", 1), ref),
+            "facts a text": (self.DOCS, docs.replace(
+                b"    facts: [Tarnwick Everyday account, Velbrook card fee table]\n", b"    facts: a text\n"), facts),
+            "a fact that is a number": (self.DOCS, docs.replace(
+                b"    facts: [Tarnwick Everyday account, Velbrook card fee table]\n", b"    facts: [5]\n"), facts),
+            "no list customers in the documents": (
+                self.DOCS, docs.replace(b"\ncustomers:\n", b"\nold_customers:\n"),
+                d + "the value of 'customers' is not a list"),
+            "a customer of the documents that is a number": (
+                self.DOCS, docs.replace(b"  - {customer_ref: SYN-C-0001, domain: retail}\n", b"  - 5\n"),
+                d + "entry 1 of 'customers' is not a mapping with customer_ref and domain as texts")}
+
+    def test_a_data_file_of_another_form_is_named_by_the_preflight_and_start_refuses_in_one_problem_line(self):
+        """The form of a changed copy of the bank or the documents is not the one that the engine reads. Examples are a
+        `customers` value that is a text, and a `documents` list that holds numbers. load_data refuses each in one
+        problem (DataError). The preflight of TP-DAT-009 prints `Data files: a file is refused: <problem>`. It prints
+        no estimate, and exits 0. --start refuses in one problem line, exit 2, before any model call. Before, the text
+        passed the preflight and --start. The engine then stopped with TypeError after the typed `yes`. The numbers
+        stopped the preflight with TypeError when it made the estimate."""
+        import hashlib
+
+        from faias_harness.engine import dat009
+        argv = self.argv("dat009", procedure="TP-DAT-009", item_set="TP-DAT-009", reviewer_values={}, **self.TOOLS)
+        for name, (rel, data, problem) in self.form_cases().items():
+            with self.subTest(case=name), no_outside_network(), \
+                    mock.patch.dict(os.environ, {KEY_ENV: FAKE_KEY_VALUE}), changed_bytes(rel, data):
+                with self.assertRaises(dat009.DataError) as cm:
+                    dat009.load_data()
+                self.assertEqual(str(cm.exception), problem)
+                self.preflight_and_start(argv, f"Data files: a file is refused: {problem}\n",
+                                         f"TP-DAT-009: a data file is refused: {problem}")
+                if name in ("customers a text", "documents [1, 2]"):
+                    self.assertIn("Worst-case estimate: not available (a data file is refused); cap: ",
+                                  run_main(argv)[1])
+        bank, documents, bank_sha, docs_sha = dat009.load_data()
+        self.assertEqual((len(bank["customers"]), len(bank["accounts"]), len(documents)), (4, 6, 16))
+        self.assertEqual((bank_sha, docs_sha), (hashlib.sha256((REPO / self.BANK).read_bytes()).hexdigest(),
+                                                hashlib.sha256((REPO / self.DOCS).read_bytes()).hexdigest()))
 
 
 class ToolsFileAtTheRunTests(_PreflightCase):
