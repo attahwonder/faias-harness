@@ -1,5 +1,5 @@
 """Tests of the workflow file .github/workflows/tests.yml. They check the job timeout, the fixed package versions for
-each Python, and the concurrency group. They read the file only. No network."""
+each Python, the job with inspect_ai and the concurrency group. They read the file only. No network."""
 import re
 import unittest
 from pathlib import Path
@@ -30,6 +30,23 @@ class WorkflowTests(unittest.TestCase):
                 self.assertTrue(all(re.fullmatch(r"[a-z]+==\d+(\.\d+)+", s) for s in spec), spec)
         install = [s["run"] for s in self.job["steps"] if "pip install" in s.get("run", "")]
         self.assertEqual(install, ["python -m pip install ${{ matrix.packages }}"])
+
+    def test_the_inspect_job_takes_the_steps_of_the_python_3_14_row_and_a_fixed_inspect_ai(self):
+        job = self.doc["jobs"]["run-all-inspect"]
+        self.assertEqual(job["runs-on"], "ubuntu-latest")
+        self.assertGreaterEqual(job["timeout-minutes"], 60)
+        self.assertEqual(job["steps"][1]["with"], {"python-version": "3.14"})
+        install = job["steps"][2]["run"]
+        self.assertTrue(install.startswith("python -m pip install "), install)
+        spec = install.removeprefix("python -m pip install ").split()
+        self.assertTrue(all(re.fullmatch(r"[a-z_]+==\d+(\.\d+)+", s) for s in spec), spec)
+        row = {e["python"]: e["packages"].split() for e in self.job["strategy"]["matrix"]["include"]}
+        self.assertEqual(spec[:-1], row["3.14"])
+        self.assertEqual(spec[-1].partition("==")[0], "inspect_ai")
+        # The checkout, the action that sets up Python, the FAIAS clone and the run are those of run-all.
+        self.assertEqual(job["steps"][0], self.job["steps"][0])
+        self.assertEqual(job["steps"][1]["uses"], self.job["steps"][1]["uses"])
+        self.assertEqual(job["steps"][3:], self.job["steps"][3:])
 
     def test_a_new_run_on_the_same_ref_stops_the_older_one(self):
         self.assertEqual(self.doc.get("concurrency"), {"group": "tests-${{ github.ref }}", "cancel-in-progress": True})
