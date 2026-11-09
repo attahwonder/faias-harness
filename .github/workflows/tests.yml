@@ -1,8 +1,9 @@
 # Run every test of the harness on each push and pull request. It runs on Linux and Windows, with Python 3.11 and 3.14.
-# One more job runs the tests on Linux with Python 3.14 and inspect_ai 0.3.281. So the tests of the Inspect path run
-# too. Each job clones the FAIAS standard at tag v1.3.4 from github.com. It installs fixed versions of its packages
-# from PyPI. The packages that inspect_ai needs are not fixed. So a new version of one of them can change the result
-# of that job. The jobs use no secret and no key. The token of each job can read the repository only.
+# One more job runs the tests on Linux with Python 3.14, inspect_ai 0.3.281 and agent-client-protocol 0.12.1. So the
+# tests of the Inspect path run too. Each job clones the FAIAS standard at tag v1.3.4 from github.com. It installs
+# fixed versions of its packages from PyPI. The other packages that inspect_ai needs are not fixed. So a new version
+# of one of them can change the result of that job. The jobs use no secret and no key. The token of each job can read
+# the repository only.
 name: tests
 
 on:
@@ -47,7 +48,9 @@ jobs:
 
   # The steps of run-all, with inspect_ai installed. Some engine tests then run the engines on Inspect, not on the
   # direct loop. Some tests compare the two engines. Without inspect_ai, they print a note and check nothing.
-  # inspect_ai is pinned. The packages that it needs are not pinned.
+  # inspect_ai is pinned. So is agent-client-protocol, one of the packages that it needs: its version 1.0.0 has no
+  # module acp.helpers, which inspect_ai 0.3.281 imports when it runs an eval. The other packages that it needs are
+  # not pinned.
   run-all-inspect:
     runs-on: ubuntu-latest
     timeout-minutes: 60
@@ -58,8 +61,8 @@ jobs:
       - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1  # v6.3.0
         with:
           python-version: "3.14"
-      - name: Install the three packages and inspect_ai
-        run: python -m pip install pyyaml==6.0.3 httpx==0.28.1 cryptography==49.0.0 inspect_ai==0.3.281
+      - name: Install the three packages, inspect_ai and agent-client-protocol
+        run: python -m pip install pyyaml==6.0.3 httpx==0.28.1 cryptography==49.0.0 inspect_ai==0.3.281 agent-client-protocol==0.12.1
       - name: Clone FAIAS v1.3.4
         run: git clone --depth 1 --branch v1.3.4 https://github.com/attahwonder/faias-standard "${{ runner.temp }}/faias"
       - name: Run all tests
