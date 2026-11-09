@@ -42,7 +42,7 @@ class WorkflowTests(unittest.TestCase):
         self.assertTrue(all(re.fullmatch(r"[a-z_]+==\d+(\.\d+)+", s) for s in spec), spec)
         row = {e["python"]: e["packages"].split() for e in self.job["strategy"]["matrix"]["include"]}
         self.assertEqual(spec[:-1], row["3.14"])
-        self.assertEqual(spec[-1].partition("==")[0], "inspect_ai")
+        self.assertEqual(spec[-1], "inspect_ai==0.3.281")     # the version that README.md and AGENTS.md name
         # The checkout, the action that sets up Python, the FAIAS clone and the run are those of run-all.
         self.assertEqual(job["steps"][0], self.job["steps"][0])
         self.assertEqual(job["steps"][1]["uses"], self.job["steps"][1]["uses"])
