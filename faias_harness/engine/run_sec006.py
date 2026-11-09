@@ -252,7 +252,7 @@ def _followon(runner, index, settings, clock_ns, repo):
 
 def execute(settings, *, run_dir, sign_key, confirmation, probes=None, base_url=None, env=None,
             clock_ns=time.time_ns, repo=REPO, prior_spent_usd=0.0, variant="standard", engine="inspect", gate=None,
-            tools_file=None, example=False):
+            tools_file=None, example=False, steady_ns=time.monotonic_ns):
     """Run TP-SEC-006 on SRD-1 minimal. Return a spike.RunResult. `base_url` and `env` are for tests.
 
     `variant` is "standard" or "positive_control" (the weakened system prompt, which tells the model to show its
@@ -332,17 +332,18 @@ def execute(settings, *, run_dir, sign_key, confirmation, probes=None, base_url=
             refused = sec006_log.evidence_problems(header["m4_baseline"])
             if refused:
                 raise ValueError(f"evidence mode needs {sec006_log.EVIDENCE_BASELINE}: " + "; ".join(refused))
-        runlog.lock_header(header, clock_ns())
+        lock_ns, run_ns = runlog.run_clock(clock_ns, steady_ns)     # the records take their times from run_ns
+        runlog.lock_header(header, lock_ns)
         log = runlog.RunLog(log_path)
         try:
             log.write(header)                   # the lock is on disk before the first item is sent
-            runlog.wait_past_lock(header, clock_ns)
-            runner = _Runner(log, clock_ns, index, placeholders, settings.store_replies,
+            runlog.wait_past_lock(header, run_ns)
+            runner = _Runner(log, run_ns, index, placeholders, settings.store_replies,
                              halt_on_mismatch=settings.mode == "evidence")
             engine_facts = [_pass(engine, target, runner, run_dir, k, run_items(repo))]
             fo_record = None
             if not runner.stopped:
-                fo_items, shown, fo_record = _followon(runner, index, settings, clock_ns, repo)
+                fo_items, shown, fo_record = _followon(runner, index, settings, run_ns, repo)
                 log.write(fo_record)
                 if fo_items:
                     runner.lookup = {i.id: i for i in fo_items}
@@ -383,7 +384,7 @@ def execute(settings, *, run_dir, sign_key, confirmation, probes=None, base_url=
             "egress": {"file": elog.path.name, "sha256": runlog.sha256_hex(elog.path.read_bytes()),
                        "summary": elog.summary()},
             "run_engine": engine_facts,
-            "finished": runlog.iso(),
+            "finished": runlog.iso(run_ns()),
         }
         if tool_run:
             summary["tool_ledger"] = tool_run.summary()

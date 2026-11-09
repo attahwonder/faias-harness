@@ -24,7 +24,7 @@ from faias_harness.selftest import guard as guard_mod
 from faias_harness.selftest import probes as probes_mod
 from faias_harness.selftest import scan as scan_mod
 from faias_harness.selftest.guard import Guard, GuardTrip
-from tests.helpers import no_outside_network
+from tests.helpers import SteadyClock, clock_back_after_lock, no_outside_network, run_clock_problems
 
 REPO = Path(__file__).resolve().parents[1]
 SUMMARY = re.compile(r"paths probed: (\d+), refused: (\d+), guard trips: (\d+), static scan: (\d+) unexpected, "
@@ -247,6 +247,25 @@ class SelftestRunTests(unittest.TestCase):
         recs[-1]["result"] = "FAIL"
         problems = runlog.check_log(write_log(self.dir / "summary.jsonl", recs))
         self.assertIn("summary: the result does not follow from the probes, the guard trips and the scan", problems)
+
+    def test_a_system_clock_that_moves_back_after_the_lock_gives_a_log_that_verifies(self):
+        """Each probe time is the lock time plus the steady time since the lock (runlog.run_clock). Before, each probe
+        took the system time, so a system clock that moved back made verify fail the log. The log goes to a folder of
+        its own, so selftest.current over the folder of this class does not read it."""
+        with tempfile.TemporaryDirectory() as t, no_outside_network():
+            path, sig, _ = selftest.run(Path(t) / "clock_back", sign_key=self.priv, probes=probes_mod.PROBES[:2],
+                                        clock_ns=clock_back_after_lock())
+            ok, msg = runlog.verify_log(path, sig, self.pub)
+        self.assertTrue(ok, msg)
+
+    def test_each_probe_time_is_the_lock_time_plus_the_steady_time_since_the_lock(self):
+        steady = SteadyClock()
+        with tempfile.TemporaryDirectory() as t, no_outside_network():
+            path, _, _ = selftest.run(Path(t) / "clock_steady", probes=probes_mod.PROBES[:2],
+                                      clock_ns=clock_back_after_lock(), steady_ns=steady)
+            recs = runlog.read_log(path)
+        self.assertEqual([r["type"] for r in recs], ["header", "probe", "probe", "summary"])
+        self.assertEqual(run_clock_problems(recs, steady), [])
 
     def test_the_environment_is_read_before_the_guard(self):
         """On Python 3.11 for Windows, platform.platform() starts the process `ver`. Read inside the guard, it was a

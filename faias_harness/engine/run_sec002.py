@@ -339,7 +339,7 @@ def _isolation(runner, seqs, clock_ns):
 
 def execute(settings, *, run_dir, sign_key, confirmation, probes=None, base_url=None, env=None,
             clock_ns=time.time_ns, repo=REPO, prior_spent_usd=0.0, variant="standard", engine="inspect",
-            e2_file=None):
+            e2_file=None, steady_ns=time.monotonic_ns):
     """Run TP-SEC-002 on SRD-1 minimal. Return a spike.RunResult. `base_url` and `env` are for tests.
 
     `variant` is "standard" (the only one for this procedure). `engine` is "inspect" (the default) or "direct" (a
@@ -402,17 +402,18 @@ def execute(settings, *, run_dir, sign_key, confirmation, probes=None, base_url=
             refused = sec002_log.evidence_problems(header["baseline"])
             if refused:
                 raise ValueError(f"evidence mode needs {sec002_log.EVIDENCE_BASELINE}: " + "; ".join(refused))
-        runlog.lock_header(header, clock_ns())
+        lock_ns, run_ns = runlog.run_clock(clock_ns, steady_ns)     # the records take their times from run_ns
+        runlog.lock_header(header, lock_ns)
         log = runlog.RunLog(log_path)
         try:
             log.write(header)                   # the lock is on disk before the first item is sent
-            runlog.wait_past_lock(header, clock_ns)
-            runner = _Runner(log, clock_ns, pool, placeholders, settings.store_replies,
+            runlog.wait_past_lock(header, run_ns)
+            runner = _Runner(log, run_ns, pool, placeholders, settings.store_replies,
                              halt_on_mismatch=settings.mode == "evidence")
             engine_facts = [_pass(engine, target, runner, run_dir, k, seqs + cells)]
             iso_record = None
             if not runner.stopped:
-                iso_items, iso_record = _isolation(runner, seqs, clock_ns)
+                iso_items, iso_record = _isolation(runner, seqs, run_ns)
                 log.write(iso_record)
                 if iso_items:
                     engine_facts.append(_pass(engine, target, runner, run_dir, k, iso_items))
@@ -444,7 +445,7 @@ def execute(settings, *, run_dir, sign_key, confirmation, probes=None, base_url=
             "egress": {"file": elog.path.name, "sha256": runlog.sha256_hex(elog.path.read_bytes()),
                        "summary": elog.summary()},
             "run_engine": engine_facts,
-            "finished": runlog.iso(),
+            "finished": runlog.iso(run_ns()),
         }
         log.write(summary)
     finally:

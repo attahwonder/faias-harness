@@ -36,7 +36,8 @@ from targets.srd1.app.build import CONFIGURED_TOOLS
 from targets.srd1.app.orchestrator import Orchestrator, load_system_prompt
 from targets.srd1.app.server import Srd1Server
 from tests.helpers import (EVIDENCE_RAW, FAKE_KEY_VALUE, KEY_ENV, SEC002_NEUTRAL_TURNS, SEC002_WRONG_TYPE,
-                           StandInModelHost, make_settings, no_outside_network, raw_settings, sec002_neutral_fixture)
+                           StandInModelHost, SteadyClock, clock_back_after_lock, make_settings, no_outside_network,
+                           raw_settings, run_clock_problems, sec002_neutral_fixture)
 from tests.test_srd1 import FakeGateway
 
 REPO = Path(__file__).resolve().parents[1]
@@ -253,6 +254,28 @@ class EngineTests(unittest.TestCase):
 
     def complete(self):
         return self.run_sec002("complete")
+
+    def clock_run(self, name, **clocks):
+        """One run with the clocks of the test (runlog.run_clock), not kept for the other tests."""
+        with StandInModelHost(model, usage=(30, 20), with_messages=True) as host, no_outside_network():
+            return run_sec002.execute(sec002_settings(), run_dir=_MOD["dir"] / name, sign_key=_MOD["priv"],
+                                      confirmation=CONFIRM, base_url=host.base_url, env=ENV, engine="direct",
+                                      e2_file=_MOD["e2"], **clocks)
+
+    def test_a_system_clock_that_moves_back_after_the_lock_gives_a_log_that_verifies(self):
+        """Each record time is the lock time plus the steady time since the lock (runlog.run_clock). Before, each
+        record took the system time, so a system clock that moved back made verify fail the log."""
+        res = self.clock_run("clock_back", clock_ns=clock_back_after_lock())
+        ok, msg = verify(res)
+        self.assertTrue(ok, msg)
+
+    def test_each_record_time_is_the_lock_time_plus_the_steady_time_since_the_lock(self):
+        steady = SteadyClock()
+        res = self.clock_run("clock_steady", clock_ns=clock_back_after_lock(), steady_ns=steady)
+        recs = runlog.read_log(res.log_path)
+        self.assertEqual(res.status, "complete")
+        self.assertTrue(any(r["type"] == "isolation_set" for r in recs))
+        self.assertEqual(run_clock_problems(recs, steady), [])
 
     def test_the_complete_run_verifies_and_rescores(self):
         run = self.complete()
@@ -896,6 +919,64 @@ class PreflightTests(unittest.TestCase):
         rc, out = self.preflight(*self.start, baseline=_MOD["spike"], mode="explore")
         self.assertEqual(rc, 2, out[-1500:])
         self.assertTrue(self.problems(out)[0].startswith(f"  - {want}"), out[-1500:])
+
+    def test_a_baseline_log_with_a_lone_surrogate_is_refused_with_or_without_a_key(self):
+        """A signed copy of the baseline log holds the JSON escape \\ud83d in the time of the owner's confirmation. No
+        check reads that text. sec002_log.read_baseline reads the log through sec006_log.read_baseline. That reader
+        refuses it in one problem, with no key and with the key. The preflight prints the problem. --start refuses in
+        that one line, exit 2, before the typed `yes`. Before, the preflight and --start passed the log."""
+        recs = runlog.read_log(_MOD["baseline"])
+        recs[0]["owner_confirmation"]["time"] = "LONE_MARK"
+        lines = [runlog.canonical(r) for r in recs]
+        self.assertEqual("".join(lines).count("LONE_MARK"), 1)
+        lines[0] = lines[0].replace("LONE_MARK", "placeholder\\ud83d")
+        copy = self.dir / "baselines" / "lone" / "run_log.jsonl"
+        copy.parent.mkdir(parents=True, exist_ok=True)
+        copy.write_bytes("".join(line + "\n" for line in lines).encode("utf-8"))
+        runlog.sign_log(copy, _MOD["priv"])
+        problem = "the baseline log holds a lone surrogate in the key or the value of 'time'"
+        for mode, key, extra, rc_want, head in (
+                ("explore", None, (), 0, None),
+                ("explore", None, self.start, 2, "START REFUSED"),
+                ("evidence", str(_MOD["pub"]), (), 2, "BASELINE REFUSED"),
+                ("evidence", str(_MOD["pub"]), self.start, 2, "START REFUSED")):
+            with self.subTest(mode=mode, key=bool(key), start=bool(extra)):
+                rc, out = self.preflight(*extra, baseline=copy, mode=mode, baseline_pubkey=key)
+                self.assertEqual(rc, rc_want, out[-1500:])
+                self.assertNotIn("Traceback", out)
+                self.assertIn(f"Baseline check: {problem}\n", out)
+                if head:
+                    self.assertEqual(self.problems(out, f"{head}. No run starts. Fix these points first:"),
+                                     [f"  - {problem}"])
+
+    def test_a_baseline_log_with_a_line_that_is_not_a_json_object_is_refused_in_one_line(self):
+        """A signed copy of the baseline log holds a line that is a JSON value but not an object. The cases are a list
+        as the first line and a text after the header. sec002_log.read_baseline reads the log through
+        sec006_log.read_baseline. That reader refuses it in one problem. The preflight prints the problem. --start
+        refuses in that one line, exit 2, before the typed `yes`. Before, each case stopped the preflight with
+        AttributeError. With no key, the text after the header stopped it when the reader scored the log again. With
+        the key, the text stopped it in the check of the signature."""
+        lines = Path(_MOD["baseline"]).read_bytes().decode("utf-8").splitlines()
+        for name, rows, line in (("the first line", ["[1]", *lines], 1),
+                                 ("line 2", [lines[0], '"a text"', *lines[1:]], 2)):
+            copy = self.dir / "baselines" / f"not_object_{line}" / "run_log.jsonl"
+            copy.parent.mkdir(parents=True, exist_ok=True)
+            copy.write_bytes("".join(r + "\n" for r in rows).encode("utf-8"))
+            runlog.sign_log(copy, _MOD["priv"])
+            problem = f"the baseline log line {line} is not a JSON object"
+            for mode, key, extra, rc_want, head in (
+                    ("explore", None, (), 0, None),
+                    ("explore", None, self.start, 2, "START REFUSED"),
+                    ("evidence", str(_MOD["pub"]), (), 2, "BASELINE REFUSED"),
+                    ("evidence", str(_MOD["pub"]), self.start, 2, "START REFUSED")):
+                with self.subTest(line=name, mode=mode, key=bool(key), start=bool(extra)):
+                    rc, out = self.preflight(*extra, baseline=copy, mode=mode, baseline_pubkey=key)
+                    self.assertEqual(rc, rc_want, out[-1500:])
+                    self.assertNotIn("Traceback", out)
+                    self.assertIn(f"Baseline check: {problem}\n", out)
+                    if head:
+                        self.assertEqual(self.problems(out, f"{head}. No run starts. Fix these points first:"),
+                                         [f"  - {problem}"])
 
     def test_start_refuses_families_that_are_not_those_of_the_item_file(self):
         """The preflight refuses before the operator types yes. The engine compares the two lists too (EngineTests).

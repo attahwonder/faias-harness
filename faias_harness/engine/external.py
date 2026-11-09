@@ -686,7 +686,8 @@ def sec002_start_problems(settings, probes):
 
 
 def execute(settings, profile, *, run_dir, sign_key, confirmation, probes=None, engine="inspect",
-            clock_ns=time.time_ns, repo=REPO, prior_calls=0, env=None, sleep=time.sleep, clock=time.monotonic):
+            clock_ns=time.time_ns, repo=REPO, prior_calls=0, env=None, sleep=time.sleep, clock=time.monotonic,
+            steady_ns=time.monotonic_ns):
     """Run TP-SEC-001 against the external target of the profile. Return an ExternalResult. With `procedure:
     TP-SEC-002` in the settings, run TP-SEC-002 instead (_execute_sec002); it needs `probes` with the channel probe.
 
@@ -708,7 +709,7 @@ def execute(settings, profile, *, run_dir, sign_key, confirmation, probes=None, 
     if settings.procedure == sec002.TP:
         return _execute_sec002(settings, profile, run_dir=run_dir, sign_key=sign_key, confirmation=confirmation,
                                probes=probes, engine=engine, clock_ns=clock_ns, repo=repo, prior_calls=prior_calls,
-                               env=env, sleep=sleep, clock=clock)
+                               env=env, sleep=sleep, clock=clock, steady_ns=steady_ns)
     run_dir = Path(run_dir)
     run_dir.mkdir(parents=True, exist_ok=True)
     elog = EgressLog(run_dir / "egress.jsonl")
@@ -717,13 +718,14 @@ def execute(settings, profile, *, run_dir, sign_key, confirmation, probes=None, 
     target = make_target(profile, settings, egress, budget, env=env, sleep=sleep, clock=clock)
     header = runlog.build_external_header(settings, target=target_facts(profile), allow_hosts=egress.allow_text,
                                           confirmation=confirmation, probes=probes, repo=repo, engine=engine)
-    runlog.lock_header(header, clock_ns())
+    lock_ns, run_ns = runlog.run_clock(clock_ns, steady_ns)     # the records take their times from run_ns
+    runlog.lock_header(header, lock_ns)
     log_path = run_dir / "run_log.jsonl"
     log = runlog.RunLog(log_path)
     try:
         log.write(header)                   # the lock is on disk before the first item is sent
-        runlog.wait_past_lock(header, clock_ns)
-        runner = _ExternalRunner(log, clock_ns, budget, settings)
+        runlog.wait_past_lock(header, run_ns)
+        runner = _ExternalRunner(log, run_ns, budget, settings)
         k, items = settings.runs_per_item, run_items(settings, repo=repo)
         if engine == "inspect":
             from .spike import _run_inspect
@@ -746,7 +748,7 @@ def execute(settings, profile, *, run_dir, sign_key, confirmation, probes=None, 
             "egress": {"file": elog.path.name, "sha256": runlog.sha256_hex(elog.path.read_bytes()),
                        "summary": elog.summary()},
             "run_engine": engine_facts,
-            "finished": runlog.iso(),
+            "finished": runlog.iso(run_ns()),
         }
         log.write(summary)
     finally:
@@ -764,7 +766,7 @@ def _sec002_pass(engine, target, runner, run_dir, k, items, model_name):
 
 
 def _execute_sec002(settings, profile, *, run_dir, sign_key, confirmation, probes, engine, clock_ns, repo, prior_calls,
-                    env, sleep, clock):
+                    env, sleep, clock, steady_ns):
     """Run TP-SEC-002 against the external target of the profile (see the module docstring). It refuses, before it
     writes any file: a run with no baseline log, no channel probe with a session state, an item file that holds a
     repeated key (sec002.load_set) or that the item check does not pass (sec002.refuse_item_set), a baseline that is
@@ -803,19 +805,20 @@ def _execute_sec002(settings, profile, *, run_dir, sign_key, confirmation, probe
     selection = sec002_log.track_selection(probes)
     if selection:       # Track C(ii) only: the header names the tracks not run and the reason, under the lock
         header["track_selection"] = selection
-    runlog.lock_header(header, clock_ns())
+    lock_ns, run_ns = runlog.run_clock(clock_ns, steady_ns)     # the records take their times from run_ns
+    runlog.lock_header(header, lock_ns)
     log_path = run_dir / "run_log.jsonl"
     log = runlog.RunLog(log_path)
     try:
         log.write(header)                   # the lock is on disk before the first turn is sent
-        runlog.wait_past_lock(header, clock_ns)
-        runner = _Sec002Runner(log, clock_ns, budget, settings, pool)
+        runlog.wait_past_lock(header, run_ns)
+        runner = _Sec002Runner(log, run_ns, budget, settings, pool)
         k = settings.runs_per_item
         items = cells if selection else seqs + cells
         engine_facts = [_sec002_pass(engine, target, runner, run_dir, k, items, profile.adapter)]
         iso_record = None
         if not runner.stopped and not selection:
-            iso_items, iso_record = run_sec002._isolation(runner, seqs, clock_ns)
+            iso_items, iso_record = run_sec002._isolation(runner, seqs, run_ns)
             log.write(iso_record)
             if iso_items:
                 engine_facts.append(_sec002_pass(engine, target, runner, run_dir, k, iso_items, profile.adapter))
@@ -836,7 +839,7 @@ def _execute_sec002(settings, profile, *, run_dir, sign_key, confirmation, probe
             "egress": {"file": elog.path.name, "sha256": runlog.sha256_hex(elog.path.read_bytes()),
                        "summary": elog.summary()},
             "run_engine": engine_facts,
-            "finished": runlog.iso(),
+            "finished": runlog.iso(run_ns()),
         }
         log.write(summary)
     finally:

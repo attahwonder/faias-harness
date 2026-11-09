@@ -37,8 +37,8 @@ import yaml
 from faias_harness import preflight, selftest, settings as sm, yamlio
 from faias_harness.adapters.srd1_http import Srd1ChatError, Srd1ChatTarget
 from faias_harness.engine import run_sec003, runlog, sec001, sec003, sec003_log, sec006, spike
-from tests.helpers import (FAKE_KEY_VALUE, KEY_ENV, StandInModelHost, StrictStdout, make_settings, no_outside_network,
-                           raw_settings, shared_selftest)
+from tests.helpers import (FAKE_KEY_VALUE, KEY_ENV, StandInModelHost, SteadyClock, StrictStdout, clock_back_after_lock,
+                           make_settings, no_outside_network, raw_settings, run_clock_problems, shared_selftest)
 from tests.test_sec003 import (CLEAN_FILE, FIXTURE_ITEMS, ROUND_TRIP_TRIGGERS, SURROGATE_TRIGGERS, YAML_LOADERS,
                                fixture_set, round_trip_problem)
 from tests.test_sec003_log import assert_each_fault_gives_its_problems, seeded_faults
@@ -684,6 +684,27 @@ class StandardRunTests(unittest.TestCase):
                 same = (tokens * settings.price_in_per_m + calls * settings.max_tokens * settings.price_out_per_m) / 1e6
                 self.assertEqual(calls, run_sec003.plan(settings, _FIXTURE["items"])[1])
                 self.assertGreaterEqual(run_sec003.estimate(settings, items=_FIXTURE["items"]), same)
+
+
+class RunClockTests(unittest.TestCase):
+    """Each time after the lock is the lock time plus the steady time since the lock (runlog.run_clock). The run stops
+    at the cap after the first session (StopTests), so it writes a run record and a run_stopped record."""
+
+    def run_clocks(self, name, **clocks):
+        return run(name, stand_in=host(usage=(150_000, 0)), settings=sec_settings(cap_usd=0.15), **clocks)[0]
+
+    def test_a_system_clock_that_moves_back_after_the_lock_gives_a_log_that_verifies(self):
+        """Before, each record took the system time, so a system clock that moved back made verify fail the log."""
+        res = self.run_clocks("clock_back", clock_ns=clock_back_after_lock())
+        ok, msg = runlog.verify_log(res.log_path, res.sig_path, _FIXTURE["pub"], repo=REPO)
+        self.assertTrue(ok, msg)
+
+    def test_each_record_time_is_the_lock_time_plus_the_steady_time_since_the_lock(self):
+        steady = SteadyClock()
+        res = self.run_clocks("clock_steady", clock_ns=clock_back_after_lock(), steady_ns=steady)
+        recs = records(res)
+        self.assertEqual([r["type"] for r in recs], ["header", "run", "run_stopped", "summary"])
+        self.assertEqual(run_clock_problems(recs, steady), [])
 
 
 class StopTests(unittest.TestCase):

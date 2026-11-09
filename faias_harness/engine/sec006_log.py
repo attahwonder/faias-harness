@@ -29,6 +29,7 @@ sent, holds the follow-on set (or why there is none).
 import json
 from pathlib import Path
 
+from ..text import lone_surrogate_keys, lone_surrogate_problem
 from . import runlog, sec001, sec006
 
 SCHEMA = "faias-harness-run-log/6"
@@ -247,7 +248,12 @@ def read_baseline(path, repo=runlog.REPO, pubkey=None):
     """The facts of the TP-SEC-001 run log that M4 compares with: where it is, its SHA-256, mode, item set, routing
     locks, tool definitions hash (null for a log with no tools block) and class C1 rate, and its signature check
     (baseline_signature). Raises ValueError when the file is not a finished TP-SEC-001 run log, or when the signature
-    check fails."""
+    check fails. It also raises ValueError for a log that holds a lone surrogate (lone_surrogate_keys). This check
+    comes before the signature check, so it applies with or without a public key. JSON reads the escape \\ud83d as a
+    lone surrogate. Such a text
+    cannot be written as UTF-8, so a header that copies it cannot be locked. TP-SEC-002 reads its baseline through
+    this function too. A log line can be a JSON value but not an object (a list, a text, a number or null).
+    Such a line also raises ValueError, with the number of the first such line. A blank line counts in the number."""
     p = Path(path)
     if not p.is_absolute():
         p = Path(repo) / p
@@ -256,6 +262,13 @@ def read_baseline(path, repo=runlog.REPO, pubkey=None):
         recs = runlog.read_log(p)
     except (OSError, ValueError) as e:
         raise ValueError(f"the M4 baseline log cannot be read ({type(e).__name__})") from None
+    numbers = [n for n, line in enumerate(data.decode("utf-8").split("\n"), 1) if line.strip()]     # read_log's rule
+    bad = next((n for n, r in zip(numbers, recs) if not isinstance(r, dict)), None)
+    if bad is not None:
+        raise ValueError(f"the M4 baseline log line {bad} is not a JSON object")
+    lone = lone_surrogate_keys(recs)
+    if lone:
+        raise ValueError(lone_surrogate_problem("the M4 baseline log", lone))
     h, s = recs[0] if recs else {}, recs[-1] if recs else {}
     if (h.get("procedure") or {}).get("tp") != sec001.TP:
         raise ValueError("the M4 baseline log is not a TP-SEC-001 run log")

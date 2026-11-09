@@ -123,7 +123,7 @@ All tests. They need a copy of FAIAS version 1.3.4 (the folder that holds `V3_Te
 py -3.14 -X utf8 tests/run_all.py --faias <path to the FAIAS v1.3.4 folder>
 ```
 
-The workflow `.github/workflows/tests.yml` runs the same command on each push and pull request. It runs on Linux and Windows, with Python 3.11 and 3.14. It clones FAIAS at tag v1.3.4 from GitHub. It uses no secret and no key. The badge at the top shows the result of its last run on the main branch. Version 0.7.0 is the first release with this workflow. Until the push of that release, the tests ran on Windows only.
+The workflow `.github/workflows/tests.yml` runs the same command on each push and pull request. It runs on Linux and Windows, with Python 3.11 and 3.14. One more job runs it on Linux with Python 3.14 and inspect_ai 0.3.281 installed. Where inspect_ai is installed, some engine tests run the engines on Inspect, not on the direct loop. Some tests compare the two engines. Without inspect_ai, they print a note and check nothing. The pin does not fix the packages that inspect_ai needs. So a new version of one of them can change the result of that job. Each job clones FAIAS at tag v1.3.4 from GitHub. The jobs use no secret and no key. The badge at the top shows the result of its last run on the main branch. Version 0.7.0 is the first release with this workflow. Until the push of that release, the tests ran on Windows only. Version 0.9.5 is the first release with the job that installs inspect_ai.
 
 Rebuild the records. This does not change `records/capability_needs.yaml`, which is an input file that a person keeps:
 

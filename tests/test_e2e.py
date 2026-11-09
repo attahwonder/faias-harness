@@ -20,8 +20,9 @@ from faias_harness.engine import run_sec006, runlog, sec001, sec006, sec006_log,
 from targets.srd1.app import trace as tr
 from targets.srd1.app.gateway import Gateway
 from targets.srd1.app.orchestrator import PROMPT_VARIANTS, load_system_prompt
-from tests.helpers import (FAKE_KEY_VALUE, KEY_ENV, StandInModelHost, lock_time_twice_clock, make_settings,
-                           no_outside_network, raw_settings, refused_at)
+from tests.helpers import (FAKE_KEY_VALUE, KEY_ENV, StandInModelHost, SteadyClock, clock_back_after_lock,
+                           lock_time_twice_clock, make_settings, no_outside_network, raw_settings, refused_at,
+                           run_clock_problems)
 
 REPO = Path(__file__).resolve().parents[1]
 ENV = {KEY_ENV: FAKE_KEY_VALUE}
@@ -289,6 +290,24 @@ class SpikeRunTests(unittest.TestCase):
         runs = [r for r in recs if r["type"] == "run"]
         self.assertLess(recs[0]["lock"]["time_ns"], runs[0]["t_ns"])
         self.assertTrue(runlog.verify_log(res.log_path, res.sig_path, self.pub)[0])
+
+    def test_a_system_clock_that_moves_back_after_the_lock_gives_a_log_that_verifies(self):
+        """Each record time is the lock time plus the steady time since the lock (runlog.run_clock). Before, each
+        record took the system time, so a system clock that moved back made verify fail the log."""
+        settings = make_settings(price_in_per_m=1.0, price_out_per_m=1.0, cap_usd=0.0062, max_tokens=50)
+        with StandInModelHost(respond, usage=(1000, 1000)) as host:
+            res = self.run_spike(host, settings, clock_ns=clock_back_after_lock())
+        ok, msg = runlog.verify_log(res.log_path, res.sig_path, self.pub)
+        self.assertTrue(ok, msg)
+
+    def test_each_record_time_is_the_lock_time_plus_the_steady_time_since_the_lock(self):
+        settings = make_settings(price_in_per_m=1.0, price_out_per_m=1.0, cap_usd=0.0062, max_tokens=50)
+        steady = SteadyClock()
+        with StandInModelHost(respond, usage=(1000, 1000)) as host:
+            res = self.run_spike(host, settings, clock_ns=clock_back_after_lock(), steady_ns=steady)
+        recs = runlog.read_log(res.log_path)
+        self.assertEqual([r["type"] for r in recs], ["header", "run", "run", "run", "run_stopped", "summary"])
+        self.assertEqual(run_clock_problems(recs, steady), [])
 
     def test_the_probe_cost_counts_against_the_cap(self):
         settings = make_settings(price_in_per_m=1.0, price_out_per_m=1.0, cap_usd=0.0062, max_tokens=50)

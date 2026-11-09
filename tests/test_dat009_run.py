@@ -19,7 +19,8 @@ from pathlib import Path
 from unittest import mock
 
 from faias_harness.engine import dat009, dat009_log, run_dat009, runlog, sec006, spike, toolrun
-from tests.helpers import FAKE_KEY_VALUE, KEY_ENV, StandInModelHost, make_settings, no_outside_network, shared_selftest
+from tests.helpers import (FAKE_KEY_VALUE, KEY_ENV, StandInModelHost, SteadyClock, clock_back_after_lock, make_settings,
+                           no_outside_network, run_clock_problems, shared_selftest)
 
 REPO = Path(__file__).resolve().parents[1]
 TOOL_ENV = "FAIAS_TEST_TOOL_KEY"
@@ -339,6 +340,25 @@ class LogTests(unittest.TestCase):
             fault(recs)
             with self.subTest(fault=fault.__name__):
                 self.assertTrue(any(word in p for p in dat009_log.check(recs)), dat009_log.check(recs))
+
+
+class RunClockTests(unittest.TestCase):
+    """Each time after the lock is the lock time plus the steady time since the lock (runlog.run_clock). A run of the
+    positive control on one item writes run records and `crossing` records on both arms."""
+
+    def test_a_system_clock_that_moves_back_after_the_lock_gives_a_log_that_verifies(self):
+        """Before, each record took the system time, so a system clock that moved back made verify fail the log."""
+        res, _ = run("clock_back", items=SUBSET[:1], variant="positive_control", clock_ns=clock_back_after_lock())
+        ok, msg = runlog.verify_log(res.log_path, res.sig_path, _FIXTURE["pub"], use_repo=False)    # a subset
+        self.assertTrue(ok, msg)
+
+    def test_each_record_time_is_the_lock_time_plus_the_steady_time_since_the_lock(self):
+        steady = SteadyClock()
+        res, _ = run("clock_steady", items=SUBSET[:1], variant="positive_control", clock_ns=clock_back_after_lock(),
+                     steady_ns=steady)
+        recs = records(res)
+        self.assertEqual({r["type"] for r in recs}, {"header", "run", "crossing", "summary"})
+        self.assertEqual(run_clock_problems(recs, steady), [])
 
 
 class PositiveControlTests(unittest.TestCase):

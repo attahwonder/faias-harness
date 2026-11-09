@@ -247,10 +247,11 @@ class _Runner:
                         "judged": {"sought_confirmation": None, "refused_or_deflected": None}, **facts})
         if facts["bypass"]:
             self.bypasses += 1
-            self.log.write({"type": "bypass", "item": item.id, "run": n, "t_ns": self.clock_ns(),
+            b_ns = self.clock_ns()
+            self.log.write({"type": "bypass", "item": item.id, "run": n, "t_ns": b_ns,
                             "bypass_detail": facts["bypass_detail"],
                             "duplicate_execution": facts["duplicate_execution"],    # a retry, not the gate's sum
-                            "escalated": f"printed at {runlog.iso()}; the engagement lead is the operator"})
+                            "escalated": f"printed at {runlog.iso(b_ns)}; the engagement lead is the operator"})
             print(f"BYPASS {item.id}/{n}: {facts['bypass_detail']} (escalated at once; the run continues)")
             if self.halt_on_bypass:
                 self.status = "stopped_on_bypass"
@@ -315,7 +316,8 @@ def _containment_run(target, emulator, delay_ms, n, clock_ns, log, runner, custo
     run = {"trace_lines": decisions, "ledger_lines": new_ledger, "next_message_killed": next_killed,
            "turn_t_ns": turn_t_ns, "send_error": send_error}
     q = agt012.score_containment(run)
-    rec = {"type": "containment", "delay_ms": delay_ms, "run": n, "t_ns": clock_ns(), "time": runlog.iso(),
+    c_ns = clock_ns()
+    rec = {"type": "containment", "delay_ms": delay_ms, "run": n, "t_ns": c_ns, "time": runlog.iso(c_ns),
            "switch": switch_result, "trace_lines": decisions, "ledger_lines": new_ledger, "turn_t_ns": turn_t_ns,
            "next_message_killed": next_killed, "send_error": send_error, "calls": calls, "halted_turn_calls": halted,
            **q}
@@ -413,7 +415,7 @@ def _entitlement_matrix(store_path):
 def execute(settings, *, run_dir, sign_key, confirmation, items=None, probes=None, base_url=None, env=None,
             clock_ns=time.time_ns, repo=REPO, prior_spent_usd=0.0, variant="standard", engine="inspect", gate=None,
             selftest_log=None, delays_ms=DEFAULT_DELAYS_MS, objective_s=None, prompt_gate_file=None,
-            selftest_pubkey=None):
+            selftest_pubkey=None, steady_ns=time.monotonic_ns):
     """Run TP-AGT-012 on SRD-1 minimal. Returns a spike.RunResult. `items` overrides the shipped item file (tests pass
     their own). `base_url`, `env`, `gate`, `prompt_gate_file` are for tests. `selftest_log` names a self-test log or a
     folder, and the self-test gate uses it. `selftest_pubkey` names the public key file of that log. The default is
@@ -505,13 +507,14 @@ def execute(settings, *, run_dir, sign_key, confirmation, items=None, probes=Non
             containment_plan=containment_plan, tools=tools_block,
             confirmation=confirmation, probes=probes, repo=repo, variant=variant, engine=engine,
             objective_s=objective_s)
-        runlog.lock_header(header, clock_ns())
+        lock_ns, run_ns = runlog.run_clock(clock_ns, steady_ns)     # the records take their times from run_ns
+        runlog.lock_header(header, lock_ns)
         log = runlog.RunLog(log_path)
         try:
             log.write(header)
-            runlog.wait_past_lock(header, clock_ns)
+            runlog.wait_past_lock(header, run_ns)
             runner = _Runner(log, tool_run.emulator, gate.cap_gbp, gate.session_limit_gbp,
-                             structural["entitlement_matrix"], clock_ns, tools_block["names"],
+                             structural["entitlement_matrix"], run_ns, tools_block["names"],
                              halt_on_bypass=getattr(settings, "halt_on_bypass", False),
                              halt_on_mismatch=settings.mode == "evidence")
             k = settings.runs_per_item
@@ -521,7 +524,7 @@ def execute(settings, *, run_dir, sign_key, confirmation, items=None, probes=Non
                 spike._run_direct(target, runner, k, items)
             containment = []
             if not runner.stopped:
-                containment = _run_containment(target, tool_run.emulator, delays_ms, c_runs, clock_ns, log, items,
+                containment = _run_containment(target, tool_run.emulator, delays_ms, c_runs, run_ns, log, items,
                                                runner)
             summary = _summary(runner, containment, settings, objective_s, srd1, tool_run, elog, engine, structural)
             log.write(summary)
@@ -579,7 +582,7 @@ def _summary(runner, containment, settings, objective_s, srd1, tool_run, elog, e
         "ledger": ledger,
         "egress": {"file": elog.path.name, "sha256": runlog.sha256_hex(elog.path.read_bytes()),
                    "summary": elog.summary()},
-        "run_engine": runlog._engine_facts(engine), "finished": runlog.iso(),
+        "run_engine": runlog._engine_facts(engine), "finished": runlog.iso(runner.clock_ns()),
     }
 
 

@@ -163,7 +163,7 @@ def lock_header(header, clock_ns):
 
 # ---------- summary ----------
 
-def build_summary(records, guard_trips, scan_result):
+def build_summary(records, guard_trips, scan_result, finished_ns=None):
     attempts = sum(r["counts"]["attempts"] for r in records)
     refused = sum(r["counts"]["refused"] for r in records)
     failed = [r["id"] for r in records if r["result"] != "PASS"]
@@ -192,7 +192,7 @@ def build_summary(records, guard_trips, scan_result):
         "result": "PASS" if ok else "FAIL",
         "wording": "every probed path refused or stayed on the local machine" if ok else
                    "at least one probed path did not behave as expected",
-        "finished": runlog.iso(),
+        "finished": runlog.iso(finished_ns),
     }
 
 
@@ -214,7 +214,7 @@ def _out_problems(out, repo):
     return []
 
 
-def run(out_dir, *, sign_key=None, repo=REPO, clock_ns=time.time_ns, probes=None):
+def run(out_dir, *, sign_key=None, repo=REPO, clock_ns=time.time_ns, steady_ns=time.monotonic_ns, probes=None):
     """Run the self-test. Returns (log path, signature path or None, summary). Raises SelftestRefused."""
     repo, out = Path(repo), Path(out_dir)
     problems = attestation_problems(repo) + _out_problems(out, repo)
@@ -229,18 +229,20 @@ def run(out_dir, *, sign_key=None, repo=REPO, clock_ns=time.time_ns, probes=None
     log = runlog.RunLog(log_path)
     try:
         with Guard() as guard, probes_mod.temp_folder() as tmp:
-            header = lock_header(build_header(repo, probes_mod.plan(probes), env=env), clock_ns())
+            header = build_header(repo, probes_mod.plan(probes), env=env)
+            lock_ns, run_ns = runlog.run_clock(clock_ns, steady_ns)     # the records take their times from run_ns
+            header = lock_header(header, lock_ns)
             log.write(header)               # the lock is on disk before the first probe runs
-            runlog.wait_past_lock(header, clock_ns)
+            runlog.wait_past_lock(header, run_ns)
             ctx = probes_mod.Ctx(guard, Path(tmp), repo, header["code_manifest"]["sha256"])
             records = []
             for p in probes:
-                r = probes_mod.run_probe(p, ctx, clock_ns)
+                r = probes_mod.run_probe(p, ctx, run_ns)
                 r["time"] = runlog.iso(r["t_ns"])
                 records.append(r)
                 log.write(r)
             scan_result = ctx.scan_result or scan_mod.scan(repo)
-            summary = build_summary(records, len(guard.trips), scan_result)
+            summary = build_summary(records, len(guard.trips), scan_result, finished_ns=run_ns())
             log.write(summary)
     finally:
         log.close()

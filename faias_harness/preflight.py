@@ -347,6 +347,7 @@ def item_file_not_found(settings):
 def settings_report(settings, estimate_usd):
     """Print the settings block of the preflight. It never prints the value of the key."""
     r = settings.routing()
+    data_refusal = None
     print(f"Engine run: {settings.procedure} on SRD-1 minimal, item set {settings.item_set}")
     print(f"Mode: {settings.mode}")
     print(f"Settings hash: {settings.digest()}")
@@ -377,6 +378,9 @@ def settings_report(settings, estimate_usd):
         print(f"Retrieval: filter stage {settings.retrieval_filter}; delegation credential "
               f"{settings.delegation_credential}; arms {', '.join(settings.arms)}; halt on crossing "
               f"{settings.halt_on_crossing}")
+        data_refusal = dat009_data_refusal(settings)
+        if data_refusal:
+            print(f"Data files: a file is refused: {data_refusal}")
     elif settings.procedure == SEC002:
         m1 = "not set" if settings.m1_value is None else settings.m1_value
         print(f"M1 bar (material uplift): {m1}; reason: {settings.m1_reason or 'not set'}")
@@ -412,7 +416,8 @@ def settings_report(settings, estimate_usd):
                "an item file or the instrument file is refused" if settings.procedure == MOD011 else
                _sec002_no_estimate() if settings.procedure == SEC002 else
                "the item file is refused" if item_refusal or (settings.procedure == SEC003 and _sec003_item_file())
-               else "a tool emulator file is refused" if tool_refusal else "the item file is not found")
+               else "a tool emulator file is refused" if tool_refusal else "a data file is refused" if data_refusal
+               else "the item file is not found")
         print(f"Worst-case estimate: not available ({why}); cap: {cap}")
     else:
         note = "  WARNING: the estimate is above the cap; the run may stop at the cap" \
@@ -770,16 +775,20 @@ def agt012_start_problems(settings):
     found, and agt012.check_item_set must find no problem in it with the declared values. The run drives the tool,
     so tools must be on. An item file that its loader refuses is named once, by main (item_file_refusal). So is a
     tools file or a store that the emulator refuses (tools_file_refusal). So is a risk-appetite file that its reader
-    refuses (gate.read_risk_appetite), by tools_problems. The checks that need its values are then not made. The two
-    homes of the time-to-halt must agree, and the firm-values file must be read (run_agt012.halt_home_problems). The
-    engine checks the same before the lock."""
+    refuses (gate.read_risk_appetite), by tools_problems. The checks that need its values are then not made. The
+    item-set check compares the fees with the refund cap and the session limit. So it is made only when
+    gate.declared_problems finds both declared as numbers above 0. Otherwise tools_problems names the value, in one
+    line. The two homes of the time-to-halt must agree, and the firm-values file must be read
+    (run_agt012.halt_home_problems). The engine checks the same before the lock."""
     from .engine import agt012, run_agt012
-    from targets.srd1.app.gate import read_risk_appetite
+    from targets.srd1.app import gate
     problems = []
-    values, _, risk_refused = read_risk_appetite()
+    values, _, risk_refused = gate.read_risk_appetite()
+    declared = [] if risk_refused else gate.declared_problems()     # a cap or a limit that is not a number above 0
     if not (REPO / agt012.ITEM_FILE).is_file():
         problems.append(f"the item file {agt012.ITEM_FILE} is not found")
-    elif risk_refused is None and item_file_refusal(settings) is None and tools_file_refusal(settings) is None:
+    elif (risk_refused is None and not declared and item_file_refusal(settings) is None
+          and tools_file_refusal(settings) is None):
         problems += [f"the item file: {p}" for p in
                      run_agt012.item_set_problems(REPO, values.get("cap_gbp"), values.get("session_limit_gbp"))]
     if not getattr(settings, "tools_enabled", False):
@@ -807,7 +816,26 @@ def dat009_start_problems(settings, variant="standard"):
         problems.append(f"the item file {dat009.ITEM_FILE} is not found")
     if not getattr(settings, "tools_enabled", False):
         problems.append("TP-DAT-009 needs tools_enabled: true")
+    data_refusal = dat009_data_refusal(settings)
+    if data_refusal:
+        problems.append(f"{DAT009}: a data file is refused: {data_refusal}")
     return problems + dat009.variant_problems(variant, settings.retrieval_filter, settings.delegation_credential)
+
+
+def dat009_data_refusal(settings):
+    """Why dat009.load_data refuses the bank or the documents of a TP-DAT-009 run, or None. The engine reads the two
+    files with it for the matrix (evidence output E1). So the preflight and --start read them with it too. The
+    documents are the store of the tools file. So when tools_file_refusal names a refusal, this check is not made, and
+    one fault gives one problem. With a refusal, the preflight gives no estimate, because the estimate reads the
+    documents (run_dat009.estimate)."""
+    from .engine import dat009
+    if tools_file_refusal(settings):
+        return None
+    try:
+        dat009.load_data()
+    except dat009.DataError as e:
+        return str(e)
+    return None
 
 
 def dat009_sends(settings):
@@ -1215,8 +1243,8 @@ def main(argv=None, *, input_fn=input, gateway_factory=_default_gateway, executo
             est = run_sec006.estimate(settings)
         elif settings.procedure == AGT012:
             est = run_agt012.estimate(settings)
-        elif settings.procedure == DAT009:
-            est = run_dat009.estimate(settings)
+        elif settings.procedure == DAT009:      # the estimate reads the documents, so a refused data file gives none
+            est = None if dat009_data_refusal(settings) else run_dat009.estimate(settings)
         elif settings.procedure == SEC002:
             est = run_sec002.estimate(settings) if _sec002_no_estimate() is None else None
         elif settings.procedure == SEC003:

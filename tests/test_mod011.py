@@ -722,18 +722,116 @@ class OverlapToolTests(unittest.TestCase):
             return d / "a_file" / "overlap.json"
         self.refused_before_any_input(make, lambda out: f"refused: {out.parent} is not a folder\n")
 
+    @staticmethod
+    def writes_as(make):
+        """Each open of a file in binary write mode gives make(the real file object) in its place. The tool opens
+        its result file in this way, and the reads of the inputs are not changed."""
+        real_open = io.open
+
+        def opener(file, mode="r", *a, **k):
+            f = real_open(file, mode, *a, **k)
+            return make(f) if "w" in mode and "b" in mode else f
+        return mock.patch("io.open", opener)
+
     def test_a_result_that_cannot_be_written_is_refused_in_one_line(self):
         """The system refuses the write of the result (a PermissionError here): the tool refuses in one line, in the
         words of its refusal of a file that it cannot read, and exits 2. Before, it stopped with a traceback."""
+        def refused(f):
+            f.close()
+            raise PermissionError(13, "Permission denied")
         with tempfile.TemporaryDirectory() as d:
             d = Path(d)
             gsm = self.gsm8k_files(d)
             comp, out = d / "comparators.json", d / "overlap.json"
             comp.write_text(json.dumps({"comparators": self.COMPARATORS}), encoding="utf-8")
-            with mock.patch.object(Path, "write_bytes", side_effect=PermissionError(13, "Permission denied")):
+            with self.writes_as(refused):
                 rc, text = self.run_tool(comp, gsm, out)
             self.assertEqual((rc, text), (2, f"refused: {out} cannot be written (Permission denied)\n"))
             self.assertFalse(out.exists())
+
+    def test_a_write_that_fails_part_way_leaves_no_file_and_a_second_run_writes_the_result(self):
+        """The write of the result stops part way, as on a full disk. Half of the bytes reach the file, and then the
+        write raises OSError. The tool refuses in one line and exits 2. No file stays at --out, and no temporary
+        file stays in its folder. So a second run with the same --out writes the whole result. Before, the part of the
+        result stayed at --out, and the second run refused it because it existed."""
+        class Half:
+            def __init__(self, f):
+                self.f = f
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *exc):
+                self.f.close()
+
+            def write(self, data):
+                self.f.write(bytes(data)[:len(data) // 2])
+                self.f.flush()
+                raise OSError(28, "No space left on device")
+        with tempfile.TemporaryDirectory() as d:
+            d = Path(d)
+            gsm = self.gsm8k_files(d)
+            comp, out = d / "comparators.json", d / "overlap.json"
+            comp.write_text(json.dumps({"comparators": self.COMPARATORS}), encoding="utf-8")
+            before = sorted(p.name for p in d.iterdir())
+            with self.writes_as(Half):
+                rc, text = self.run_tool(comp, gsm, out)
+            self.assertEqual((rc, text), (2, f"refused: {out} cannot be written (No space left on device)\n"))
+            self.assertEqual(sorted(p.name for p in d.iterdir()), before)
+            rc, text = self.run_tool(comp, gsm, out)
+            self.assertEqual(rc, 1, text)
+            self.assertEqual(json.loads(out.read_text(encoding="utf-8"))["at_or_above_limit"], ["C-01"])
+            self.assertEqual(sorted(p.name for p in d.iterdir()), sorted(before + [out.name]))
+
+    def test_an_out_file_made_while_the_tool_runs_is_not_overwritten(self):
+        """Another process makes the --out file while the tool runs. This comes after the check that --out does not
+        exist, and before the move of the result. The tool refuses in one line and exits 2. The line is the one for an
+        --out path that exists. The other file keeps its bytes, and no temporary file stays in the folder. Before, the
+        tool overwrote that file."""
+        with tempfile.TemporaryDirectory() as d:
+            d = Path(d)
+            gsm = self.gsm8k_files(d)
+            comp, out = d / "comparators.json", d / "overlap.json"
+            comp.write_text(json.dumps({"comparators": self.COMPARATORS}), encoding="utf-8")
+            before, real_result = sorted(p.name for p in d.iterdir()), OVERLAP_TOOL.result
+
+            def result(*a):
+                out.write_bytes(b"another file\n")      # made while the tool runs
+                return real_result(*a)
+            with mock.patch.object(OVERLAP_TOOL, "result", result):
+                rc, text = self.run_tool(comp, gsm, out)
+            self.assertEqual((rc, text), (2, f"refused: {out} exists\n"))
+            self.assertEqual(out.read_bytes(), b"another file\n")
+            self.assertEqual(sorted(p.name for p in d.iterdir()), sorted(before + [out.name]))
+
+    def test_a_temporary_file_that_cannot_be_removed_after_a_good_move_is_a_note_not_a_refusal(self):
+        """On POSIX the move is a hard link (HARD_LINK), and the result is then at --out. Then the system does not let
+        the tool remove the temporary file (a PermissionError here). The result stays at --out. The tool prints the
+        line of a written result. It then prints one note line with the path of the temporary file and the reason. The
+        exit code is that of the result (0 here). The test takes the POSIX move on Windows too. Before, the tool
+        refused with `refused: <out> cannot be written (...)` and exit 2. The whole result was at --out then."""
+        real_unlink, failed = OVERLAP_TOOL.os.unlink, []
+
+        def unlink(path, *a, **k):
+            if str(path).endswith(".tmp") and not failed:
+                failed.append(str(path))
+                raise PermissionError(13, "Permission denied")
+            return real_unlink(path, *a, **k)
+        with tempfile.TemporaryDirectory() as d:
+            d = Path(d)
+            gsm = self.gsm8k_files(d)
+            comp, out = d / "comparators.json", d / "overlap.json"
+            comp.write_text(json.dumps({"comparators": self.COMPARATORS[1:]}), encoding="utf-8")     # under the limit
+            with mock.patch.object(OVERLAP_TOOL, "HARD_LINK", True), \
+                    mock.patch.object(OVERLAP_TOOL.os, "unlink", unlink):
+                rc, text = self.run_tool(comp, gsm, out)
+            self.assertEqual(len(failed), 1)
+            self.assertEqual((rc, text), (0, f"wrote {out}: 1 comparators; 0 at or above the limit of 8 words: none\n"
+                                             f"note: the temporary file {failed[0]} cannot be removed (Permission "
+                                             "denied)\n"))
+            self.assertEqual(json.loads(out.read_text(encoding="utf-8"))["results"][0]["id"], "C-02")
+            self.assertEqual(Path(failed[0]).read_bytes(), out.read_bytes())       # a second name of the result
+            real_unlink(failed[0])
 
     def test_a_run_never_spans_two_questions(self):
         files = [("a.jsonl", b'{"question": "one two three four"}\n{"question": "five six seven eight"}\n')]

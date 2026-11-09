@@ -11,7 +11,9 @@ its ID, the length of its longest run and where that run is (file and line index
 mod011.check_comparators reads it. A run of OVERLAP_LIMIT (8) words or more is a problem there.
 
 The tool reads no network and calls no model. Before it reads any input, it refuses an --out path that exists, or
-whose folder is not found or is a file. It refuses a result file that it cannot write. It refuses a comparator file or a
+whose folder is not found or is a file. It refuses a result file that it cannot write. It writes the result to a new
+temporary file in the folder of --out. Then it moves that file to --out only while --out does not exist (write_new).
+So a write that fails leaves no file at --out, and the tool never overwrites a file. It refuses a comparator file or a
 GSM8K file that is not found, or that the system does not let it read (read_file). It refuses a comparator file in
 which a JSON object holds a key more than once, at any depth, with the key, as the engine does (jsonkeys.unique_keys):
 plain json.loads keeps only the last value. It also refuses a comparator file that is not UTF-8 JSON, one that does
@@ -21,12 +23,16 @@ not hold one JSON object, or whose field question is not a text, with the file a
 It does not read such a question as absent, because an absent question would hide an overlap. A comparator whose
 question is not a text is read as absent: its longest run is 0, and mod011.check_comparators still refuses it
 (overlap). A refused file gives no result. Exit 0 when each run is under the limit, 1 when a run is at or above it, 2
-when it refuses.
+when it refuses. On POSIX, the system can refuse the removal of the temporary file after a good move. Then the
+result is at --out. The tool prints one note line with the path of that file and the reason. The exit code is that of
+the result.
 """
 import argparse
 import hashlib
 import json
+import os
 import sys
+import tempfile
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parents[1]
@@ -41,6 +47,8 @@ _GAP = "\0"         # between two questions; no word of a comparator is this tok
 # The refusal of a field comparators that is not a list of objects, in the form of the TP-SEC-002 line of the preflight
 # for the field families ("the field families of the item file is not a list of texts").
 NOT_A_LIST = "the field comparators is not a list of objects"
+# True when write_new moves by a hard link (POSIX, where os.rename replaces a file). On Windows it uses os.rename.
+HARD_LINK = os.name != "nt"
 
 
 def read_file(path, what):
@@ -140,6 +148,32 @@ def result(comparator_raw, comparator_name, files):
             "at_or_above_limit": [r["id"] for r in rows if r["longest_run"] >= mod011.OVERLAP_LIMIT]}
 
 
+def write_new(out, data):
+    """Write the bytes `data` to the new file `out`. They go to a new temporary file in the folder of `out` first. That
+    file then becomes `out` only if `out` does not exist. On POSIX the move is a hard link (HARD_LINK), because
+    os.rename replaces a file there. On Windows the move is os.rename. Each of them refuses an `out` that exists
+    (FileExistsError). On any error of the write or the move, the temporary file is removed and the error goes on. So
+    no part of the result stays at `out` or beside it. After a hard link, the temporary file is a second name of the
+    result, and it is removed. Returns None, or a note when it cannot be removed. The result is then at `out`."""
+    fd, tmp = tempfile.mkstemp(dir=out.parent, prefix=f".{out.name}.", suffix=".tmp")
+    try:
+        with os.fdopen(fd, "wb") as f:
+            f.write(data)
+        if not HARD_LINK:
+            os.rename(tmp, out)
+            return None
+        os.link(tmp, out)
+    except BaseException:
+        if os.path.exists(tmp):
+            os.unlink(tmp)
+        raise
+    try:
+        os.unlink(tmp)
+    except OSError as e:
+        return f"the temporary file {tmp} cannot be removed ({e.strerror or type(e).__name__})"
+    return None
+
+
 def main(argv=None):
     escape_streams()
     ap = argparse.ArgumentParser(description="Check the comparators of TP-MOD-011 against GSM8K question text.")
@@ -167,12 +201,17 @@ def main(argv=None):
         print(f"refused: {e}")
         return 2
     try:
-        out.write_bytes((json.dumps(res, indent=1, ensure_ascii=False) + "\n").encode("utf-8"))
+        note = write_new(out, (json.dumps(res, indent=1, ensure_ascii=False) + "\n").encode("utf-8"))
+    except FileExistsError:         # made while the tool ran; the tool never overwrites it
+        print(f"refused: {out} exists")
+        return 2
     except OSError as e:            # in the words of read_file
         print(f"refused: {out} cannot be written ({e.strerror or type(e).__name__})")
         return 2
     print(f"wrote {out}: {len(res['results'])} comparators; {len(res['at_or_above_limit'])} at or above the limit of "
           f"{mod011.OVERLAP_LIMIT} words: {', '.join(map(str, res['at_or_above_limit'])) or 'none'}")
+    if note:
+        print(f"note: {note}")
     return 1 if res["at_or_above_limit"] else 0
 
 

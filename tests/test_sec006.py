@@ -30,8 +30,8 @@ from targets.srd1.app.entitlements import DATA_FILE
 from targets.srd1.app.gate import RefundGate
 from targets.srd1.app.orchestrator import PROMPT_VARIANTS, Orchestrator, load_system_prompt
 from targets.srd1.app.server import Srd1Server
-from tests.helpers import (EVIDENCE_RAW, FAKE_KEY_VALUE, KEY_ENV, StandInModelHost, make_settings, no_outside_network,
-                           raw_settings)
+from tests.helpers import (EVIDENCE_RAW, FAKE_KEY_VALUE, KEY_ENV, StandInModelHost, SteadyClock, clock_back_after_lock,
+                           make_settings, no_outside_network, raw_settings, run_clock_problems)
 from tests.test_srd1 import FakeGateway
 
 REPO = Path(__file__).resolve().parents[1]
@@ -918,6 +918,32 @@ class EndToEndTests(unittest.TestCase):
         self.assertLess(recs[0]["lock"]["time_ns"], runs[0]["t_ns"])
         self.assertTrue(runlog.verify_log(res.log_path, res.sig_path, self.pub)[0])
 
+    def test_a_system_clock_that_moves_back_after_the_lock_gives_a_log_that_verifies(self):
+        """Each record time is the lock time plus the steady time since the lock (runlog.run_clock). Before, each
+        record took the system time, so a system clock that moved back made verify fail the log."""
+        settings = sec006_settings(price_in_per_m=1.0, price_out_per_m=1.0, cap_usd=0.0062, max_tokens=50)
+        with StandInModelHost(follower, usage=(1000, 1000), with_messages=True) as host, no_outside_network():
+            res = run_sec006.execute(settings, run_dir=self.dir / "clock_back", sign_key=self.priv,
+                                     confirmation=CONFIRM, base_url=host.base_url, env=ENV, engine=ENGINE,
+                                     clock_ns=clock_back_after_lock())
+        ok, msg = runlog.verify_log(res.log_path, res.sig_path, self.pub)
+        self.assertTrue(ok, msg)
+
+    def test_each_record_time_is_the_lock_time_plus_the_steady_time_since_the_lock(self):
+        """The first pass sends one item and one sequence of the positive control, so the follow-on set is built and
+        sent. The log holds run records, the followon_set record and the summary."""
+        steady = SteadyClock()
+        items, seqs = sec006.load_items(REPO)
+        with StandInModelHost(follower, with_messages=True) as host, no_outside_network(), \
+                mock.patch.object(run_sec006, "run_items", lambda repo=REPO: items[:1] + seqs[:1]):
+            res = run_sec006.execute(sec006_settings(cap_usd=10.0), run_dir=self.dir / "clock_steady",
+                                     sign_key=self.priv, confirmation=CONFIRM, base_url=host.base_url, env=ENV, engine=ENGINE,
+                                     variant="positive_control", clock_ns=clock_back_after_lock(), steady_ns=steady)
+        recs = runlog.read_log(res.log_path)
+        self.assertEqual(res.status, "complete")
+        self.assertTrue(next(r for r in recs if r["type"] == "followon_set")["applicable"])
+        self.assertEqual(run_clock_problems(recs, steady), [])
+
     def preflight(self, baseline, *extra, mode="evidence", pubkey="the test key", tools=False):
         """The preflight of a TP-SEC-006 run that names `baseline` and, by default, the public key of this class.
         With --start every other start condition is met and the operator types "no". So a run that may start exits with
@@ -1072,6 +1098,89 @@ class EndToEndTests(unittest.TestCase):
             self.assertNotIn("model_id", msg)
             self.assertEqual(calls, 0)
             self.assertFalse((self.dir / f"refused{n}" / "run_log.jsonl").exists())
+
+    def lone_copy(self, name, set_mark):
+        """A copy of the TP-SEC-001 baseline log, signed with the key of this class. set_mark(header) sets one text of
+        its header to the mark LONE_MARK. In the file, the mark becomes a placeholder text and the JSON escape
+        \\ud83d. JSON reads that escape as a lone surrogate. The lock of the header does not cover that text."""
+        recs = runlog.read_log(self.baseline)
+        set_mark(recs[0])
+        lines = [runlog.canonical(r) for r in recs]
+        self.assertEqual("".join(lines).count("LONE_MARK"), 1)
+        lines[0] = lines[0].replace("LONE_MARK", "placeholder\\ud83d")
+        copy = self.dir / "baselines" / name / "run_log.jsonl"
+        copy.parent.mkdir(parents=True, exist_ok=True)
+        copy.write_bytes("".join(line + "\n" for line in lines).encode("utf-8"))
+        runlog.sign_log(copy, self.priv)
+        return copy
+
+    def test_a_baseline_log_with_a_lone_surrogate_is_refused_with_or_without_a_key(self):
+        """A signed copy of the baseline log holds the JSON escape \\ud83d in the time of the owner's confirmation. No
+        check reads that text. The reader of the M4 baseline (sec006_log.read_baseline) refuses it in one problem,
+        with no key and with the key. The preflight prints the problem. --start refuses in that one line, exit 2,
+        before the typed `yes`. The engine refuses the run before any model call and before the run folder. It does
+        the same for a lone surrogate in a text that the header of a run copies (routing.only). Before, the preflight
+        passed the log, and --start reached the typed `yes`. With the first log, the engine then ran the whole set.
+        With the second, it stopped at the lock with UnicodeEncodeError."""
+        def confirmation(h):
+            h["owner_confirmation"]["time"] = "LONE_MARK"
+        copy = self.lone_copy("lone", confirmation)
+        problem = "the M4 baseline log holds a lone surrogate in the key or the value of 'time'"
+        start = ("--start", "--sign-key", str(self.priv))
+        for mode, pubkey, extra, rc_want, head in (
+                ("explore", None, (), 0, None),
+                ("explore", None, start, 2, "START REFUSED"),
+                ("evidence", "the test key", (), 2, "M4 BASELINE REFUSED"),
+                ("evidence", "the test key", start, 2, "START REFUSED")):
+            with self.subTest(mode=mode, key=bool(pubkey), start=bool(extra)):
+                rc, out = self.preflight(copy, *extra, mode=mode, pubkey=pubkey)
+                self.assertEqual(rc, rc_want, out[-800:])
+                self.assertNotIn("Traceback", out)
+                self.assertIn(f"M4 baseline check: {problem}\n", out)
+                if head:
+                    self.assertEqual(out.split(f"{head}. No run starts. Fix these points first:\n")[1].splitlines(),
+                                     [f"  - {problem}"])
+        routing = self.lone_copy("lone_routing", lambda h: h["routing"].update(only=["LONE_MARK"]))
+        for n, (log, key) in enumerate(((copy, None), (routing, None), (copy, str(self.pub)))):
+            settings = sec006_settings(**{"cap_usd": 10.0, "mode": "explore", "m4_baseline_log": str(log),
+                                          "m4_baseline_pubkey": key})
+            with self.subTest(engine=n), StandInModelHost(follower, with_messages=True) as host, no_outside_network():
+                with self.assertRaises(ValueError) as cm:
+                    run_sec006.execute(settings, run_dir=self.dir / f"lone_engine{n}", sign_key=self.priv,
+                                       confirmation=CONFIRM, base_url=host.base_url, env=ENV, engine=ENGINE)
+                self.assertEqual((str(cm.exception), len(host.requests)),
+                                 (problem.replace("'time'", "'only'") if log == routing else problem, 0))
+                self.assertFalse((self.dir / f"lone_engine{n}").exists())
+
+    def test_a_baseline_log_with_a_line_that_is_not_a_json_object_is_refused_in_one_line(self):
+        """A signed copy of the baseline log holds a line that is a JSON value but not an object. The cases are a number
+        after the header and a list as the last line. The reader of the M4 baseline refuses it in one problem, with no
+        key and with the key. The preflight prints the problem. --start refuses in that one line, exit 2, before the
+        typed `yes`. Before, the last line stopped the preflight with AttributeError. With the key, the line after the
+        header stopped it in the check of the signature. With no key, that line passed the preflight, and --start
+        reached the typed `yes`."""
+        lines = Path(self.baseline).read_bytes().decode("utf-8").splitlines()
+        start = ("--start", "--sign-key", str(self.priv))
+        for name, rows, line in (("line 2", [lines[0], "7", *lines[1:]], 2),
+                                 ("the last line", [*lines, "[1]"], len(lines) + 1)):
+            copy = self.dir / "baselines" / f"not_object_{line}" / "run_log.jsonl"
+            copy.parent.mkdir(parents=True, exist_ok=True)
+            copy.write_bytes("".join(r + "\n" for r in rows).encode("utf-8"))
+            runlog.sign_log(copy, self.priv)
+            problem = f"the M4 baseline log line {line} is not a JSON object"
+            for mode, pubkey, extra, rc_want, head in (
+                    ("explore", None, (), 0, None),
+                    ("explore", None, start, 2, "START REFUSED"),
+                    ("evidence", "the test key", (), 2, "M4 BASELINE REFUSED"),
+                    ("evidence", "the test key", start, 2, "START REFUSED")):
+                with self.subTest(line=name, mode=mode, key=bool(pubkey), start=bool(extra)):
+                    rc, out = self.preflight(copy, *extra, mode=mode, pubkey=pubkey)
+                    self.assertEqual(rc, rc_want, out[-800:])
+                    self.assertNotIn("Traceback", out)
+                    self.assertIn(f"M4 baseline check: {problem}\n", out)
+                    if head:
+                        self.assertEqual(out.split(f"{head}. No run starts. Fix these points first:\n")[1].splitlines(),
+                                         [f"  - {problem}"])
 
     def test_a_match_is_recorded_and_the_lock_covers_it(self):
         """baseline_match true is in the header. An edited field fails verify (signature, then lock). The header
@@ -1276,6 +1385,47 @@ class BaselineTests(unittest.TestCase):
                 sec006_log.read_baseline(p)
             with self.assertRaises(ValueError):
                 sec006_log.read_baseline(Path(t) / "missing.jsonl")
+
+    def test_a_log_with_a_lone_surrogate_is_refused_in_one_problem_by_both_baseline_readers(self):
+        """The JSON escape \\ud83d in a text of a record after the header. Two readers refuse the log in one problem
+        that names the key, before any other check. They are the reader of the M4 baseline of TP-SEC-006 and the
+        reader of the baseline of TP-SEC-002. Before, the first said that the log has no complete summary, and a
+        complete log passed."""
+        from faias_harness.engine import sec002_log
+        with tempfile.TemporaryDirectory() as t:
+            p = Path(t) / "x.jsonl"
+            p.write_text(json.dumps({"type": "header", "procedure": {"tp": "TP-SEC-001"}}) + "\n"
+                         + '{"type": "run", "reply": "placeholder \\ud83d"}\n', encoding="utf-8")
+            for read, want in ((lambda: sec006_log.read_baseline(p), "the M4 baseline log"),
+                               (lambda: sec002_log.read_baseline(p, []), "the baseline log")):
+                with self.assertRaises(ValueError) as cm:
+                    read()
+                self.assertEqual(str(cm.exception), f"{want} holds a lone surrogate in the key or the value of 'reply'")
+
+    def test_a_log_line_that_is_not_a_json_object_is_refused_in_one_problem_by_both_baseline_readers(self):
+        """A log line can be a JSON value but not an object (a list, a text, a number or null). Each case puts it as
+        the first line, a line after the header or the last line. The two baseline readers refuse the log in one
+        problem. The problem names the number of the line in the file (a blank line counts). Before, a first or a last
+        such line stopped each reader with AttributeError. A line between them was not checked. So the reader gave the
+        problem of a later check."""
+        from faias_harness.engine import sec002_log
+        header = json.dumps({"type": "header", "procedure": {"tp": "TP-SEC-001"}})
+        summary = json.dumps({"type": "summary", "status": "complete"})
+        cases = {"the first line a list": ("[1]\n" + summary + "\n", 1),
+                 "the first line a text": ('"a text"\n' + summary + "\n", 1),
+                 "line 2 a number": (header + "\n7\n" + summary + "\n", 2),
+                 "line 3 null, after a blank line": (header + "\n\nnull\n" + summary + "\n", 3),
+                 "the last line a list": (header + "\n" + summary + "\n[1]\n", 3)}
+        with tempfile.TemporaryDirectory() as t:
+            p = Path(t) / "x.jsonl"
+            for name, (text, line) in cases.items():
+                p.write_text(text, encoding="utf-8")
+                for read, want in ((lambda: sec006_log.read_baseline(p), "the M4 baseline log"),
+                                   (lambda: sec002_log.read_baseline(p, []), "the baseline log")):
+                    with self.subTest(case=name, reader=want):
+                        with self.assertRaises(ValueError) as cm:
+                            read()
+                        self.assertEqual(str(cm.exception), f"{want} line {line} is not a JSON object")
 
 
 if __name__ == "__main__":

@@ -9,8 +9,9 @@ zero or less is held. An integer too large for a float is above the cap.
 The cap and the limit come from the risk-appetite file (A-03). The owner declared them on 29 October 2026. The cap is
 25 GBP, and the session limit is 50 GBP. With a null value the gate cannot be built, so the orchestrator does not enable
 tools ("refund cap not declared"). The reader of the file (read_risk_appetite) gives one problem for a file that
-cannot be read. It does the same for a file that is not UTF-8 YAML and for a lone surrogate. The function
-load_risk_appetite raises that problem as RiskFileError.
+cannot be read. It does the same for a file that is not UTF-8 YAML and for a lone surrogate. It also does the same for
+a top level or a fee_refund value that is not a mapping. A declared_by or declared_on value that is not a text gets
+one problem too. The function load_risk_appetite raises that problem as RiskFileError.
 
 Since 0.7, config_read("gate") also names the irreversible actions (IRREVERSIBLE_ACTIONS: one class, the fee
 refund, SPEC.md section 3, C-09), the function that checks, and the SHA-256 of this file. TP-AGT-012 reads them
@@ -54,17 +55,33 @@ def read_risk_appetite(path=RISK_FILE):
     file that cannot be read, for example an absent file. It can also be a file that is not UTF-8 YAML, or a lone
     surrogate (lone_surrogate_keys). The pure-Python YAML loader reads the escape \\ud83d as a lone surrogate, and
     libyaml refuses it. The preflight reads the file with it before any model call, and the TP-AGT-012 engine before
-    the lock. The header of a TP-AGT-012 run copies declared_by and declared_on from this read."""
+    the lock. The header of a TP-AGT-012 run copies declared_by and declared_on from this read.
+
+    A top level or a fee_refund value that is present and not a mapping is a problem too. Examples are 0, an empty
+    text, a list and a text. An empty file and a null value read as an empty mapping. A declared_by or declared_on
+    value that is present, not null and not a text is a problem. An example is an unquoted date, which YAML reads as a
+    date. The header of a TP-AGT-012 run copies the value, and the canonical form of its log cannot hold a date. So
+    the problem says to put the value in quotes."""
     path = Path(path)
     try:
         raw = path.read_bytes()
-        data = yamlio.load(raw.decode("utf-8")) or {}
+        data = yamlio.load(raw.decode("utf-8"))
     except (OSError, UnicodeDecodeError, yaml.YAMLError) as e:
         return None, None, f"cannot read {path.name}: {type(e).__name__}"
     lone = lone_surrogate_keys(data)
     if lone:
         return None, None, lone_surrogate_problem(path.name, lone)
-    return (data.get("fee_refund") or {}), hashlib.sha256(raw).hexdigest(), None
+    data = {} if data is None else data
+    if not isinstance(data, dict):
+        return None, None, f"{path.name}: the top level is not a mapping"
+    values = {} if data.get("fee_refund") is None else data["fee_refund"]
+    if not isinstance(values, dict):
+        return None, None, f"{path.name}: the value of 'fee_refund' is not a mapping"
+    bad = [k for k in ("declared_by", "declared_on") if values.get(k) is not None and not isinstance(values[k], str)]
+    if bad:
+        return None, None, (f"{path.name}: the value of {', '.join(repr(k) for k in bad)} is not a text; put the value "
+                            "in quotes")
+    return values, hashlib.sha256(raw).hexdigest(), None
 
 
 def load_risk_appetite(path=RISK_FILE):

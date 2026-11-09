@@ -1113,5 +1113,360 @@ class RiskAppetiteFileTests(unittest.TestCase):
                                  [f"  - {line}"])
 
 
+class _PreflightCase(unittest.TestCase):
+    """A profile with an attestation in a temporary folder, a run key, and the shared self-test log of this process."""
+    TOOLS = {"tools_enabled": True, "tool_key_env": "FAIAS_TEST_TOOL_KEY"}
+
+    @classmethod
+    def setUpClass(cls):
+        from tests.helpers import shared_selftest
+        log, _, pub = shared_selftest(REPO)
+        cls.selftest = ["--selftest-log", str(log), "--selftest-pubkey", str(pub)]
+
+    def setUp(self):
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        self.dir = Path(tmp.name)
+        att = self.dir / "attestation.txt"
+        att.write_text("Test system, synthetic data only.\n", encoding="utf-8")
+        doc = yaml.safe_load((REPO / "targets" / "srd1" / "profile.yaml").read_text(encoding="utf-8"))
+        doc["attestation_file"] = str(att)
+        self.profile = self.dir / "profile.yaml"
+        self.profile.write_text(yaml.safe_dump(doc), encoding="utf-8")
+        self.key = runlog.make_key(self.dir / "keys", repo=REPO)[0]
+
+    def argv(self, name, **changes):
+        """The preflight arguments with a settings file of `changes` in explore mode."""
+        path = self.dir / f"settings_{name}.yaml"
+        path.write_text(yaml.safe_dump(raw_settings(mode="explore", **changes)), encoding="utf-8")
+        return ["--profile", str(self.profile), "--settings", str(path), *self.selftest]
+
+    def preflight_and_start(self, argv, line, problem):
+        """The preflight exits 0 with `line` in its output and no traceback. Then --start exits 2 with the one problem
+        line `problem`, before any model call and with no run."""
+        called = []
+        rc, out = run_main(argv)
+        self.assertEqual(rc, 0, out[-800:])
+        self.assertNotIn("Traceback", out)
+        self.assertIn(line, out)
+        rc, out = run_main(argv + ["--start", "--sign-key", str(self.key)], inspect_check=lambda: None,
+                           gateway_factory=lambda s: called.append("model call"),
+                           executor=lambda **k: called.append("run"))
+        self.assertEqual((rc, called), (2, []), out[-800:])
+        self.assertNotIn("Traceback", out)
+        self.assertEqual(out.split("START REFUSED. No run starts. Fix these points first:\n")[1].splitlines(),
+                         [f"  - {problem}"])
+
+
+class ValueFileFormTests(_PreflightCase):
+    """The firm-values file and the risk-appetite file of SRD-1. In changed copies, a top level, a `values` value or a
+    `fee_refund` value is present and not a mapping. In another copy of the risk-appetite file, declared_by or
+    declared_on is a date, a time or a number. The reader of each file refuses it in one problem
+    (profile.read_firm_values, gate.read_risk_appetite). The preflight of TP-AGT-012 prints the refusal. --start
+    refuses in one problem line, exit 2, before any model call. An empty file and a null value read as an empty
+    mapping. The shipped files read as before. Before, a value that is not a mapping stopped the preflight with
+    AttributeError. A value of 0, an empty text or an empty list read as an empty mapping. An unquoted date passed the
+    preflight and --start, and the TP-AGT-012 engine then stopped with TypeError at the lock."""
+    FIRM, RISK = "targets/srd1/firm_values.yaml", "targets/srd1/risk_appetite.yaml"
+    TOP = {"a list": b"- a\n- b\n", "a text": b"a text\n", "0": b"0\n", "an empty text": b"''\n",
+           "an empty list": b"[]\n"}
+    VALUE = {"a text": b"a text", "0": b"0", "an empty text": b"''", "an empty list": b"[]", "a list": b"[a]"}
+    DECLARED_BY, DECLARED_ON = b'declared_by: "the owner (maintainer)"', b'declared_on: "2026-10-29"'
+
+    def firm_cases(self):
+        """{name: (bytes, the one problem)} for the firm-values file."""
+        top, key = ("firm_values.yaml: the top level is not a mapping",
+                    "firm_values.yaml: the value of 'values' is not a mapping")
+        return ({f"top level {n}": (b, top) for n, b in self.TOP.items()}
+                | {f"values {n}": (b"values: " + v + b"\n", key) for n, v in self.VALUE.items()})
+
+    def risk_cases(self):
+        """{name: (bytes, the one problem)} for the risk-appetite file."""
+        raw = (REPO / self.RISK).read_bytes()
+        self.assertEqual((raw.count(self.DECLARED_BY), raw.count(self.DECLARED_ON)), (1, 1))
+        top, key = ("risk_appetite.yaml: the top level is not a mapping",
+                    "risk_appetite.yaml: the value of 'fee_refund' is not a mapping")
+        text = "risk_appetite.yaml: the value of {} is not a text; put the value in quotes"
+        date, number = b"declared_on: 2026-10-29", b"declared_by: 2026"
+        return ({f"top level {n}": (b, top) for n, b in self.TOP.items()}
+                | {f"fee_refund {n}": (b"fee_refund: " + v + b"\n", key) for n, v in self.VALUE.items()}
+                | {"declared_on a date": (raw.replace(self.DECLARED_ON, date), text.format("'declared_on'")),
+                   "declared_on a time": (raw.replace(self.DECLARED_ON, b"declared_on: 2026-10-29 10:00:00"),
+                                          text.format("'declared_on'")),
+                   "declared_by a number": (raw.replace(self.DECLARED_BY, number), text.format("'declared_by'")),
+                   "both": (raw.replace(self.DECLARED_BY, number).replace(self.DECLARED_ON, date),
+                            text.format("'declared_by', 'declared_on'"))})
+
+    def test_each_reader_refuses_each_case_in_one_problem_and_reads_an_empty_file_and_null_as_an_empty_mapping(self):
+        import hashlib
+
+        from targets.srd1.app import gate
+        path = self.dir / "firm_values.yaml"
+        for name, (data, problem) in self.firm_cases().items():
+            path.write_bytes(data)
+            with self.subTest(file="firm", case=name):
+                self.assertEqual(read_firm_values(path), (None, problem))
+        for name, (data, problem) in self.risk_cases().items():
+            with self.subTest(file="risk", case=name), changed_bytes(self.RISK, data):
+                self.assertEqual(gate.read_risk_appetite(), (None, None, problem))
+                with self.assertRaises(gate.RiskFileError) as cm:
+                    gate.load_risk_appetite()
+                self.assertEqual(str(cm.exception), problem)
+        for data in (b"", b"null\n", b"values: null\n", b"note: x\n"):
+            path.write_bytes(data)
+            with self.subTest(file="firm", case=data):
+                self.assertEqual(read_firm_values(path), ({}, None))
+        for data in (b"", b"null\n", b"fee_refund: null\n", b"note: x\n"):
+            with self.subTest(file="risk", case=data), changed_bytes(self.RISK, data):
+                self.assertEqual(gate.read_risk_appetite(), ({}, hashlib.sha256(data).hexdigest(), None))
+        raw = (REPO / self.RISK).read_bytes()
+        with changed_bytes(self.RISK, raw.replace(self.DECLARED_ON, b"declared_on: null")):
+            self.assertIsNone(gate.read_risk_appetite()[0]["declared_on"])
+        values, sha256, problem = gate.read_risk_appetite()
+        self.assertEqual((values["declared_on"], sha256, problem),
+                         ("2026-10-29", hashlib.sha256(raw).hexdigest(), None))
+        self.assertEqual(read_firm_values(REPO / self.FIRM)[0]["firm.TP-AGT-012.M3"], 5)
+
+    def test_the_preflight_of_tp_agt_012_names_each_form_refusal_and_start_refuses_in_one_problem_line(self):
+        argv = self.argv("agt012", procedure="TP-AGT-012", item_set="TP-AGT-012", reviewer_values={}, **self.TOOLS)
+        firm, risk = self.firm_cases(), self.risk_cases()
+        cases = [("firm", self.FIRM, *firm[n]) for n in ("top level a list", "values a text")]
+        cases += [("risk", self.RISK, *risk[n]) for n in ("top level a list", "fee_refund a text", "declared_on a date",
+                                                          "declared_on a time", "declared_by a number")]
+        risk_line = "the risk-appetite file targets/srd1/risk_appetite.yaml is refused: {}"
+        for kind, rel, data, problem in cases:
+            line = (f"Firm values: the file is refused: {problem}; " if kind == "firm"
+                    else f"  - {risk_line.format(problem)}\n")
+            with self.subTest(file=kind, problem=problem), no_outside_network(), \
+                    mock.patch.dict(os.environ, {KEY_ENV: FAKE_KEY_VALUE}), changed_bytes(rel, data):
+                self.preflight_and_start(argv, line, problem if kind == "firm" else risk_line.format(problem))
+
+    def test_a_refund_cap_or_limit_that_is_not_a_number_is_named_once_and_start_refuses_in_one_line(self):
+        """A changed copy of the risk-appetite file holds a refund cap or a session limit that is not a number. An
+        example is `cap_gbp: twenty-five`. The reader passes the file, and gate.declared_problems names the value. The
+        preflight of TP-AGT-012 prints that problem under the tools line, and exits 0. --start refuses in that one
+        line, exit 2, before any model call. The item-set check compares the fees with the two values, so the
+        preflight does not make it. The engine refuses the run before the lock, in one `Run refused:` line
+        (gate.RefundGate.from_file). It does not make the run folder. Before, --start stopped with TypeError in the
+        item-set check."""
+        from faias_harness.engine import run_agt012
+        from targets.srd1.app import gate
+        raw = (REPO / self.RISK).read_bytes()
+        cap, limit = b"cap_gbp: 25", b"session_limit_gbp: 50"
+        self.assertEqual((raw.count(cap), raw.count(limit)), (1, 1))
+        argv = self.argv("agt012", procedure="TP-AGT-012", item_set="TP-AGT-012", reviewer_values={}, **self.TOOLS)
+        cases = {"the cap a text": (raw.replace(cap, b"cap_gbp: twenty-five"), "refund cap not declared"),
+                 "the cap a list": (raw.replace(cap, b"cap_gbp: [25]"), "refund cap not declared"),
+                 "the limit a text": (raw.replace(limit, b"session_limit_gbp: fifty"),
+                                      "session refund limit not declared")}
+        for n, (name, (data, problem)) in enumerate(cases.items()):
+            line, run_dir = f"{problem} (targets/srd1/risk_appetite.yaml): SRD-1 does not enable its tool", \
+                self.dir / f"engine_{n}"
+            with self.subTest(case=name), no_outside_network(), \
+                    mock.patch.dict(os.environ, {KEY_ENV: FAKE_KEY_VALUE}), changed_bytes(self.RISK, data):
+                self.assertEqual((gate.read_risk_appetite()[2], gate.declared_problems()), (None, [problem]))
+                self.preflight_and_start(argv, f"  - {line}\n", line)
+                buf = io.StringIO()
+                with contextlib.redirect_stdout(buf):
+                    result = preflight._execute(
+                        run_agt012.execute, settings=sm.load_settings(argv[3]), run_dir=run_dir, sign_key=self.key,
+                        confirmation={"typed": "yes", "time": "2026-11-08T00:00:00Z"}, engine="direct",
+                        selftest_log=self.selftest[1], selftest_pubkey=self.selftest[3])
+                self.assertEqual((result, buf.getvalue()), (None, f"Run refused: {problem}\n"))
+                self.assertFalse(run_dir.exists())
+
+
+class Dat009DataFileTests(_PreflightCase):
+    """The TP-DAT-009 engine reads the synthetic bank and the synthetic documents with dat009.load_data, for the matrix
+    (evidence output E1). load_data refuses each of three faults in one problem (DataError, a ValueError). These are
+    a lone surrogate, a file that is not UTF-8 YAML and a file that cannot be read. The preflight of TP-DAT-009
+    reads the two files with it. It prints `Data files: a file is refused: <problem>`. --start refuses in one
+    problem line, exit 2, before any model call. The documents are also the store of the tools file. So a fault in
+    the documents is named once, as a refused tool emulator file. Before, the preflight did not read the bank, and
+    the pure-Python YAML loader passed the escape into the matrix."""
+    LOADERS = [yaml.SafeLoader] + ([yaml.CSafeLoader] if hasattr(yaml, "CSafeLoader") else [])
+    BANK, DOCS = "targets/srd1/data/synthetic_bank.yaml", "targets/srd1/data/synthetic_documents.yaml"
+    ROW = b"{customer_ref: SYN-C-0001, domain: retail}"
+
+    def test_a_refused_bank_is_named_by_the_preflight_and_start_refuses_in_one_problem_line(self):
+        from faias_harness.engine import dat009
+        raw = (REPO / self.BANK).read_bytes()
+        self.assertEqual(raw.count(self.ROW), 1)
+        escape = raw.replace(self.ROW, b'{customer_ref: SYN-C-0001, domain: "retail\\ud83d"}')
+        not_utf8 = raw.replace(self.ROW, b'{customer_ref: SYN-C-0001, domain: "retail\xed\xa0\xbd"}')
+        cases = ([("escape", escape, loader, "synthetic_bank.yaml holds a lone surrogate in the key or the value of "
+                   "'domain'" if loader is yaml.SafeLoader else "cannot read synthetic_bank.yaml: ScannerError")
+                  for loader in self.LOADERS]
+                 + [("bytes", not_utf8, self.LOADERS[-1], "cannot read synthetic_bank.yaml: UnicodeDecodeError"),
+                    ("absent", None, self.LOADERS[-1], "cannot read synthetic_bank.yaml: FileNotFoundError")])
+        argv = self.argv("dat009", procedure="TP-DAT-009", item_set="TP-DAT-009", reviewer_values={}, **self.TOOLS)
+        for name, data, loader, problem in cases:
+            with self.subTest(file=name, loader=loader.__name__), no_outside_network(), \
+                    mock.patch.dict(os.environ, {KEY_ENV: FAKE_KEY_VALUE}), \
+                    mock.patch.object(yamlio, "loader", lambda: loader), \
+                    (absent_file(self.BANK) if data is None else changed_bytes(self.BANK, data)):
+                with self.assertRaises(dat009.DataError) as cm:
+                    dat009.load_data()
+                self.assertEqual(str(cm.exception), problem)
+                self.preflight_and_start(argv, f"Data files: a file is refused: {problem}\n",
+                                         f"TP-DAT-009: a data file is refused: {problem}")
+        # A fault in the documents gives one problem. The tools file check names it, and the data check is not made.
+        docs = (REPO / self.DOCS).read_bytes()
+        store = "the store holds a lone surrogate in the key or the value of 'probe'"
+        with no_outside_network(), mock.patch.dict(os.environ, {KEY_ENV: FAKE_KEY_VALUE}), \
+                mock.patch.object(yamlio, "loader", lambda: yaml.SafeLoader), \
+                changed_bytes(self.DOCS, b'probe: "example \\ud83d"\n' + docs):
+            self.preflight_and_start(argv, f"Tool emulator file: {self.DOCS} is refused: {store}\n",
+                                     f"TP-DAT-009: the tool emulator file {self.DOCS} is refused: {store}")
+            self.assertNotIn("Data files:", run_main(argv)[1])
+        # A store with no list `documents` (the tools file check passes a list `accounts`).
+        other = self.dir / "documents.yaml"
+        other.write_bytes(b"accounts: []\n")
+        with self.assertRaises(dat009.DataError) as cm:
+            dat009.load_data(REPO / self.BANK, other)
+        self.assertEqual(str(cm.exception), "documents.yaml: the value of 'documents' is not a list")
+        bank, documents, _, _ = dat009.load_data()
+        self.assertEqual((len(bank["customers"]), len(documents)), (4, 16))
+
+    def form_cases(self):
+        """Each case maps a name to the file, its bytes and the one problem. Each is a changed copy of the bank or the
+        documents. Its form is not the one that the engine, the scorer, SRD-1 and the tool emulator read
+        (dat009._form_problem)."""
+        bank, docs = (REPO / self.BANK).read_bytes(), (REPO / self.DOCS).read_bytes()
+        anchors = {self.BANK: (self.ROW, b"\ncustomers:\n", b"\naccounts:\n", b"default_customer_ref: SYN-C-0001\n",
+                               b"  - account_ref: SYN-A-0001\n"),
+                   self.DOCS: (b"\ndocuments:\n", b"\ncustomers:\n", b"  - doc_id: SYN-D-0001\n",
+                               b"    title: Retail tariff of charges\n", b"    canary: SYN-CANARY-D0001-KELP\n",
+                               b"    facts: [Tarnwick Everyday account, Velbrook card fee table]\n",
+                               b"  - {customer_ref: SYN-C-0001, domain: retail}\n")}
+        for rel, raw in ((self.BANK, bank), (self.DOCS, docs)):
+            for a in anchors[rel]:
+                self.assertEqual(raw.count(a), 1, (rel, a))
+        b, d = "synthetic_bank.yaml: ", "synthetic_documents.yaml: "
+        customer, account = (b + "entry 1 of 'customers' is not a mapping with customer_ref and domain as texts",
+                             b + "entry 1 of 'accounts' is not a mapping with customer_ref and account_ref as texts")
+        document = (d + "entry 1 of 'documents' is not a mapping with doc_id, title, text, domain, kind and canary as "
+                    "texts")
+        ref = d + "entry 1 of 'documents' does not have a customer_ref that is a text or null"
+        facts = d + "entry 1 of 'documents' does not have facts that are a list of texts"
+        default = b + "the value of 'default_customer_ref' is not a text that names a customer"
+        head = docs.split(b"\ndocuments:\n")[0]
+        return {
+            "the top level of the bank a list": (self.BANK, b"- a\n- b\n", b + "the top level is not a mapping"),
+            "customers a text": (self.BANK, bank.replace(b"\ncustomers:\n", b"\ncustomers: a text\nold_customers:\n"),
+                                 b + "the value of 'customers' is not a list"),
+            "a customer that is a number": (self.BANK, bank.replace(b"\ncustomers:\n", b"\ncustomers:\n  - 5\n"),
+                                            customer),
+            "a customer with no domain": (self.BANK, bank.replace(self.ROW, b"{customer_ref: SYN-C-0001}"), customer),
+            "accounts a text": (self.BANK, bank.replace(b"\naccounts:\n", b"\naccounts: a text\nold_accounts:\n"),
+                                b + "the value of 'accounts' is not a list"),
+            "an account_ref that is a number": (
+                self.BANK, bank.replace(b"  - account_ref: SYN-A-0001\n", b"  - account_ref: 1\n"), account),
+            "no default_customer_ref": (self.BANK, bank.replace(b"default_customer_ref: SYN-C-0001\n", b""), default),
+            "a default_customer_ref of no customer": (
+                self.BANK, bank.replace(b"default_customer_ref: SYN-C-0001\n", b"default_customer_ref: SYN-C-0009\n"),
+                default),
+            "documents [1, 2]": (self.DOCS, head + b"\ndocuments: [1, 2]\n", document),
+            "documents empty": (self.DOCS, head + b"\ndocuments: []\n", d + "the list 'documents' is empty"),
+            "a document with no title": (self.DOCS, docs.replace(b"    title: Retail tariff of charges\n", b""),
+                                         document),
+            "a doc_id that is a number": (self.DOCS, docs.replace(b"  - doc_id: SYN-D-0001\n", b"  - doc_id: 1\n"),
+                                          document),
+            "a document with no kind": (self.DOCS, docs.replace(b"    kind: content\n", b"", 1), document),
+            "a document with no canary": (self.DOCS, docs.replace(b"    canary: SYN-CANARY-D0001-KELP\n", b""),
+                                          document),
+            "a document with no customer_ref": (self.DOCS, docs.replace(b"    customer_ref: null\n", b"", 1), ref),
+            "a customer_ref that is a number": (
+                self.DOCS, docs.replace(b"    customer_ref: null\n", b"    customer_ref: 5\n", 1), ref),
+            "facts a text": (self.DOCS, docs.replace(
+                b"    facts: [Tarnwick Everyday account, Velbrook card fee table]\n", b"    facts: a text\n"), facts),
+            "a fact that is a number": (self.DOCS, docs.replace(
+                b"    facts: [Tarnwick Everyday account, Velbrook card fee table]\n", b"    facts: [5]\n"), facts),
+            "no list customers in the documents": (
+                self.DOCS, docs.replace(b"\ncustomers:\n", b"\nold_customers:\n"),
+                d + "the value of 'customers' is not a list"),
+            "a customer of the documents that is a number": (
+                self.DOCS, docs.replace(b"  - {customer_ref: SYN-C-0001, domain: retail}\n", b"  - 5\n"),
+                d + "entry 1 of 'customers' is not a mapping with customer_ref and domain as texts")}
+
+    def test_a_data_file_of_another_form_is_named_by_the_preflight_and_start_refuses_in_one_problem_line(self):
+        """The form of a changed copy of the bank or the documents is not the one that the engine reads. Examples are a
+        `customers` value that is a text, and a `documents` list that holds numbers. load_data refuses each in one
+        problem (DataError). The preflight of TP-DAT-009 prints `Data files: a file is refused: <problem>`. It prints
+        no estimate, and exits 0. --start refuses in one problem line, exit 2, before any model call. Before, the text
+        passed the preflight and --start. The engine then stopped with TypeError after the typed `yes`. The numbers
+        stopped the preflight with TypeError when it made the estimate."""
+        import hashlib
+
+        from faias_harness.engine import dat009
+        argv = self.argv("dat009", procedure="TP-DAT-009", item_set="TP-DAT-009", reviewer_values={}, **self.TOOLS)
+        for name, (rel, data, problem) in self.form_cases().items():
+            with self.subTest(case=name), no_outside_network(), \
+                    mock.patch.dict(os.environ, {KEY_ENV: FAKE_KEY_VALUE}), changed_bytes(rel, data):
+                with self.assertRaises(dat009.DataError) as cm:
+                    dat009.load_data()
+                self.assertEqual(str(cm.exception), problem)
+                self.preflight_and_start(argv, f"Data files: a file is refused: {problem}\n",
+                                         f"TP-DAT-009: a data file is refused: {problem}")
+                if name in ("customers a text", "documents [1, 2]"):
+                    self.assertIn("Worst-case estimate: not available (a data file is refused); cap: ",
+                                  run_main(argv)[1])
+        bank, documents, bank_sha, docs_sha = dat009.load_data()
+        self.assertEqual((len(bank["customers"]), len(bank["accounts"]), len(documents)), (4, 6, 16))
+        self.assertEqual((bank_sha, docs_sha), (hashlib.sha256((REPO / self.BANK).read_bytes()).hexdigest(),
+                                                hashlib.sha256((REPO / self.DOCS).read_bytes()).hexdigest()))
+
+
+class ToolsFileAtTheRunTests(_PreflightCase):
+    """A run that serves a tools file reads it again when it starts the tool emulator (toolrun.ToolRun). That read comes
+    after the typed `yes` and before the lock. Here the file changes after the preflight. Each read of it in the engine
+    gives bytes
+    that are not UTF-8. ToolRun then raises a ValueError with the problem line of the preflight. So --start prints one
+    `Run refused:` line and the run folder, and exits 2, with no traceback. The engine sends no request and opens no
+    run log. TP-AGT-012, TP-SEC-001 and TP-SEC-006 serve targets/srd1/tools.yaml, and TP-DAT-009 serves
+    targets/srd1/tools_retrieval.yaml. Before, mcp_tools.ToolsError went on from --start as a traceback."""
+    M = {"value": 0.5, "reason": "test value for the unit tests"}
+    CASES = {"TP-AGT-012": ("targets/srd1/tools.yaml", {"procedure": "TP-AGT-012", "item_set": "TP-AGT-012",
+                                                        "reviewer_values": {}}),
+             "TP-DAT-009": ("targets/srd1/tools_retrieval.yaml", {"procedure": "TP-DAT-009", "item_set": "TP-DAT-009",
+                                                                  "reviewer_values": {}}),
+             "TP-SEC-001": ("targets/srd1/tools.yaml", {"item_set": "TP-SEC-001"}),
+             "TP-SEC-006": ("targets/srd1/tools.yaml", {"procedure": "TP-SEC-006", "item_set": "TP-SEC-006",
+                                                        "reviewer_values": {"M3": M, "M4": M}})}
+
+    def test_a_tools_file_that_changes_after_the_preflight_gives_one_run_refused_line_and_exit_2(self):
+        from faias_harness.engine import run_agt012, run_dat009, run_sec006, spike
+        engines = {"TP-AGT-012": run_agt012.execute, "TP-DAT-009": run_dat009.execute, "TP-SEC-001": spike.execute,
+                   "TP-SEC-006": run_sec006.execute}
+        probes = {"judge_family": "not applicable", "tool_call": {"ok": True}, "reasoning_text": {"present": False},
+                  "cost_usd": 0.0}
+
+        class Gateway:      # stands in for the gateway of the probes
+            class cap:
+                spent_usd = 0.0
+        for tp, (rel, changes) in self.CASES.items():
+            raw, run_dir, runs = (REPO / rel).read_bytes(), self.dir / f"run_{tp}", []
+
+            def executor(run=engines[tp], rel=rel, raw=raw, runs=runs, **kw):
+                runs.append(kw["run_dir"])
+                with changed_bytes(rel, b"probe: 'example \xed\xa0\xbd'\n" + raw):      # changed after the preflight
+                    return run(engine="direct", **kw)
+            argv = self.argv(tp, **changes, **self.TOOLS) + ["--start", "--sign-key", str(self.key), "--run-dir",
+                                                             str(run_dir)]
+            problem = f"{tp}: the tool emulator file {rel} is refused: cannot read the tools file (UnicodeDecodeError)"
+            with self.subTest(procedure=tp), no_outside_network(), \
+                    mock.patch.dict(os.environ, {KEY_ENV: FAKE_KEY_VALUE}), \
+                    mock.patch.object(spike, "run_probes", lambda g: probes):
+                rc, out = run_main(argv, input_fn=lambda p: "yes", gateway_factory=lambda s: Gateway(),
+                                   executor=executor, inspect_check=lambda: None)
+                self.assertEqual((rc, runs), (2, [run_dir]), out[-800:])
+                self.assertNotIn("Traceback", out)
+                self.assertTrue(out.endswith(f"Run refused: {problem}\nRun folder: {run_dir}\n"), out[-800:])
+                self.assertEqual(out.count("Run refused:"), 1)
+                self.assertFalse((run_dir / "run_log.jsonl").exists())
+                egress = run_dir / "egress.jsonl"
+                self.assertEqual(egress.read_bytes() if egress.exists() else b"", b"")
+
+
 if __name__ == "__main__":
     unittest.main()
