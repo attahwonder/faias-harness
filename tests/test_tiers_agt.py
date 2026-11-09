@@ -25,8 +25,8 @@ from faias_harness.egress import EgressClient
 from faias_harness.engine import benchreport, runlog, spike, tiers_agt, tiers_agt_log, tiers_agt_score, toolrun
 from targets.srd1.app import build
 from targets.srd1.app.gateway import Gateway
-from tests.helpers import (EVIDENCE_RAW, FAKE_KEY_VALUE, KEY_ENV, StandInModelHost, no_outside_network,
-                           shared_selftest)
+from tests.helpers import (EVIDENCE_RAW, FAKE_KEY_VALUE, KEY_ENV, StandInModelHost, SteadyClock,
+                           clock_back_after_lock, no_outside_network, run_clock_problems, shared_selftest)
 
 REPO = Path(__file__).resolve().parents[1]
 ENV = {KEY_ENV: FAKE_KEY_VALUE}
@@ -180,11 +180,11 @@ class Case(unittest.TestCase):
         self.assertEqual(problems, [])
         return s
 
-    def run_cell(self, s, name, bad=False):
+    def run_cell(self, s, name, bad=False, **kw):
         with StandInModelHost(respond, tool_reply=scripted(bad)) as host, no_outside_network():
             return tiers_agt.execute(s, run_dir=self.dir / name, sign_key=self.priv, confirmation=CONFIRM,
                                      base_url=host.base_url, env=ENV, engine=ENGINE, selftest_log=str(self.st_log),
-                                     selftest_pubkey=str(self.st_pub))
+                                     selftest_pubkey=str(self.st_pub), **kw)
 
 
 class BuildTests(Case):
@@ -581,6 +581,20 @@ class BenchTests(Case):
                                                        {"procedure": "TP-AGT-010", "tier": "S"}]})
         self.assertTrue(any("TP-AGT-009 has no engine of its own" in p for p in problems))
         self.assertFalse(any("TP-AGT-010" in p for p in problems))
+
+
+class RunClockTests(Case):
+    """Each time after the lock is the lock time plus the steady time since the lock (runlog.run_clock), as for the
+    released engines since 0.9.5. Before, each record took the system time, so a system clock that moved back
+    after the lock made verify fail the log."""
+
+    def test_a_system_clock_that_moves_back_after_the_lock_gives_a_log_that_verifies(self):
+        steady = SteadyClock()
+        res = self.run_cell(self.settings("TP-AGT-010"), "clock", clock_ns=clock_back_after_lock(),
+                            steady_ns=steady)
+        ok, msg = runlog.verify_log(res.log_path, res.sig_path, self.pub)
+        self.assertTrue(ok, msg)
+        self.assertEqual(run_clock_problems(runlog.read_log(res.log_path), steady), [])
 
 
 if __name__ == "__main__":

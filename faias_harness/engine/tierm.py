@@ -647,7 +647,8 @@ class _Runner:
 
 
 def execute(settings, *, run_dir, sign_key, confirmation, probes=None, base_url=None, env=None,
-            clock_ns=time.time_ns, repo=REPO, prior_spent_usd=0.0, variant=VARIANT, engine="inspect"):
+            clock_ns=time.time_ns, repo=REPO, prior_spent_usd=0.0, variant=VARIANT, engine="inspect",
+            steady_ns=time.monotonic_ns):
     """Run one Tier M cell on SRD-1 minimal. Returns a spike.RunResult. `base_url` and `env` are for tests."""
     from . import tierm_log
     build, gw, orch_mod, trace_mod = spike._srd1()
@@ -686,11 +687,12 @@ def execute(settings, *, run_dir, sign_key, confirmation, probes=None, base_url=
             settings, record=record, data=data, units=units, checks=checks, allow_hosts=egress.allow_text,
             system_prompt_sha256=config["prompt_sha256"], confirmation=confirmation, probes=probes, repo=repo,
             engine=engine)
-        tierm_log.lock_header(header, clock_ns())
+        lock_ns, run_ns = runlog.run_clock(clock_ns, steady_ns)     # the records take their times from run_ns
+        tierm_log.lock_header(header, lock_ns)
         log = runlog.RunLog(log_path)
         log.write(header)                   # the lock is on disk before the first call
-        runlog.wait_past_lock(header, clock_ns)
-        runner = _Runner(log, clock_ns, checks, settings.store_replies,
+        runlog.wait_past_lock(header, run_ns)
+        runner = _Runner(log, run_ns, checks, settings.store_replies,
                          tuple(sec006.find_placeholders([system_prompt])),
                          halt_on_mismatch=settings.mode == "evidence")
         k = settings.runs_per_item
@@ -722,7 +724,7 @@ def execute(settings, *, run_dir, sign_key, confirmation, probes=None, base_url=
             "egress": {"file": elog.path.name, "sha256": runlog.sha256_hex(elog.path.read_bytes()),
                        "summary": elog.summary()},
             "run_engine": engine_facts,
-            "finished": runlog.iso(),
+            "finished": runlog.iso(run_ns()),
         }
         log.write(summary)
     finally:

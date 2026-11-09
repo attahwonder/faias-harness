@@ -25,7 +25,8 @@ from faias_harness.engine import benchreport, runlog, sec003, spike, tiersdat, t
 from targets.srd1.app.entitlements import DATA_FILE, Entitlements
 from targets.srd1.app.gateway import Gateway
 from targets.srd1.app.retrieval import DocumentStore, Retrieval
-from tests.helpers import EVIDENCE_RAW, FAKE_KEY_VALUE, KEY_ENV, StandInModelHost, no_outside_network, shared_selftest
+from tests.helpers import (EVIDENCE_RAW, FAKE_KEY_VALUE, KEY_ENV, StandInModelHost, SteadyClock,
+                           clock_back_after_lock, no_outside_network, run_clock_problems, shared_selftest)
 
 REPO = Path(__file__).resolve().parents[1]
 ENV = {KEY_ENV: FAKE_KEY_VALUE}
@@ -509,6 +510,19 @@ class BenchTests(Case):
         self.assertEqual(rc, 2, buf.getvalue()[-2000:])
         self.assertIn("TP-DAT-007 runs its own build of SRD-1, so it is tier S", buf.getvalue())
         self.assertFalse(out.exists())
+
+
+class RunClockTests(Case):
+    """Each time after the lock is the lock time plus the steady time since the lock (runlog.run_clock), as for the
+    released engines since 0.9.5. Before, each record took the system time, so a system clock that moved back
+    after the lock made verify fail the log."""
+
+    def test_a_system_clock_that_moves_back_after_the_lock_gives_a_log_that_verifies(self):
+        steady = SteadyClock()
+        res, _ = self.run_cell(self.settings(), "clock", clock_ns=clock_back_after_lock(), steady_ns=steady)
+        ok, msg = runlog.verify_log(res.log_path, res.sig_path, self.pub)
+        self.assertTrue(ok, msg)
+        self.assertEqual(run_clock_problems(runlog.read_log(res.log_path), steady), [])
 
 
 if __name__ == "__main__":

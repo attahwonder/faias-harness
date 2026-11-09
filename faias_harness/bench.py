@@ -374,7 +374,7 @@ def _write_pubkey(sign_key, out):
 
 
 def run(a, *, input_fn=input, gateway_factory=preflight._default_gateway, executor=preflight._default_executor,
-        inspect_check=preflight._inspect_missing, clock_ns=time.time_ns):
+        inspect_check=preflight._inspect_missing, clock_ns=time.time_ns, steady_ns=time.monotonic_ns):
     """The bench command. Exit codes as the preflight: 0 done, 2 refused, 4 `yes` not typed, 5 a cell stopped."""
     try:
         raw = load_bench(a.bench)
@@ -438,7 +438,8 @@ def run(a, *, input_fn=input, gateway_factory=preflight._default_gateway, execut
         bench_sha256=h, bench_file=Path(a.bench).name, mode=raw["mode"], cap_usd=raw["cap_usd"],
         models=[{"model": i + 1, **{k: m[k] for k in MODEL_KEYS}} for i, m in enumerate(raw["models"])],
         cells=[c.entry(out) for c in cells], confirmation=confirmation, probes=probes)
-    report.open(header, clock_ns())         # the lock is on disk before the first cell
+    lock_ns, run_ns = runlog.run_clock(clock_ns, steady_ns)     # the summary takes its time from run_ns
+    report.open(header, lock_ns)            # the lock is on disk before the first cell
     status, stopped_at, ran = "complete", None, 0
     for c in cells:
         entry = c.entry(out)
@@ -469,7 +470,7 @@ def run(a, *, input_fn=input, gateway_factory=preflight._default_gateway, execut
             status, stopped_at = "stopped", c.n
     report.finish({"type": "summary", "label": benchreport.LABEL, "status": status, "cells_planned": len(cells),
                    "cells_run": ran, "stopped_at_cell": stopped_at, "spent_usd": round(spent, 8),
-                   "cap_usd": raw["cap_usd"], "finished": runlog.iso()}, a.sign_key)
+                   "cap_usd": raw["cap_usd"], "finished": runlog.iso(run_ns())}, a.sign_key)
     print(f"Bench {status}. Cells run {ran} of {len(cells)}. Report: {report.path}")
     return 0 if status == "complete" else 5
 

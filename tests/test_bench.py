@@ -22,7 +22,8 @@ from faias_harness import settings as settings_mod
 from faias_harness.egress import EgressClient
 from faias_harness.engine import benchreport, runlog, sec001, spike
 from targets.srd1.app.gateway import Gateway
-from tests.helpers import FAKE_KEY_VALUE, KEY_ENV, StandInModelHost, no_outside_network, shared_selftest
+from tests.helpers import (FAKE_KEY_VALUE, KEY_ENV, StandInModelHost, SteadyClock, clock_back_after_lock,
+                           no_outside_network, run_clock_problems, shared_selftest)
 
 REPO = Path(__file__).resolve().parents[1]
 ENV = {KEY_ENV: FAKE_KEY_VALUE}
@@ -86,7 +87,7 @@ class BenchCase(unittest.TestCase):
     def tearDownClass(cls):
         cls.tmp.cleanup()
 
-    def run_bench(self, raw, name, answer="yes", start=True, hosts=None):
+    def run_bench(self, raw, name, answer="yes", start=True, hosts=None, **kw):
         """Run the bench command on `raw`. Returns (exit code, output, bench folder, hosts by model ID)."""
         path = self.dir / f"{name}.yaml"
         path.write_text(yaml.safe_dump(raw), encoding="utf-8")
@@ -116,7 +117,7 @@ class BenchCase(unittest.TestCase):
                 self.asked.append(prompt)
                 return answer
             rc = bench.main(argv, input_fn=input_fn, gateway_factory=gateway_factory, executor=executor,
-                            inspect_check=lambda: None)
+                            inspect_check=lambda: None, **kw)
             counts = {m: len(h.requests) for m, h in hosts.items()}
         return rc, buf.getvalue(), out, counts
 
@@ -570,6 +571,23 @@ class ShippedFilesTests(unittest.TestCase):
         manifest = json.dumps(recs[0])
         self.assertIn("faias_harness/bench.py", manifest)
         self.assertIn("faias_harness/engine/benchreport.py", manifest)
+
+
+class RunClockTests(BenchCase):
+    """Each time after the lock is the lock time plus the steady time since the lock (runlog.run_clock), as for the
+    released engines since 0.9.5. Before, each record took the system time, so a system clock that moved back
+    after the lock made verify fail the log."""
+
+    def test_the_finished_time_of_the_report_is_the_lock_time_plus_the_steady_time(self):
+        steady = SteadyClock()
+        rc, out, folder, _ = self.run_bench(bench_raw(procedures=(SEC001_SPIKE,), models=(MODEL_A,)), "clock",
+                                            clock_ns=clock_back_after_lock(), steady_ns=steady)
+        self.assertEqual(rc, 0, out[-1500:])
+        recs = runlog.read_log(folder / benchreport.REPORT_NAME)
+        self.assertEqual(recs[-1]["type"], "summary")
+        self.assertEqual(run_clock_problems(recs, steady), [])
+        ok, msg = benchreport.verify(folder / benchreport.REPORT_NAME, pubkey_path=self.pub)
+        self.assertTrue(ok, msg)
 
 
 if __name__ == "__main__":

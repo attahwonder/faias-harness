@@ -693,7 +693,7 @@ def build_header(js, facts, source_path, calibration, allow_hosts, confirmation,
 
 
 def run(js, source_path, *, out_dir, sign_key, confirmation, pubkey=None, base_url=None, env=None,
-        clock_ns=time.time_ns, repo=REPO, use_repo=True):
+        clock_ns=time.time_ns, repo=REPO, use_repo=True, steady_ns=time.monotonic_ns):
     """The judge pass over the source log. Raises JudgeRefused, before any file is written and any call is made, on a
     start problem. Returns a JudgeResult. `base_url` and `env` are for tests."""
     from . import judge_log, spike
@@ -713,7 +713,8 @@ def run(js, source_path, *, out_dir, sign_key, confirmation, pubkey=None, base_u
     egress = EgressClient([_host_entry(base_url)], log=elog)
     gateway = gw.Gateway(js.model, egress, env=env, base_url=base_url)
     header = build_header(js, facts, source_path, calibration, egress.allow_text, confirmation, repo=repo)
-    judge_log.lock_header(header, clock_ns())
+    lock_ns, run_ns = runlog.run_clock(clock_ns, steady_ns)     # the records take their times from run_ns
+    judge_log.lock_header(header, lock_ns)
     to_judge, skip = plan(source_path)
     log_path = out_dir / LOG_NAME
     log = runlog.RunLog(log_path)
@@ -721,13 +722,13 @@ def run(js, source_path, *, out_dir, sign_key, confirmation, pubkey=None, base_u
     hosts, mismatches = Counter(), 0
     try:
         log.write(header)
-        runlog.wait_past_lock(header, clock_ns)
+        runlog.wait_past_lock(header, run_ns)
         for n, r, reason in skip:
             rec = {"type": "not_judged", "source_line": n, "item": r.get("item"), "run": _run_key(r),
-                   "t_ns": clock_ns(), "reason": reason}
+                   "t_ns": run_ns(), "reason": reason}
             log.write(rec)
         for n, r in to_judge:
-            t_ns = clock_ns()
+            t_ns = run_ns()
             try:
                 res = gateway.complete(judge_messages(rubric, r.get("request"), r["reply"]))
             except CapReached:
@@ -762,7 +763,7 @@ def run(js, source_path, *, out_dir, sign_key, confirmation, pubkey=None, base_u
                    "cap_usd": js.model.cap_usd, "served_hosts": dict(hosts), "host_mismatches": mismatches,
                    "egress": {"file": elog.path.name, "sha256": runlog.sha256_hex(elog.path.read_bytes()),
                               "summary": elog.summary()},
-                   "finished": runlog.iso()}
+                   "finished": runlog.iso(run_ns())}
         log.write(summary)
     finally:
         log.close()

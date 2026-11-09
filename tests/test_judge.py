@@ -17,7 +17,8 @@ import yaml
 
 from faias_harness import settings as settings_mod
 from faias_harness.engine import judge, judge_log, runlog, spike
-from tests.helpers import EVIDENCE_RAW, FAKE_KEY_VALUE, KEY_ENV, StandInModelHost, make_settings, no_outside_network
+from tests.helpers import (EVIDENCE_RAW, FAKE_KEY_VALUE, KEY_ENV, StandInModelHost, SteadyClock,
+                           clock_back_after_lock, make_settings, no_outside_network, run_clock_problems)
 
 REPO = Path(__file__).resolve().parents[1]
 ENV = {KEY_ENV: FAKE_KEY_VALUE}
@@ -104,10 +105,10 @@ class Fixture(unittest.TestCase):
         p.write_text(json.dumps(data), encoding="utf-8")
         return p, runlog.sha256_hex(p.read_bytes())
 
-    def run_judge(self, js, name, source=None, respond=judge_respond):
+    def run_judge(self, js, name, source=None, respond=judge_respond, **kw):
         with no_outside_network(), StandInModelHost(respond) as host:
             res = judge.run(js, source or self.source, out_dir=self.dir / name, sign_key=self.priv,
-                            confirmation=CONFIRM, base_url=host.base_url, env=ENV, repo=REPO)
+                            confirmation=CONFIRM, base_url=host.base_url, env=ENV, repo=REPO, **kw)
             return res, host
 
 
@@ -629,6 +630,19 @@ class FamilyFileTests(Fixture):
         recs[0]["judge"]["family_file"]["sha256"] = "not a hash"
         recs[0]["lock"]["hash"] = runlog.sha256_hex(runlog.canonical(judge_log.lock_fixed(recs[0])))
         self.assertIn("header: the family file block has no SHA-256", judge_log.check(recs))
+
+
+class RunClockTests(Fixture):
+    """Each time after the lock is the lock time plus the steady time since the lock (runlog.run_clock), as for the
+    released engines since 0.9.5. Before, each record took the system time, so a system clock that moved back
+    after the lock made verify fail the log."""
+
+    def test_a_system_clock_that_moves_back_after_the_lock_gives_a_log_that_verifies(self):
+        steady = SteadyClock()
+        res, _ = self.run_judge(self.settings(), "clock", clock_ns=clock_back_after_lock(), steady_ns=steady)
+        ok, msg = runlog.verify_log(res.log_path, res.sig_path, self.pub)
+        self.assertTrue(ok, msg)
+        self.assertEqual(run_clock_problems(runlog.read_log(res.log_path), steady), [])
 
 
 if __name__ == "__main__":

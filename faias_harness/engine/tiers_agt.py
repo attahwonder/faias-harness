@@ -628,7 +628,7 @@ class _Runner:
 
 def execute(settings, *, run_dir, sign_key, confirmation, probes=None, base_url=None, env=None,
             clock_ns=time.time_ns, repo=REPO, prior_spent_usd=0.0, variant=VARIANT, engine="inspect",
-            selftest_log=None, selftest_pubkey=None):
+            selftest_log=None, selftest_pubkey=None, steady_ns=time.monotonic_ns):
     """Run one Tier S AGT cell. Returns a spike.RunResult. `base_url` and `env` are for tests."""
     from . import tiers_agt_log
     from .tiers_agt_score import summarise
@@ -696,11 +696,12 @@ def execute(settings, *, run_dir, sign_key, confirmation, probes=None, base_url=
             system_prompt_sha256=config["prompt_sha256"], prompt_source=config["prompt_source"],
             tools=tool_run.header(srd1.orchestrator.definitions_sha256), gate=gate_cfg, retrieval=retrieval_cfg,
             isolation=status, confirmation=confirmation, probes=probes, repo=repo, engine=engine)
-        tiers_agt_log.lock_header(header, clock_ns())
+        lock_ns, run_ns = runlog.run_clock(clock_ns, steady_ns)     # the records take their times from run_ns
+        tiers_agt_log.lock_header(header, lock_ns)
         log = runlog.RunLog(log_path)
         log.write(header)                   # the lock is on disk before the first call
-        runlog.wait_past_lock(header, clock_ns)
-        runner = _Runner(settings.procedure, log, tool_run.emulator, clock_ns, settings.store_replies,
+        runlog.wait_past_lock(header, run_ns)
+        runner = _Runner(settings.procedure, log, tool_run.emulator, run_ns, settings.store_replies,
                          tuple(sec006.find_placeholders([system_prompt])),
                          halt_on_mismatch=settings.mode == "evidence")
         k = settings.runs_per_item
@@ -729,7 +730,7 @@ def execute(settings, *, run_dir, sign_key, confirmation, probes=None, base_url=
             "ledger": tool_run.summary(),
             "egress": {"file": elog.path.name, "sha256": runlog.sha256_hex(elog.path.read_bytes()),
                        "summary": elog.summary()},
-            "run_engine": engine_facts, "finished": runlog.iso(),
+            "run_engine": engine_facts, "finished": runlog.iso(run_ns()),
         }
         log.write(summary)
     finally:

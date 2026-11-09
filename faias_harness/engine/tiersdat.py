@@ -930,7 +930,7 @@ class _Builds:
 
 def execute(settings, *, run_dir, sign_key, confirmation, probes=None, base_url=None, env=None,
             clock_ns=time.time_ns, repo=REPO, prior_spent_usd=0.0, variant=VARIANT, engine="inspect",
-            selftest_log=None, selftest_pubkey=None):
+            selftest_log=None, selftest_pubkey=None, steady_ns=time.monotonic_ns):
     """Run one Tier S DAT cell on SRD-1 minimal. Returns a spike.RunResult. `base_url` and `env` are for tests."""
     from . import tiersdat_log
     build, gw, orch_mod, trace_mod = spike._srd1()
@@ -990,12 +990,13 @@ def execute(settings, *, run_dir, sign_key, confirmation, probes=None, base_url=
             settings, record=record, corpus=corpus, seed=seed, retrieval_config=configs, isolation=status,
             allow_hosts=egress.allow_text, system_prompt_sha256=next(iter(prompts.values()))[0],
             confirmation=confirmation, probes=probes, repo=repo, engine=engine)
-        tiersdat_log.lock_header(header, clock_ns())
+        lock_ns, run_ns = runlog.run_clock(clock_ns, steady_ns)     # the records take their times from run_ns
+        tiersdat_log.lock_header(header, lock_ns)
         log = runlog.RunLog(run_dir / "run_log.jsonl")
         log.write(header)                   # the lock is on disk before the first call
-        runlog.wait_past_lock(header, clock_ns)
+        runlog.wait_past_lock(header, run_ns)
         system_prompt = builds.builds[next(iter(builds.builds))].orchestrator.system_prompt
-        runner = _Runner(log, clock_ns, settings.procedure, header["scoring"],
+        runner = _Runner(log, run_ns, settings.procedure, header["scoring"],
                          tuple(sec006.find_placeholders([system_prompt])), halt_on_mismatch=settings.mode == "evidence")
         engine_runs = []
         for (cond, store, runs, mode), units in passes(corpus.units):
@@ -1028,7 +1029,7 @@ def execute(settings, *, run_dir, sign_key, confirmation, probes=None, base_url=
             "run_engine": engine_runs,
             "teardown": {"store_written": runlog.sha256_hex(Path(CLEAN_STORE).read_bytes()) != seed["clean"]["sha256"],
                          "srd1_stopped": builds.stopped, "note": sec003.TEARDOWN_NOTE},
-            "finished": runlog.iso(),
+            "finished": runlog.iso(run_ns()),
         }
         log.write(summary)
     finally:
