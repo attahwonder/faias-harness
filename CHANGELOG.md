@@ -1,6 +1,6 @@
 # Changelog
 
-## 0.9.6 (9 November 2026 — date of the push)
+## 0.9.6 (9 November 2026)
 
 This release pins one more package in the CI job that installs inspect_ai and in the optional dependencies `inspect`. A new version of a package that inspect_ai needs made each engine run on Inspect fail at its start. No code changes, except the version string.
 
