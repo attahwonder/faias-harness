@@ -1,6 +1,6 @@
 # Changelog
 
-## 0.9.5 (9 November 2026 — date of the push)
+## 0.9.5 (9 November 2026)
 
 This release closes seven gaps in the last entry of the 0.9.4 section. It also closes five more gaps of the same kind. A run record now takes its time from the lock time and a steady clock. So a system clock that moves back no longer makes `verify` fail a log. A firm-values file or a risk-appetite file that is not a mapping now gets a refusal line. So does a date in the risk-appetite file that is not in quotes. A tools file that changes after the preflight now gives one `Run refused:` line. The preflight of TP-DAT-009 now reads the synthetic bank and the synthetic documents with the reader of the engine. An M4 baseline log that holds a lone surrogate is now refused. A write of `tools/mod011_overlap.py` that fails now leaves no file. An M4 baseline log with a line that is not a JSON object is now refused. The reader of the TP-DAT-009 data files now checks the form of both files. A refund cap or limit that is not a number now gets one refusal line at `--start` of TP-AGT-012. A temporary file that the overlap tool cannot remove after a good move now gives a note, not a refusal. A new CI job runs the tests with inspect_ai installed. Some gaps remain. The last entry lists them.
 
