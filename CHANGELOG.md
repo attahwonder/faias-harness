@@ -1,6 +1,6 @@
 # Changelog
 
-## 0.10.0 (10 November 2026 — date of the push)
+## 0.10.0 (10 November 2026)
 
 This release adds bench mode (`docs/ARCHITECTURE.md`, sections 23 to 28). Bench mode runs a list of procedures against a list of models on SRD-1 minimal and writes one signed bench report. It measures how a model behaves inside SRD-1. It is not an assurance of a firm's system. It is tested against local stand-ins only. No live run has used it. Every shipped settings file keeps its settings hash, and no earlier log schema changes.
 
