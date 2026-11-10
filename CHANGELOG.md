@@ -1,6 +1,6 @@
 # Changelog
 
-## 0.10.1 (10 November 2026 — date of the push)
+## 0.10.1 (10 November 2026)
 
 This release closes three of the four gaps that the 0.10.0 section lists, and one more gap of the same kind (the output folder of the judge pass). Each input now gets a refusal line, not a traceback. It also corrects the 0.10.0 texts that say no live run has used bench mode. No procedure, setting or log schema changes. The records stay on FAIAS 1.3.4.
 
