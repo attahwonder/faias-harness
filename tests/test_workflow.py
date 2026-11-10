@@ -39,10 +39,12 @@ class WorkflowTests(unittest.TestCase):
         install = job["steps"][2]["run"]
         self.assertTrue(install.startswith("python -m pip install "), install)
         spec = install.removeprefix("python -m pip install ").split()
-        self.assertTrue(all(re.fullmatch(r"[a-z_]+==\d+(\.\d+)+", s) for s in spec), spec)
+        self.assertTrue(all(re.fullmatch(r"[a-z_-]+==\d+(\.\d+)+", s) for s in spec), spec)
         row = {e["python"]: e["packages"].split() for e in self.job["strategy"]["matrix"]["include"]}
-        self.assertEqual(spec[:-1], row["3.14"])
-        self.assertEqual(spec[-1], "inspect_ai==0.3.281")     # the version that README.md and AGENTS.md name
+        self.assertEqual(spec[:-2], row["3.14"])
+        # The versions that README.md and AGENTS.md name. agent-client-protocol 1.0.0 has no module acp.helpers,
+        # which inspect_ai 0.3.281 imports when it runs an eval, so the job pins the version before it.
+        self.assertEqual(spec[-2:], ["inspect_ai==0.3.281", "agent-client-protocol==0.12.1"])
         # The checkout, the action that sets up Python, the FAIAS clone and the run are those of run-all.
         self.assertEqual(job["steps"][0], self.job["steps"][0])
         self.assertEqual(job["steps"][1]["uses"], self.job["steps"][1]["uses"])
