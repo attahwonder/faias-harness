@@ -551,6 +551,67 @@ class HandlerTests(_Base):
         self.assertEqual(mt.handlers_mod.FeeRefund(store(12.0)).fees, {("SYN-A-0001", "SYN-F-0001"): 12.0})
 
 
+class StoreFormTests(unittest.TestCase):
+    """The form of the fee_refund store (handlers.load_store, handlers.form_problem). Each case is refused in one
+    StoreError line that names the part. Before, such a store passed load_store. Then the handler, or the item-set
+    check of TP-AGT-012, stopped with AttributeError or TypeError."""
+
+    def load(self, data):
+        import yaml
+        with tempfile.TemporaryDirectory() as t:
+            p = Path(t) / "store.yaml"
+            p.write_text(yaml.safe_dump(data), encoding="utf-8")
+            return mt.handlers_mod.load_store(p)
+
+    def test_each_part_of_another_form_is_refused_in_one_line(self):
+        fee = {"fee_id": "SYN-F-0001", "amount_gbp": 12.0}
+        acc = {"account_ref": "SYN-A-0001", "customer_ref": "SYN-C-0001", "fees": [fee]}
+        cases = {
+            "an account that is a number": ({"accounts": [5]}, "accounts entry 1 is not a mapping"),
+            "a second account that is a text": ({"accounts": [acc, "SYN-A-0002"]}, "accounts entry 2 is not a mapping"),
+            "accounts a mapping, documents a list": ({"accounts": {"a": 1}, "documents": []},
+                                                     "'accounts' must be a list"),
+            "no account_ref": ({"accounts": [{"fees": [fee]}]}, "accounts entry 1: account_ref must be a text"),
+            "an account_ref that is a list": ({"accounts": [{**acc, "account_ref": ["x"]}]},
+                                              "accounts entry 1: account_ref must be a text"),
+            "a customer_ref that is a number": ({"accounts": [{**acc, "customer_ref": 7}]},
+                                                "accounts entry 1: customer_ref must be a text"),
+            "fees a mapping": ({"accounts": [{**acc, "fees": {"fee_id": "x"}}]}, "accounts entry 1: 'fees' must be a list"),
+            "fees a text": ({"accounts": [{**acc, "fees": "SYN-F-0001"}]}, "accounts entry 1: 'fees' must be a list"),
+            "a fee that is a number": ({"accounts": [{**acc, "fees": [5]}]}, "accounts entry 1: fee 1 is not a mapping"),
+            "a fee_id that is a list": ({"accounts": [{**acc, "fees": [fee, {"fee_id": ["x"], "amount_gbp": 1.0}]}]},
+                                        "accounts entry 1: fee 2: fee_id must be a text"),
+            "a customer that is a text": ({"accounts": [acc], "customers": ["SYN-C-0001"]},
+                                          "customers entry 1 is not a mapping"),
+            "a customer_ref of a customer that is a number": (
+                {"accounts": [acc], "customers": [{"customer_ref": 1, "domain": "retail"}]},
+                "customers entry 1: customer_ref must be a text"),
+            "a domain that is a list": ({"accounts": [acc], "customers": [{"customer_ref": "SYN-C-0001",
+                                                                           "domain": ["retail"]}]},
+                                        "customers entry 1: domain must be a text"),
+            "customers a mapping": ({"accounts": [acc], "customers": {"a": 1}}, "'customers' must be a list"),
+            "default_customer_ref a number": ({"accounts": [acc], "default_customer_ref": 1},
+                                              "default_customer_ref must be a text"),
+        }
+        for name, (data, problem) in cases.items():
+            with self.subTest(case=name):
+                with self.assertRaises(mt.handlers_mod.StoreError) as cm:
+                    self.load(data)
+                self.assertEqual(str(cm.exception), f"the store: {problem}")
+
+    def test_the_shipped_stores_load_as_before(self):
+        for rel, sha in (("targets/srd1/data/synthetic_bank.yaml", "c9f84488a8c4"),
+                         ("targets/srd1/data/synthetic_documents.yaml", "8383651eafc1")):
+            with self.subTest(store=rel):
+                data, digest = mt.handlers_mod.load_store(REPO / rel)
+                self.assertTrue(digest.startswith(sha), digest)
+                self.assertIsNone(mt.handlers_mod.form_problem(data))
+
+    def test_a_store_with_no_accounts_is_left_to_the_check_of_tp_dat_009(self):
+        """A store with no `accounts` is the document store. TP-DAT-009 checks its form (dat009._form_problem)."""
+        self.assertIsNone(mt.handlers_mod.form_problem({"documents": [5], "customers": [5]}))
+
+
 class SyntheticBankTests(unittest.TestCase):
     """SRD-1's synthetic customers, accounts and fees."""
 

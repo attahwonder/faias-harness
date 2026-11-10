@@ -217,6 +217,34 @@ def inspect_available():
     return importlib.util.find_spec("inspect_ai") is not None
 
 
+# The module that inspect_ai 0.3.281 imports inside each eval (inspect_ai/_eval/eval.py), not when it loads. With
+# agent-client-protocol 1.0.0 its import fails (no module acp.helpers), so every eval fails at its start.
+INSPECT_EVAL_MODULE = "inspect_ai.agent._acp.server"
+INSPECT_PINS = "inspect_ai 0.3.281 with agent-client-protocol 0.12.1 (README.md)"
+
+
+def inspect_problem(import_module=None):
+    """None when the run engine inspect_ai can be found and the module that its eval path imports loads, else the
+    reason in one line. The preflight uses it before `--start`, an external run and a bench cell
+    (preflight._inspect_missing). inspect_available() does not use it, so the tests and the self-test still fail
+    loudly on an install that cannot run an eval. A later inspect_ai that moves its private module raises
+    ModuleNotFoundError for that module itself: this check then gives None, and the run goes on as before."""
+    import importlib
+    if not inspect_available():
+        return "the run engine inspect_ai is not installed"
+    try:
+        (import_module or importlib.import_module)(INSPECT_EVAL_MODULE)
+    except ModuleNotFoundError as e:
+        if e.name and INSPECT_EVAL_MODULE.startswith(e.name):
+            return None
+        return (f"the run engine inspect_ai is installed but cannot run an eval: the module {e.name or '?'} is not "
+                f"found; install {INSPECT_PINS}")
+    except Exception as e:      # an import that fails in another way stops every eval in the same way
+        return (f"the run engine inspect_ai is installed but cannot run an eval ({type(e).__name__}); install "
+                f"{INSPECT_PINS}")
+    return None
+
+
 def _run_direct(target, runner, runs_per_item, items):
     for item in items:
         for n in range(1, runs_per_item + 1):

@@ -515,6 +515,9 @@ def read_baseline(path, pool_ids, repo=runlog.REPO, pubkey=None, external=False)
         raise ValueError(f"the baseline log is on the item set {base['item_set']!r}, not {FULL_SET}: the pool names "
                          f"{FULL_SET} items by ID, so the baseline must be a run on the full set")
     recs = runlog.read_log(p)
+    bad = _object_field_problem(recs[0], recs[-1], external)
+    if bad:
+        raise ValueError(bad)
     per = (((recs[-1].get("measures") or {}).get("M4") or {}).get("per_item")) or {}
     _, mismatches = runlog.rescore_log(p, repo=repo)     # None: a hash_only external log, which cannot be rescored
     sig = base["signature"]
@@ -538,6 +541,24 @@ def read_baseline(path, pool_ids, repo=runlog.REPO, pubkey=None, external=False)
                    target={k: t.get(k) for k in ("profile_sha256", "adapter", "endpoint_host")},
                    declared={k: (t.get("declared") or {}).get(k) for k in ("model_id", "target_version")})
     return out
+
+
+def _object_field_problem(h, s, external):
+    """The first field that read_baseline reads as a JSON object after sec006_log.read_baseline, when it is present,
+    not null and of another type, or None: the summary measures.M4.per_item, the header code and, for an external
+    log, the header target and target.declared. A field of another type would raise AttributeError."""
+    per = ((s.get("measures") or {}).get("M4") or {}).get("per_item")
+    if per is not None and not isinstance(per, dict):
+        return "the baseline log summary field measures.M4.per_item is not a JSON object"
+    if h.get("code") is not None and not isinstance(h["code"], dict):
+        return "the baseline log header field code is not a JSON object"
+    if external:
+        t = h.get("target")
+        if t is not None and not isinstance(t, dict):
+            return "the baseline log header field target is not a JSON object"
+        if (t or {}).get("declared") is not None and not isinstance(t["declared"], dict):
+            return "the baseline log header field target.declared is not a JSON object"
+    return None
 
 
 def difference_problems(differs):

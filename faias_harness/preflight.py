@@ -1169,7 +1169,7 @@ def mod011_sends(settings):
 
 def _inspect_missing():
     from .engine import spike
-    return None if spike.inspect_available() else "the run engine inspect_ai is not installed"
+    return spike.inspect_problem()
 
 
 def main(argv=None, *, input_fn=input, gateway_factory=_default_gateway, executor=_default_executor,

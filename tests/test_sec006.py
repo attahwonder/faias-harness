@@ -1182,6 +1182,31 @@ class EndToEndTests(unittest.TestCase):
                         self.assertEqual(out.split(f"{head}. No run starts. Fix these points first:\n")[1].splitlines(),
                                          [f"  - {problem}"])
 
+    def test_a_baseline_log_with_a_field_of_another_type_is_refused_in_one_line_by_the_preflight(self):
+        """A signed copy of the baseline log whose header field routing is a text, or whose summary field measures is
+        a list. The preflight prints the problem, and --start refuses in that one line, exit 2, before the typed
+        `yes`. Before, both stopped the preflight with AttributeError."""
+        lines = Path(self.baseline).read_bytes().decode("utf-8").splitlines()
+        head, last = json.loads(lines[0]), json.loads(lines[-1])
+        cases = {"routing": ([json.dumps({**head, "routing": "only"}), *lines[1:]],
+                             "the M4 baseline log header field routing is not a JSON object"),
+                 "measures": ([*lines[:-1], json.dumps({**last, "measures": [1]})],
+                              "the M4 baseline log summary field measures is not a JSON object")}
+        for name, (rows, problem) in cases.items():
+            copy = self.dir / "baselines" / f"field_{name}" / "run_log.jsonl"
+            copy.parent.mkdir(parents=True, exist_ok=True)
+            copy.write_bytes("".join(r + "\n" for r in rows).encode("utf-8"))
+            runlog.sign_log(copy, self.priv)
+            for extra, rc_want in (((), 0), (("--start", "--sign-key", str(self.priv)), 2)):
+                with self.subTest(field=name, start=bool(extra)):
+                    rc, out = self.preflight(copy, *extra, mode="explore", pubkey=None)
+                    self.assertEqual(rc, rc_want, out[-800:])
+                    self.assertNotIn("Traceback", out)
+                    self.assertIn(f"M4 baseline check: {problem}\n", out)
+                    if extra:
+                        self.assertEqual(out.split("START REFUSED. No run starts. Fix these points first:\n")[1]
+                                         .splitlines(), [f"  - {problem}"])
+
     def test_a_match_is_recorded_and_the_lock_covers_it(self):
         """baseline_match true is in the header. An edited field fails verify (signature, then lock). The header
         records the signature check, the key's SHA-256 and where the baseline log is, under the lock."""
@@ -1426,6 +1451,42 @@ class BaselineTests(unittest.TestCase):
                         with self.assertRaises(ValueError) as cm:
                             read()
                         self.assertEqual(str(cm.exception), f"{want} line {line} is not a JSON object")
+
+    def test_a_header_or_summary_field_of_another_type_is_refused_in_one_problem_by_both_baseline_readers(self):
+        """A field that the readers read as a JSON object is a text, a number or a list. The two baseline readers
+        refuse the log in one problem that names the field. Before, each case stopped the readers with AttributeError.
+        The last two cases are fields that only the reader of TP-SEC-002 reads."""
+        from faias_harness.engine import sec002_log
+        header = {"type": "header", "procedure": {"tp": "TP-SEC-001"}, "corpus": {"item_set": sec002_log.FULL_SET}}
+        measures = {"M1": {"C1": {"items": 1, "successful_items": 0, "rate": 0.0, "upper95": 0.95}}}
+        summary = {"type": "summary", "status": "complete", "measures": measures}
+        both = {"header procedure a text": ({**header, "procedure": "TP-SEC-001"}, summary, "header field procedure"),
+                "header routing a text": ({**header, "routing": "only"}, summary, "header field routing"),
+                "header corpus a number": ({**header, "corpus": 5}, summary, "header field corpus"),
+                "header model a list": ({**header, "model": ["m"]}, summary, "header field model"),
+                "header variant a number": ({**header, "variant": 1}, summary, "header field variant"),
+                "header tools a text": ({**header, "tools": "on"}, summary, "header field tools"),
+                "summary measures a list": (header, {**summary, "measures": [1]}, "summary field measures"),
+                "summary M1 a text": (header, {**summary, "measures": {"M1": "C1"}}, "summary field measures.M1"),
+                "summary M1.C1 a list": (header, {**summary, "measures": {"M1": {"C1": [0.0]}}},
+                                         "summary field measures.M1.C1"),
+                "summary M4 a number": (header, {**summary, "measures": {**measures, "M4": 3}},
+                                        "summary field measures.M4")}
+        sec002_only = {"summary M4.per_item a list": (header, {**summary, "measures": {**measures, "M4": {
+                           "per_item": [1]}}}, "summary field measures.M4.per_item"),
+                       "header code a text": ({**header, "code": "x"}, summary, "header field code")}
+        with tempfile.TemporaryDirectory() as t:
+            p = Path(t) / "x.jsonl"
+            for name, (h, s, field) in {**both, **sec002_only}.items():
+                p.write_text(json.dumps(h) + "\n" + json.dumps(s) + "\n", encoding="utf-8")
+                readers = [(lambda: sec002_log.read_baseline(p, []), "the baseline log")]
+                if name in both:
+                    readers.insert(0, (lambda: sec006_log.read_baseline(p), "the M4 baseline log"))
+                for read, want in readers:
+                    with self.subTest(case=name, reader=want):
+                        with self.assertRaises(ValueError) as cm:
+                            read()
+                        self.assertEqual(str(cm.exception), f"{want} {field} is not a JSON object")
 
 
 if __name__ == "__main__":

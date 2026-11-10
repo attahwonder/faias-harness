@@ -700,6 +700,9 @@ def run(js, source_path, *, out_dir, sign_key, confirmation, pubkey=None, base_u
     problems, facts = start_problems(js, source_path, sign_key=sign_key, pubkey=pubkey, repo=repo, use_repo=use_repo,
                                      env=env)
     out_dir = Path(out_dir)
+    if _inside(out_dir, repo):
+        problems.append("the output folder is inside the repository; keep it outside (the judge log holds the "
+                        "judge's reply on each item of the source log)")
     if (out_dir / LOG_NAME).exists():
         problems.append(f"{LOG_NAME} exists in the output folder; the pass never overwrites a judge log")
     if problems:

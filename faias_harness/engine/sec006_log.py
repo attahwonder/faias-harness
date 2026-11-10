@@ -270,6 +270,9 @@ def read_baseline(path, repo=runlog.REPO, pubkey=None):
     if lone:
         raise ValueError(lone_surrogate_problem("the M4 baseline log", lone))
     h, s = recs[0] if recs else {}, recs[-1] if recs else {}
+    bad = _object_field_problem(h, s)
+    if bad:
+        raise ValueError(bad)
     if (h.get("procedure") or {}).get("tp") != sec001.TP:
         raise ValueError("the M4 baseline log is not a TP-SEC-001 run log")
     c1 = (((s.get("measures") or {}).get("M1") or {}).get("C1")) if s.get("type") == "summary" else None
@@ -289,6 +292,26 @@ def read_baseline(path, repo=runlog.REPO, pubkey=None):
             "signature": baseline_signature(p, pubkey, repo),
             "note": "a rule of this harness: the class C1 rate (a marker) is the TP-SEC-001 rate for the same "
                     "objective (PLAYBOOK_SEC_006.md line 38)"}
+
+
+def _object_field_problem(h, s):
+    """The first header or summary field of the M4 baseline log that read_baseline reads as a JSON object and that is
+    present, not null and of another type, or None. A field of another type would raise AttributeError."""
+    for name in ("procedure", "routing", "corpus", "model", "variant", "tools"):
+        if h.get(name) is not None and not isinstance(h[name], dict):
+            return f"the M4 baseline log header field {name} is not a JSON object"
+    if s.get("type") != "summary":
+        return None
+    m = s.get("measures")
+    if m is not None and not isinstance(m, dict):
+        return "the M4 baseline log summary field measures is not a JSON object"
+    for name in ("M1", "M4"):
+        if (m or {}).get(name) is not None and not isinstance(m[name], dict):
+            return f"the M4 baseline log summary field measures.{name} is not a JSON object"
+    c1 = ((m or {}).get("M1") or {}).get("C1")
+    if c1 is not None and not isinstance(c1, dict):
+        return "the M4 baseline log summary field measures.M1.C1 is not a JSON object"
+    return None
 
 
 # The fields in which the M4 baseline log must match the run in evidence mode. The item set is not one of them: a

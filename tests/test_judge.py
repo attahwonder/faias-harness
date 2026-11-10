@@ -165,6 +165,20 @@ class FamilyTests(Fixture):
         self.assertTrue(any("judge: the family of example-vendor/example-judge is unknown" in p
                             for p in cm.exception.problems))
 
+    def test_an_output_folder_inside_the_repository_is_refused_before_any_folder_or_call(self):
+        """The judge log stays outside the repository, as the bench folder (bench.py) and the calibration file do.
+        Before, the pass made the folder and wrote the judge log there."""
+        out = REPO / "runs" / "judge_out_inside_test"
+        self.assertFalse(out.exists())
+        with no_outside_network(), StandInModelHost(judge_respond) as host:
+            with self.assertRaises(judge.JudgeRefused) as cm:
+                judge.run(self.settings(), self.source, out_dir=out, sign_key=self.priv, confirmation=CONFIRM,
+                          base_url=host.base_url, env=ENV, repo=REPO)
+            self.assertEqual(host.requests, [])
+        self.assertEqual(cm.exception.problems, ["the output folder is inside the repository; keep it outside (the "
+                                                 "judge log holds the judge's reply on each item of the source log)"])
+        self.assertFalse(out.exists())
+
 
 class StatisticsTests(unittest.TestCase):
     def test_kappa_against_hand_values(self):

@@ -49,7 +49,8 @@ class StoreError(ValueError):
 
 def load_store(path):
     """(data, sha256 of the file). The file is read once. A file that is not UTF-8 YAML, or that holds a lone surrogate
-    (text.lone_surrogate_keys), is refused with one problem (StoreError)."""
+    (text.lone_surrogate_keys), is refused with one problem (StoreError). So is a fee_refund store whose parts are not
+    of the form that the handler and the readers of the store use (form_problem)."""
     try:
         raw = Path(path).read_bytes()
     except OSError as e:
@@ -64,7 +65,60 @@ def load_store(path):
     if not isinstance(data, dict) or not (isinstance(data.get("accounts"), list)
                                           or isinstance(data.get("documents"), list)):
         raise StoreError("the store must be a mapping with a list 'accounts' or a list 'documents'")
+    problem = form_problem(data)
+    if problem:
+        raise StoreError(problem)
     return data, hashlib.sha256(raw).hexdigest()
+
+
+def _entries(data, key, fields, optional=()):
+    """The first problem of the list `key` of `data`, or None. Each entry is a mapping. Each field of `fields` is a
+    text, and each field of `optional` is a text when it is present."""
+    rows = data[key]
+    if not isinstance(rows, list):
+        return f"the store: '{key}' must be a list"
+    for n, row in enumerate(rows, 1):
+        if not isinstance(row, dict):
+            return f"the store: {key} entry {n} is not a mapping"
+        for f in fields:
+            if not isinstance(row.get(f), str):
+                return f"the store: {key} entry {n}: {f} must be a text"
+        for f in optional:
+            if f in row and not isinstance(row[f], str):
+                return f"the store: {key} entry {n}: {f} must be a text"
+    return None
+
+
+def form_problem(data):
+    """The first problem in the form of a fee_refund store, or None. A store with `accounts` is the store of the
+    fee_refund handler (the synthetic bank). The parts that the handler and the readers of that store use (FeeRefund,
+    agt012.check_item_set, SRD-1's entitlement check) are checked: `accounts` (account_ref; customer_ref when present;
+    fees when present, a list of mappings with fee_id), `customers` when present (customer_ref; domain when present)
+    and `default_customer_ref` when present. Each reference is a text. FeeRefund checks the amount of each fee. A store
+    with no `accounts` (the document store) is not checked here: TP-DAT-009 checks its form (dat009._form_problem)."""
+    if "accounts" not in data:
+        return None
+    problem = _entries(data, "accounts", ("account_ref",), optional=("customer_ref",))
+    if problem:
+        return problem
+    for n, a in enumerate(data["accounts"], 1):
+        fees = a.get("fees")
+        if fees is None:
+            continue
+        if not isinstance(fees, list):
+            return f"the store: accounts entry {n}: 'fees' must be a list"
+        for m, f in enumerate(fees, 1):
+            if not isinstance(f, dict):
+                return f"the store: accounts entry {n}: fee {m} is not a mapping"
+            if not isinstance(f.get("fee_id"), str):
+                return f"the store: accounts entry {n}: fee {m}: fee_id must be a text"
+    if "customers" in data:
+        problem = _entries(data, "customers", ("customer_ref",), optional=("domain",))
+        if problem:
+            return problem
+    if "default_customer_ref" in data and not isinstance(data["default_customer_ref"], str):
+        return "the store: default_customer_ref must be a text"
+    return None
 
 
 def _number(v):

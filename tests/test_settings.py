@@ -1008,6 +1008,49 @@ class OperatorYamlFileTests(unittest.TestCase):
                     self.assertEqual(out.split("START REFUSED. No run starts. Fix these points first:\n")[1]
                                      .splitlines(), [f"  - {tp}: the tool emulator file {rel} is refused: {problem}"])
 
+    def test_a_store_of_another_form_is_named_by_the_preflight_and_start_refuses_in_one_line(self):
+        """The store of the fee_refund tool (the synthetic bank) with an entry of `accounts` that is not a mapping.
+        TP-SEC-001 and TP-SEC-006 with tools on: the settings block prints the refusal and no estimate, and --start
+        refuses in one problem line, exit 2, before any model call. TP-AGT-012: the tools-file check refuses the store,
+        and the item-set check raises StoreError, not AttributeError. Before, TP-SEC-001 and TP-SEC-006 passed the
+        preflight and --start, and the emulator stopped with AttributeError after the typed yes. TP-AGT-012 stopped
+        with AttributeError in the item-set check."""
+        from types import SimpleNamespace
+        from faias_harness import preflight
+        from faias_harness.emulators import handlers
+        from faias_harness.engine import run_agt012
+        rel = self.FILES["store"]
+        bad = b"default_customer_ref: SYN-C-0001\ncustomers:\n  - {customer_ref: SYN-C-0001, domain: retail}\n" \
+              b"accounts:\n  - 5\n"
+        problem = "the store: accounts entry 1 is not a mapping"
+        m = {"value": 0.5, "reason": "test value for the unit tests"}
+        cases = {"TP-SEC-001": {"item_set": "TP-SEC-001"},
+                 "TP-SEC-006": {"procedure": "TP-SEC-006", "item_set": "TP-SEC-006",
+                                "reviewer_values": {"M3": m, "M4": m}}}
+        for tp, changes in cases.items():
+            settings = self.dir / f"settings_store_{tp}.yaml"
+            settings.write_text(yaml.safe_dump(raw_settings(mode="explore", **changes, **self.TOOLS)), encoding="utf-8")
+            argv = ["--profile", str(self.profile), "--settings", str(settings), *self.selftest]
+            called = []
+            with self.subTest(procedure=tp), no_outside_network(), \
+                    mock.patch.dict(os.environ, {KEY_ENV: FAKE_KEY_VALUE}), changed_bytes(rel, bad):
+                rc, out = run_main(argv)
+                self.assertEqual(rc, 0, out[-800:])
+                self.assertNotIn("Traceback", out)
+                self.assertIn(f"Tool emulator file: {rel} is refused: {problem}\n", out)
+                rc, out = run_main(argv + ["--start", "--sign-key", str(self.key)], inspect_check=lambda: None,
+                                   gateway_factory=lambda s: called.append("model call"),
+                                   executor=lambda **k: called.append("run"))
+                self.assertEqual((rc, called), (2, []), out[-800:])
+                self.assertNotIn("Traceback", out)
+                self.assertEqual(out.split("START REFUSED. No run starts. Fix these points first:\n")[1].splitlines(),
+                                 [f"  - {tp}: the tool emulator file {rel} is refused: {problem}"])
+        with changed_bytes(rel, bad):
+            self.assertEqual(preflight.tools_file_refusal(SimpleNamespace(procedure="TP-AGT-012")), (rel, problem))
+            with self.assertRaises(handlers.StoreError) as cm:
+                run_agt012.item_set_problems(REPO)
+            self.assertEqual(str(cm.exception), problem)
+
 
 class RiskAppetiteFileTests(unittest.TestCase):
     """The risk-appetite file of SRD-1 (targets/srd1/risk_appetite.yaml). A copy holds the YAML escape \\ud83d in
