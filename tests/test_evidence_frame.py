@@ -906,7 +906,7 @@ class ChannelErrorClassTests(unittest.TestCase):
 
 
 class VersionTextTests(unittest.TestCase):
-    """The version text names the seven procedures and version 0.9, and the code block note counts no file
+    """The version text names the seven procedures and version 0.10, and the code block note counts no file
     hashes."""
 
     @staticmethod
@@ -927,17 +927,19 @@ class VersionTextTests(unittest.TestCase):
             with self.subTest(file=rel):
                 self.assertNotIn("two procedures", self.text(rel))
 
-    def test_the_version_text_says_0_9_and_no_text_says_not_released(self):
+    def test_the_version_text_says_0_10_and_no_text_says_not_released(self):
         from faias_harness import __version__
-        self.assertIn("Version 0.9 holds the design", self.text("faias_harness/__init__.py"))
-        self.assertIn("Version 0.9: design", self.text("pyproject.toml"))
+        self.assertIn("Version 0.10 holds the design", self.text("faias_harness/__init__.py"))
+        self.assertIn("Version 0.10: design", self.text("pyproject.toml"))
         self.assertIn(f'version = "{__version__}"', self.text("pyproject.toml"))
-        self.assertIn("## Status: version 0.9 ", self.text("README.md"))
+        self.assertIn("## Status: version 0.10 ", self.text("README.md"))
         self.assertIn("Version 0.8.0 adds a fifth, TP-SEC-002, and a sixth, TP-SEC-003", self.text("README.md"))
         self.assertIn("Version 0.9.0 adds a seventh, TP-MOD-011, Component 1", self.text("README.md"))
         for rel in ("README.md", "AGENTS.md", "CHANGELOG.md", "pyproject.toml", "faias_harness/__init__.py",
-                    "docs/ARCHITECTURE.md", "items/README.md"):
-            for words in ("not yet released", "not released yet", "(unreleased)", "not in a release yet"):
+                    "docs/ARCHITECTURE.md", "items/README.md", "faias_harness/engine/tierm_measures.py",
+                    "faias_harness/engine/tiersdat.py", "faias_harness/engine/tiersdat_log.py"):
+            for words in ("not yet released", "not released yet", "(unreleased)", "not in a release yet",
+                          "not released)", "Not released.", "not in a release."):
                 with self.subTest(file=rel, words=words):
                     self.assertNotIn(words, self.text(rel))
 

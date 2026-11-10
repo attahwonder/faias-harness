@@ -1,7 +1,7 @@
 """The Tier S engine of bench mode for the draft item sets of TP-DAT-007 and TP-DAT-008, on SRD-1 minimal with C-05
 minimal (the retrieval mode pipeline, the filter stage pre_retrieval, top 3, the standard system prompt, tools off).
 It runs in bench mode only (faias_harness/bench.py). The run log has its own schema, faias-tiersdat-log/1
-(tiersdat_log.py). Not released.
+(tiersdat_log.py).
 
 The item file. A draft item file of the bench (TP-DAT-007 or TP-DAT-008) sits outside the repository, with its store
 addition files beside it. The cell names the item file and its SHA-256 (the TP-SEC-001 private-set rule, as tierm.py).

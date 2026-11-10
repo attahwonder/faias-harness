@@ -1,4 +1,4 @@
-"""The run log of the Tier S DAT engine (engine/tiersdat.py): schema faias-tiersdat-log/1. Not released.
+"""The run log of the Tier S DAT engine (engine/tiersdat.py): schema faias-tiersdat-log/1.
 
 Format: a JSON-lines file, as the other run logs (runlog.RunLog), signed with the run-signing key (runlog.sign_log).
 Line 1 is the header, with its lock, written and flushed before the first model call. Then one `run` record for each

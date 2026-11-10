@@ -1,12 +1,12 @@
 # Architecture
 
-Harness version 0.9. This document describes the design of the harness and what exists today. Each section says what is built and what is not.
+Harness version 0.10. This document describes the design of the harness and what exists today. Each section says what is built and what is not.
 
 ## 1. Scope and status
 
 The harness is planned to run the FAIAS test procedures against an AI system in a test environment. FAIAS is the Financial AI Independent Assurance Standard. Version 1.3.4 of FAIAS has 109 test procedures, one for each Independent Review Question (FAIAS `README.md`, line 31).
 
-Version 0.9 shows the design and the direction. It has eight parts that work:
+Version 0.10 shows the design and the direction. It has eight parts that work:
 
 - the **records**: one generic record for each of 52 procedures (45 with no human step; 7 for the bench mode, section 27);
 - the **record checker**: it compares each record with the FAIAS source lines;
@@ -166,7 +166,7 @@ An adapter implements the target interface for a real system. `faias_harness/ada
 | `srd1-http` (`srd1_http.py`) | 0.3. SRD-1 minimal. `conversation` and `traces`; `config_read` since 0.6.0 (the prompt; since 0.6 also the tools, the gate and the entitlements; since 0.7 the retrieval; since 0.8 the session). Section 11. |
 | Contact-centre platforms, Amazon Bedrock InvokeAgent | Not built. |
 
-The harness supports no platform in version 0.9. `faias_harness/adapters/README.md` says what each adapter records for each call.
+The harness supports no platform in version 0.10. `faias_harness/adapters/README.md` says what each adapter records for each call.
 
 Each channel adapter reads the body of a response through `ChannelTarget._json` (`base.py`). It replaces each lone surrogate with U+FFFD (section 6). A channel error message holds a code from the body only in a fixed form. The A2A JSON-RPC code must be an integer. The Direct Line error code must match `[A-Za-z][A-Za-z0-9_.-]{0,63}`. Otherwise the message says that the code has another form. So an error message holds no text of the target's choice.
 
@@ -174,7 +174,7 @@ Each channel adapter reads the body of a response through `ChannelTarget._json` 
 
 ## 8. Design rules
 
-The rules bind every phase of the work. The last column says what version 0.9 does about each rule.
+The rules bind every phase of the work. The last column says what version 0.10 does about each rule.
 
 | # | Rule | Basis | In v0.9 |
 |---|---|---|---|
@@ -216,7 +216,7 @@ Limits of this draft:
 - The needs say what a procedure asks of a system, in terms of the seven capability names. They do not say that any adapter or platform offers the capability.
 - The preflight result depends on this draft. Check an entry before you rely on it.
 
-## 10. What version 0.9 does not do
+## 10. What version 0.10 does not do
 
 - It runs seven procedures only, TP-SEC-001, TP-SEC-006, TP-AGT-012, TP-DAT-009, TP-SEC-002 and TP-SEC-003 (both 0.8.0), and TP-MOD-011, Component 1 (0.9.0). TP-SEC-006, TP-AGT-012, TP-DAT-009 and TP-SEC-003 run on SRD-1 minimal only. TP-SEC-001 and TP-SEC-002 also run on an external target. Their results are not findings. TP-MOD-011 runs on SRD-1 minimal only (section 22). Its engine has the threshold lock, the log signing and the spend cap of the other engines.
 - The threshold lock and log signing exist for the engines of these seven procedures, and for the containment self-test, only. The spend cap exists for these seven engines only. The engine has no network sandbox. The containment self-test (section 17) makes client-level and process-level checks only. The MCP tool emulator exists (section 14). The engines of the first four procedures use it when `tools_enabled` is true. The TP-SEC-002, TP-SEC-003 and TP-MOD-011 engines run with tools off only. A TP-AGT-012 run needs `tools_enabled: true`. A TP-DAT-009 run needs it too, for its tool arm.
@@ -958,7 +958,7 @@ A run record holds the arm, the benchmark, the item, the attempt, the SHA-256 of
 
 **What it does not do.** It does not run steps 1, 2 and 11 (lines 26, 27 and 36). These are document reviews by the reviewer. It does not run Component 2, so M2 to M5 are not in the run (lines 43 to 46). It does not run the general-instruction contrast or the BLEURT measure of the cited method. It has no human labels and no model judge. It reads no approval paper; the cited benchmarks are as declared. It makes no outcome decision (lines 50 to 52), and a person reads that from the log. The absence of reproduction does not prove the absence of contamination (line 74). The run log lists these limits (`not_in_run`).
 
-## 23. Bench mode (not released)
+## 23. Bench mode (0.10.0)
 
 Bench mode runs a list of procedures against a list of models on SRD-1 minimal, and writes one signed bench report. Each row of the report is labelled "Model benchmark result, not FAIAS assurance". It measures how a model behaves inside SRD-1. It is not an assurance of a firm's system. It is tested against local stand-ins only. No live run has used it.
 
@@ -989,11 +989,11 @@ The report has no composite score. `python -m faias_harness.bench verify --repor
 
 **What it does not do.** It has no judge pass. It does not group rows by failure family. It adds no item set beyond those of the engines and the private item set of TP-SEC-001. It has no Tier S scaffold with tools and retrieval together; each Tier S cell is the procedure's own build (the Tier S AGT engine of section 25 builds SRD-1 with both tools for TP-AGT-001 and TP-AGT-010). Its end-to-end bench tests cover six procedures: TP-SEC-001 and TP-SEC-006 at tier M, TP-MOD-014 at tier M through the generic Tier M engine, TP-AGT-002 and TP-AGT-010 at tier S, and TP-DAT-007 at tier S. Every other cell goes through the same dispatch and the same start checks, with no end-to-end bench test.
 
-**The generic Tier M engine (not released).** `faias_harness/engine/tierm.py` runs a procedure that has no engine of its own, at tier M only, in bench mode only. Its cell settings are the shared keys of an SRD-1 settings file and four keys of its own: `items_file`, `items_sha256`, `store_replies` (full or hash_only) and `splits` (private by default). The item file is the draft form of the bench: `procedure`, `dataset_guid`, and items with an `id`, a `split` and a `text` or `turns`, and optional `variants`. It must be outside the repository and of the named SHA-256, with no repeated key, as the private item set of TP-SEC-001. The procedure ID and the star label come from `records/<procedure>.yaml`. A procedure with no record is refused before any file or call. The engine runs each unit (an item or a variant) k times, one conversation for each run, on the standard prompt with tools and retrieval off. It runs the checks that the item file declares: `deterministic` patterns, a `DECISION:` line when the file has `decision_values`, or a `checks` list (kinds `regex`, `decision_line`, `first_word`). The log has the schema `faias-tierm-log/1` (`tierm_log.py`). Each run record holds every turn, its checks and its call facts, and `request` and `reply` for the judge pass (a transcript for more than one turn). With `hash_only` it holds SHA-256 values only. The summary holds item outcomes by split, `measures: {}` and "item outcomes, measure not computed"; the bench row copies both (for a procedure with a measure scorer, the row holds the measures in place of that status: section 28). The engine computes no measure of any procedure. It is tested against local stand-ins only.
+**The generic Tier M engine.** `faias_harness/engine/tierm.py` runs a procedure that has no engine of its own, at tier M only, in bench mode only. Its cell settings are the shared keys of an SRD-1 settings file and four keys of its own: `items_file`, `items_sha256`, `store_replies` (full or hash_only) and `splits` (private by default). The item file is the draft form of the bench: `procedure`, `dataset_guid`, and items with an `id`, a `split` and a `text` or `turns`, and optional `variants`. It must be outside the repository and of the named SHA-256, with no repeated key, as the private item set of TP-SEC-001. The procedure ID and the star label come from `records/<procedure>.yaml`. A procedure with no record is refused before any file or call. The engine runs each unit (an item or a variant) k times, one conversation for each run, on the standard prompt with tools and retrieval off. It runs the checks that the item file declares: `deterministic` patterns, a `DECISION:` line when the file has `decision_values`, or a `checks` list (kinds `regex`, `decision_line`, `first_word`). The log has the schema `faias-tierm-log/1` (`tierm_log.py`). Each run record holds every turn, its checks and its call facts, and `request` and `reply` for the judge pass (a transcript for more than one turn). With `hash_only` it holds SHA-256 values only. The summary holds item outcomes by split, `measures: {}` and "item outcomes, measure not computed"; the bench row copies both (for a procedure with a measure scorer, the row holds the measures in place of that status: section 28). The engine computes no measure of any procedure. It is tested against local stand-ins only.
 
-## 24. The judge pass (after 0.9.1)
+## 24. The judge pass (0.10.0)
 
-The judge pass is a second reading of the replies of a signed run log by a model judge. It is part of the bench mode, which is not finished. It runs after a run, never in it. No engine calls it, and no engine score uses it. It is tested against local stand-ins only. No live run has used it. No rubric and no calibration file ship.
+The judge pass is a second reading of the replies of a signed run log by a model judge. It is part of the bench mode. It runs after a run, never in it. No engine calls it, and no engine score uses it. It is tested against local stand-ins only. No live run has used it. No rubric and no calibration file ship.
 
 **What it does.** `engine/judge.py` reads a run log that `verify` passes. It refuses a log that `verify` does not pass, a judge log and a self-test log. It sends the request and the reply of each run record to a judge model, with the system text of a rubric. It writes a judge log (`judge_log.jsonl`) in a new folder and signs it with the run-signing key. It does not change the source log. A run record that holds the reply hash only, or no reply text, is not sent; a `not_judged` record names it.
 
@@ -1036,7 +1036,7 @@ A `judgement` record holds the line of the source log, the item, the run, the SH
 
 **What it does not do.** It does not read SRD-1's trace, the tool ledger or the retrieval lines; it reads the stored request and reply only. It does not judge a reply that the source log holds as a hash only. It does not change a score, a measure or a result of the source log. It does not check a model's training; the family rule rests on the model ID and the operator's named families. It runs one judge per pass, not a panel of judges. It does not write the human labels; two people label the sample.
 
-## 25. The Tier S AGT engine of bench mode (not released)
+## 25. The Tier S AGT engine of bench mode (0.10.0)
 
 `faias_harness/engine/tiers_agt.py` runs the draft item sets of TP-AGT-001, TP-AGT-002 and TP-AGT-010 at tier S, in bench mode only. Each row is labelled "Model propensity, not control": SRD-1 minimal has no halt gate, no re-anchoring and no conformance checker, so a halt or a kept step is the model's own, and FAIAS does not accept that as a control. It is tested against local stand-ins only. No live run has used it.
 
@@ -1052,7 +1052,7 @@ A `judgement` record holds the line of the source log, the item, the run, the SH
 
 **What it does not do.** It runs the standard prompt only: the rule 6 proposal of the item sets and the TP-AGT-010 process map in the prompt are not registered prompts. It has no `hand_off`, `payment_instruction` or `complaint_case` tool. It has no instruction channel inside a turn, so time-to-halt is not measured. It judges no text. It has no positive control.
 
-## 26. The Tier S DAT engine of bench mode (not released)
+## 26. The Tier S DAT engine of bench mode (0.10.0)
 
 `faias_harness/engine/tiersdat.py` runs the bench's draft item sets of TP-DAT-007 and TP-DAT-008 at tier S. The bench runner sends a cell of tier S for either procedure to it (`bench.plan`, `tiersdat.cell_settings`) and refuses a cell of tier M for either (`bench.form_problems`). It is tested against local stand-ins only. No live run has used it.
 
@@ -1096,13 +1096,13 @@ TP-DAT-008 needs n of 10 or more in each condition (`PLAYBOOK_DAT_008.md` line 1
 
 **What it does not do.** It runs no model judge. It does not use the tool path (`document_search`), so the model never writes the retrieval query. It does not run the steps that need a firm, a live index, an ingestion route or a source repository (TP-DAT-007 M1, M2, M4, M5; TP-DAT-008 M3, M4, M5); the header lists them in `not_in_run` from the item file. It does not check that the items are good tests; a person or a second model family checks the item sets.
 
-## 27. Records for seven bench procedures and the judge family file (not released)
+## 27. Records for seven bench procedures and the judge family file (0.10.0)
 
 **Records for seven bench procedures.** The generic Tier M engine (section 23) copies the procedure ID and the star label from a record, and refuses a procedure with no record. Seven procedures, TP-CON-003, TP-CON-009, TP-CON-010, TP-MOD-003, TP-MOD-004, TP-MOD-005 and TP-MOD-006, need a human step: labelling or judgement of outputs. So they had no record. `records/classification.tsv` now holds a row for each, with class `H` and `human_step` `Y`, as the classification of the 109 procedures gives them. `tools/build_records.py` builds a record for each class-H row, by the same rules as the other 45. `tools/check_records.py` checks the 52 records against the FAIAS tree. The capability needs still cover the 45 procedures with `human_step` `N` only, so the preflight and the testability report do not change. A record of a procedure with a human step does not mean that the harness runs that step. The bench records the replies. The judge pass or human labels give the second reading.
 
 **The judge family file.** The family table of `engine/judge.py` leaves out the vendors whose names the sweep bars from this repository. The judge settings can name a family file outside the repository (`family_file`), pinned by its SHA-256 (`family_sha256`). The file is JSON with no repeated key, in the format `faias-judge-families/1`. It holds `prefix_family` (a provider prefix to a family) and `name_family` (a name word to a family), with one entry or more in all. Keys and families are in lower case. An entry that the table also holds must give the same family, so a file cannot move a model out of the family that the table gives it. The pass reads the file before any file or call. It refuses a file inside the repository, absent, of another SHA-256, not JSON, with a repeated key or of another form. The entries of the file count as the table's own: the same-prefix rule, the same-family refusal and the rule for a named family apply to them. A model that neither the table nor the file knows still has an unknown family, and the pass refuses it unless the operator names its family. The family basis in the judge log names the source of each family. The judge block of the header holds the name and SHA-256 of the file, or null, and the lock covers it. The SHA-256 enters the settings hash only when a file is named, so settings with no file keep their hash. No family file ships.
 
-## 28. Measure scorers of the generic Tier M engine (not released)
+## 28. Measure scorers of the generic Tier M engine (0.10.0)
 
 The generic Tier M engine (section 23) writes item outcomes only. The measure scorers compute the measures of a procedure from its signed log afterwards. They make no model call and change no log. They are tested against local stand-ins only. No live run has used them.
 

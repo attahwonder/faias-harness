@@ -2,13 +2,13 @@
 
 [![tests](https://github.com/attahwonder/faias-harness/actions/workflows/tests.yml/badge.svg)](https://github.com/attahwonder/faias-harness/actions/workflows/tests.yml)
 
-An open-source test harness for FAIAS, the Financial AI Independent Assurance Standard. The harness is planned to run the FAIAS test procedures against an AI system in a test environment. A firm describes its own system in a target profile. The harness reaches that system through one target interface. This repository holds version 0.9. It has the design, the procedure records, a record checker and a preflight. It also has a run engine for seven procedures. One is TP-SEC-001 with its full item set (see "Engine" below). The second is TP-SEC-006 (see "TP-SEC-006"). The third is TP-AGT-012 (see "TP-AGT-012"). The fourth is TP-DAT-009 (see "TP-DAT-009"). Version 0.8.0 adds a fifth, TP-SEC-002 (see "TP-SEC-002"), and a sixth, TP-SEC-003 (see "TP-SEC-003"). Version 0.9.0 adds a seventh, TP-MOD-011, Component 1 (see "TP-MOD-011"). Channel adapters let the engine reach a deployed staging agent for TP-SEC-001 (see "External runs"). Version 0.8.0 adds TP-SEC-002 to that path. The other parts are an MCP tool emulator (see "Tool emulator") and a testability report (see "Testability report").
+An open-source test harness for FAIAS, the Financial AI Independent Assurance Standard. The harness is planned to run the FAIAS test procedures against an AI system in a test environment. A firm describes its own system in a target profile. The harness reaches that system through one target interface. This repository holds version 0.10. It has the design, the procedure records, a record checker and a preflight. It also has a run engine for seven procedures. One is TP-SEC-001 with its full item set (see "Engine" below). The second is TP-SEC-006 (see "TP-SEC-006"). The third is TP-AGT-012 (see "TP-AGT-012"). The fourth is TP-DAT-009 (see "TP-DAT-009"). Version 0.8.0 adds a fifth, TP-SEC-002 (see "TP-SEC-002"), and a sixth, TP-SEC-003 (see "TP-SEC-003"). Version 0.9.0 adds a seventh, TP-MOD-011, Component 1 (see "TP-MOD-011"). Channel adapters let the engine reach a deployed staging agent for TP-SEC-001 (see "External runs"). Version 0.8.0 adds TP-SEC-002 to that path. The other parts are an MCP tool emulator (see "Tool emulator"), a testability report (see "Testability report") and, since 0.10.0, a bench mode for model benchmarks (see "Bench mode").
 
-## Status: version 0.9
+## Status: version 0.10
 
 **What works now**
 
-- **Records.** One generic record for each of 52 FAIAS test procedures, built from the published standard. 45 of them need no human step. The other 7 are for the bench mode, which is not released (`records/README.md`). Each copied item carries its file and line (`records/`).
+- **Records.** One generic record for each of 52 FAIAS test procedures, built from the published standard. 45 of them need no human step. The other 7 are for the bench mode (0.10.0) (`records/README.md`). Each copied item carries its file and line (`records/`).
 - **Record checker.** It compares every record with the FAIAS source lines (`tools/check_records.py`). It also checks the form of the capability needs and the FAIAS lines that they cite. A test seeds nine faults and confirms that the checker catches them.
 - **Preflight.** It compares a target profile with the draft capability needs of each procedure and prints which procedures can run in full, in part, or not at all (`faias_harness/preflight.py`). It makes no network call.
 - **Engine.** It runs seven procedures, TP-SEC-001, TP-SEC-006, TP-AGT-012, TP-DAT-009, TP-SEC-002, TP-SEC-003 and TP-MOD-011 (Component 1), against SRD-1 minimal and writes a signed run log (`faias_harness/engine/`). Version 0.8.0 adds a fifth, TP-SEC-002, and a sixth, TP-SEC-003. Version 0.9.0 adds a seventh, TP-MOD-011, Component 1. By default a TP-SEC-001 run uses the full item set (`items/TP-SEC-001.json`: 131 items and 25 clean-baseline requests). Such a run is labelled "uncalibrated scorer, not a finding". The 20 spike items remain as an option, labelled "engine spike, not a finding".
@@ -26,6 +26,7 @@ An open-source test harness for FAIAS, the Financial AI Independent Assurance St
 - **Example logs.** `examples/logs/` holds two signed example logs, one of TP-SEC-001 and one of TP-SEC-006. Each is an example from a local stand-in, not a finding. See "Check the harness in your first hour".
 - **Testability report (0.6).** It writes the preflight result of a profile as a report, and it can sign the report (`faias_harness/testability.py`). Its `verify` command checks the signature and the form. It makes no network call (see "Testability report").
 - **Platform survey.** `docs/PLATFORMS.md` lists what the public documentation of six agent platforms says about the seven capabilities. On 16 October 2026, a script found the quote of 84 of 87 survey rows on the vendor page. The survey is documentation only. It is not an adapter and not a test.
+- **Bench mode (0.10.0).** It runs a list of procedures against a list of models on SRD-1 minimal and writes one signed bench report. Each row is labelled "Model benchmark result, not FAIAS assurance". It is tested against local stand-ins only. No live run has used it. See "Bench mode".
 
 **What does not work**
 
@@ -632,9 +633,9 @@ py -3.14 -X utf8 -m faias_harness.testability verify --report <folder>/testabili
 
 With `--sign-key`, the command signs `testability.json` with the run-signing key, as for a run log. The signature does not cover `testability.md`. Without `--sign-key`, the Markdown says "unsigned". The command refuses an `--out` folder inside `records/` or `faias_harness/`, and a folder that holds a report already. A report on a firm's own profile holds information about the firm. Keep it outside this repository.
 
-## Bench mode (not released)
+## Bench mode (0.10.0)
 
-Bench mode runs a list of procedures against a list of models on SRD-1 minimal, and writes one signed bench report (`docs/ARCHITECTURE.md`, section 23). It is not in a release. It is tested against local stand-ins only, end to end for TP-SEC-001 and TP-SEC-006. No live run has used it.
+Bench mode runs a list of procedures against a list of models on SRD-1 minimal, and writes one signed bench report (`docs/ARCHITECTURE.md`, section 23). It is tested against local stand-ins only, end to end for TP-SEC-001 and TP-SEC-006. No live run has used it.
 
 Each row of the report is one procedure, one tier and one model. Each row is labelled "Model benchmark result, not FAIAS assurance". A row of a log whose scorer is not calibrated is also labelled "Uncalibrated scorer, not a finding". A row of a procedure whose ID starts with `TP-AGT-` is also labelled "Model propensity, not control". The report has no composite score. The ★ of a row is copied from its member log. It is the method maturity of the FAIAS procedure, not a grade of the model.
 

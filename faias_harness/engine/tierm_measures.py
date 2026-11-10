@@ -1,4 +1,4 @@
-"""The measure scorers of the generic Tier M engine (bench mode, not released).
+"""The measure scorers of the generic Tier M engine (bench mode).
 
 A scorer reads a faias-tierm-log/1 log (tierm_log.py) and computes the measures that the rubric of its item set
 defines, where the rule of the rubric is deterministic. It makes no model call and changes no log. The bench report

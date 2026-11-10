@@ -1,6 +1,8 @@
 # Changelog
 
-## Unreleased
+## 0.10.0 (10 November 2026 — date of the push)
+
+This release adds bench mode (`docs/ARCHITECTURE.md`, sections 23 to 28). Bench mode runs a list of procedures against a list of models on SRD-1 minimal and writes one signed bench report. It measures how a model behaves inside SRD-1. It is not an assurance of a firm's system. It is tested against local stand-ins only. No live run has used it. Every shipped settings file keeps its settings hash, and no earlier log schema changes.
 
 Bench mode: a runner that runs a list of procedures against a list of models on SRD-1 minimal, and writes one signed bench report (`docs/ARCHITECTURE.md`, section 23). Each row is labelled "Model benchmark result, not FAIAS assurance", and a row of a log with an uncalibrated scorer also "Uncalibrated scorer, not a finding". The report has no composite score. Bench mode is tested against local stand-ins only, end to end for TP-SEC-001 and TP-SEC-006. No live run has used it. No scorer changes, and no run log schema changes. Five engine functions change for the private item set of TP-SEC-001 only: the TP-SEC-001 loader `sec001.load_items` (two new optional parameters, read through the new `sec001.items_for`), `spike.run_items`, `runlog.build_header`, `runlog.check_log` and `runlog.verify_log`. For every other item set they behave as before, and every shipped settings file keeps its settings hash (`tests/test_bench.py`, T9).
 
@@ -19,7 +21,7 @@ A judge pass for the bench mode: a second reading of the replies of a signed run
 - Before it makes a folder or a call, the pass refuses a judge model with no cap above 0, a price not set or no `max_tokens`; a source log with no reply text to judge (it reads the `reply` text of records of type `run` only, and names the count of each record type); and a settings object that `validate_judge` refuses, which it checks again. A calibration file named with no SHA-256 gives the label "uncalibrated".
 - Tests: `tests/test_judge.py`. Docs: `docs/ARCHITECTURE.md` section 24.
 
-Measure scorers for the generic Tier M engine (bench mode, not released): the bench report now computes the measures of five procedures from the signed Tier M log, where the rubric of the draft item set gives a deterministic rule. They are tested against local stand-ins only. No live run has used them.
+Measure scorers for the generic Tier M engine (bench mode): the bench report now computes the measures of five procedures from the signed Tier M log, where the rubric of the draft item set gives a deterministic rule. They are tested against local stand-ins only. No live run has used them.
 
 - `faias_harness/engine/tierm_measures.py` holds one scorer for each procedure: TP-MOD-014 (M1, M3 per perturbation class, and their controls), TP-MOD-004 (MA, MU, MH, MK), the TP-SEC-001 over-refusal arm (the DISC, COMMIT and prescreen flags), TP-MOD-013 component 2 (D1a, D2c, D3a, D3b) and TP-MOD-002 (D0). Each rate gives n, k and a Wilson 95% interval; a per-run rate gives a standard error clustered by item. A measure that needs human labels or the judge says "not computed: needs labels". No scorer sets a pass mark; each cites the FAIAS line that sets none. `faias_harness/engine/tierm_textscore.py` holds the text rules of the TP-MOD-004 and TP-MOD-002 drafts.
 - `benchreport.row_from_log`: a row of a Tier M log of one of these procedures holds the measures, one block for each split, and the threshold line, in place of "item outcomes, measure not computed". `verify` computes them again. The report's code block also hashes the two new files.
@@ -58,6 +60,11 @@ Fixes to the bench engines after a review.
 The clock of a run in the bench mode. The engines of the bench mode (`tierm.py`, `tiersdat.py`, `tiers_agt.py` and `judge.py`) now take the time of each record after the lock from `runlog.run_clock`, as the engines of 0.9.5 do. So does `finished` of each summary, and of the bench report (`bench.py`). Before, these times came from the system clock. A system clock that moved back during a cell made `verify` fail the log. The log schemas do not change.
 
 - Tests: one test in each of `tests/test_tierm.py`, `tests/test_tiersdat.py`, `tests/test_tiers_agt.py`, `tests/test_judge.py` and `tests/test_bench.py`. Each runs with a system clock that moves back after the lock, and checks each time against the lock time plus the steady time since the lock.
+
+The release.
+
+- **The hashes.** The version string in `faias_harness/__init__.py` changes, and bench mode adds and changes code files. So the code manifest of the containment self-test changes, and a gated run needs a self-test of this code. The two example logs in `examples/logs/` were made again at the 0.10.0 code with a new throw-away key. `faias_harness/engine/sec001.py` changes (the private item set), so the TP-SEC-001 example log records a new scorer hash. The TP-SEC-006 example log records the same file hashes as before.
+- **Gaps that remain.** The four gaps of the 0.9.6 section remain: the form of the `fee_refund` store, the containment times of TP-AGT-012, the field types of the M4 baseline log, and a check that inspect_ai can run an eval. They are queued for 0.10.1. Until then, a bench cell whose engine runs on Inspect fails at its start when inspect_ai is installed but cannot run an eval. Every scorer of bench mode is uncalibrated, and no rubric or calibration file of the judge pass ships. TP-AGT-001 has no record, so the bench refuses its cells. TP-AGT-002 M1 counts a run as a detection when the run makes no refund call for a superseded fee at or after the change turn. A run that makes no refund call at all also counts. So M1 and M3 of TP-AGT-002 cannot tell detection from inaction. The score `baseline_action` of the row shows whether the model acted, so read it first.
 
 ## 0.9.6 (9 November 2026)
 
