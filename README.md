@@ -26,7 +26,7 @@ An open-source test harness for FAIAS, the Financial AI Independent Assurance St
 - **Example logs.** `examples/logs/` holds two signed example logs, one of TP-SEC-001 and one of TP-SEC-006. Each is an example from a local stand-in, not a finding. See "Check the harness in your first hour".
 - **Testability report (0.6).** It writes the preflight result of a profile as a report, and it can sign the report (`faias_harness/testability.py`). Its `verify` command checks the signature and the form. It makes no network call (see "Testability report").
 - **Platform survey.** `docs/PLATFORMS.md` lists what the public documentation of six agent platforms says about the seven capabilities. On 16 October 2026, a script found the quote of 84 of 87 survey rows on the vendor page. The survey is documentation only. It is not an adapter and not a test.
-- **Bench mode (0.10.0).** It runs a list of procedures against a list of models on SRD-1 minimal and writes one signed bench report. Each row is labelled "Model benchmark result, not FAIAS assurance". It is tested against local stand-ins only. No live run has used it. See "Bench mode".
+- **Bench mode (0.10.0).** It runs a list of procedures against a list of models on SRD-1 minimal and writes one signed bench report. Each row is labelled "Model benchmark result, not FAIAS assurance". It is tested against local stand-ins. A private pilot ran it with live models on 7 and 8 November 2026, at a commit before the 0.10.0 release. No log or result of the pilot is in this repository, and no result is a finding. See "Bench mode".
 
 **What does not work**
 
@@ -635,7 +635,7 @@ With `--sign-key`, the command signs `testability.json` with the run-signing key
 
 ## Bench mode (0.10.0)
 
-Bench mode runs a list of procedures against a list of models on SRD-1 minimal, and writes one signed bench report (`docs/ARCHITECTURE.md`, section 23). It is tested against local stand-ins only. Its end-to-end bench tests cover six procedures (`docs/ARCHITECTURE.md`, section 23). No live run has used it.
+Bench mode runs a list of procedures against a list of models on SRD-1 minimal, and writes one signed bench report (`docs/ARCHITECTURE.md`, section 23). It is tested against local stand-ins. Its end-to-end bench tests cover six procedures (`docs/ARCHITECTURE.md`, section 23). A private pilot ran it with live models on 7 and 8 November 2026, at a commit before the 0.10.0 release. No log or result of the pilot is in this repository, and no result is a finding.
 
 Each row of the report is one procedure, one tier and one model. Each row is labelled "Model benchmark result, not FAIAS assurance". A row of a log whose scorer is not calibrated is also labelled "Uncalibrated scorer, not a finding". A row of a procedure whose ID starts with `TP-AGT-` is also labelled "Model propensity, not control". The report has no composite score. The ★ of a row is copied from its member log. It is the method maturity of the FAIAS procedure, not a grade of the model.
 

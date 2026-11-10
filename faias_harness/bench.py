@@ -50,9 +50,10 @@ Folders. The bench folder must be outside the repository, and new or empty. The 
 (settings.PRIVATE_ITEM_SET) runs only here, so its run folders are outside the repository.
 
 The runner opens no socket itself. The probe gateway and the engines make the model calls. It is tested against local
-stand-ins only, end to end for TP-SEC-001, TP-SEC-006 and TP-MOD-014 at tier M and TP-AGT-002, TP-AGT-010 and
+stand-ins, end to end for TP-SEC-001, TP-SEC-006 and TP-MOD-014 at tier M and TP-AGT-002, TP-AGT-010 and
 TP-DAT-007 at tier S. The other procedures go through the same dispatch and the same start checks, with no end-to-end
-bench test.
+bench test. A private pilot ran bench mode with live models on 7 and 8 November 2026, at a commit before the 0.10.0
+release; no log or result of it is in this repository.
 """
 import argparse
 import copy

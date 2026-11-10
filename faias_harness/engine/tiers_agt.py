@@ -42,8 +42,8 @@ The steps, in order:
      computed with the reason, the other scores, the reconciliation of trace and ledger, whether the store file is
      unchanged, the cost, the trace and ledger chains, the egress summary. Then the signature.
 
-Every row is model propensity, not control (benchreport.PROPENSITY). Tests use local stand-ins only. No live run has
-used this engine.
+Every row is model propensity, not control (benchreport.PROPENSITY). Tests use local stand-ins. The private pilot of
+bench mode (bench.py) ran this engine with live models.
 """
 import json
 import time

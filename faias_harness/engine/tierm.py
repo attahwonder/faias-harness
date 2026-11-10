@@ -40,7 +40,8 @@ The steps, in order:
      and the egress summary. Then the signature.
 
 The engine computes no measure of any procedure. For five procedures, the bench report computes the measures from the
-signed log afterwards (tierm_measures.py). Tests use local stand-ins only. No live run has used this engine.
+signed log afterwards (tierm_measures.py). Tests use local stand-ins. The private pilot of bench mode (bench.py) ran
+this engine with live models.
 """
 import json
 import re
