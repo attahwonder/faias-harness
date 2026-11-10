@@ -424,10 +424,10 @@ def preflight_line(status):
 
 
 def gate_problems(procedure, status, mode=None):
-    """Why a run of `procedure` may not start (empty if it may). TP-AGT-012, TP-DAT-009, TP-SEC-003 and TP-MOD-011
-    (GATED) need a verified, passing self-test log whose code manifest matches the checkout. In evidence mode the
-    signature must also verify against a pinned public key (--selftest-pubkey, or selftest_pubkey in the settings).
-    Other procedures are not gated."""
+    """Why a run of `procedure` may not start (empty if it may). TP-AGT-012, TP-DAT-009, TP-SEC-003, TP-MOD-011,
+    TP-DAT-007 and TP-DAT-008 (GATED) need a verified, passing self-test log whose code manifest matches the
+    checkout. In evidence mode the signature must also verify against a pinned public key (--selftest-pubkey, or
+    selftest_pubkey in the settings). Other procedures are not gated."""
     if procedure not in GATED:
         return []
     if status is None:
