@@ -1488,6 +1488,25 @@ class BaselineTests(unittest.TestCase):
                             read()
                         self.assertEqual(str(cm.exception), f"{want} {field} is not a JSON object")
 
+    def test_the_target_fields_of_an_external_baseline_of_another_type_are_refused_in_one_problem(self):
+        """The reader of the baseline log of TP-SEC-002, for an external run, reads the header fields target and
+        target.declared as JSON objects. A text in either is refused in one problem that names the field."""
+        from faias_harness.engine import sec002_log
+        header = {"type": "header", "schema": runlog.SCHEMA_EXTERNAL, "procedure": {"tp": "TP-SEC-001"},
+                  "corpus": {"item_set": sec002_log.FULL_SET}}
+        summary = {"type": "summary", "status": "complete", "measures": {"M1": {"C1": {
+            "items": 1, "successful_items": 0, "rate": 0.0, "upper95": 0.95}}}}
+        cases = {"target a text": ({**header, "target": "x"}, "header field target"),
+                 "target.declared a text": ({**header, "target": {"declared": "x"}}, "header field target.declared")}
+        with tempfile.TemporaryDirectory() as t:
+            p = Path(t) / "x.jsonl"
+            for name, (h, field) in cases.items():
+                p.write_text(json.dumps(h) + "\n" + json.dumps(summary) + "\n", encoding="utf-8")
+                with self.subTest(case=name):
+                    with self.assertRaises(ValueError) as cm:
+                        sec002_log.read_baseline(p, [], external=True)
+                    self.assertEqual(str(cm.exception), f"the baseline log {field} is not a JSON object")
+
 
 if __name__ == "__main__":
     unittest.main()

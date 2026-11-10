@@ -52,8 +52,8 @@ none, and its items count as "no precedence rule defined" for that pair. The pip
 (its retrieval reads no metadata), so the plain SRD-1 build keeps the result NO_RULE as a row of its own.
 
 The engine computes the measures that the item files name, from the deterministic labels only: TP-DAT-007 M3 and
-TP-DAT-008 M1 and M2. No model judge runs in it. Tests use local stand-ins. The private pilot of bench mode (bench.py) ran this engine
-with live models.
+TP-DAT-008 M1 and M2. No model judge runs in it. Tests use local stand-ins. The private pilot of bench mode
+(bench.py) ran this engine with live models.
 """
 import json
 import re

@@ -235,7 +235,7 @@ def inspect_problem(import_module=None):
     try:
         (import_module or importlib.import_module)(INSPECT_EVAL_MODULE)
     except ModuleNotFoundError as e:
-        if e.name and INSPECT_EVAL_MODULE.startswith(e.name):
+        if e.name and (e.name == INSPECT_EVAL_MODULE or INSPECT_EVAL_MODULE.startswith(e.name + ".")):
             return None
         return (f"the run engine inspect_ai is installed but cannot run an eval: the module {e.name or '?'} is not "
                 f"found; install {INSPECT_PINS}")

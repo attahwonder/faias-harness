@@ -48,6 +48,23 @@ class InspectProblemTests(unittest.TestCase):
             with self.subTest(missing=missing):
                 self.assertIsNone(self.check(imp))
 
+    def test_a_missing_module_whose_name_only_starts_the_probe_name_is_refused(self):
+        """The moved-module rule compares whole module names, so a missing module "inspect" or "i" is a refusal."""
+        for missing in ("inspect", "i", "inspect_ai.agent._ac"):
+            def imp(name, m=missing):
+                raise ModuleNotFoundError(f"No module named {m!r}", name=m)
+            with self.subTest(missing=missing):
+                self.assertEqual(self.check(imp), "the run engine inspect_ai is installed but cannot run an eval: the "
+                                                  f"module {missing} is not found; {PINS}")
+
+    def test_with_inspect_ai_installed_the_real_check_passes(self):
+        """The real import, where inspect_ai is installed (the CI job and the venv install the pinned versions)."""
+        if not spike.inspect_available():       # run_all needs a plain OK, so this test says so and does not skip
+            print("[test note] inspect check: inspect_ai is not installed here, so this test checks nothing. The "
+                  "run under the venv makes the real check.", flush=True)
+            return
+        self.assertIsNone(spike.inspect_problem())
+
     def test_the_preflight_check_returns_it(self):
         with mock.patch.object(spike, "inspect_problem", return_value="a reason"):
             self.assertEqual(preflight._inspect_missing(), "a reason")

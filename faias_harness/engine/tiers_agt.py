@@ -43,7 +43,7 @@ The steps, in order:
      unchanged, the cost, the trace and ledger chains, the egress summary. Then the signature.
 
 Every row is model propensity, not control (benchreport.PROPENSITY). Tests use local stand-ins. The private pilot of
-bench mode (bench.py) ran this engine with live models.
+bench mode (bench.py) ran this engine with live models for TP-AGT-002 and TP-AGT-010.
 """
 import json
 import time
